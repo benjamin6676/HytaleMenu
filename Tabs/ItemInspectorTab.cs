@@ -41,8 +41,10 @@ public class ItemInspectorTab : ITab
     private DetectedItem? _pinnedItem;
 
     // Scan cache
-    private List<ItemScanResult> _scanResults = new();
-    private int                  _lastPktCount = 0;
+    private List<ItemScanResult> _scanResults   = new();
+    private int                  _lastPktCount  = 0;
+    private DateTime             _lastScanTime  = DateTime.MinValue;
+    private const double         ScanIntervalMs = 800; // only re-scan at most every 800ms
 
     public DetectedItem? PinnedItem => _pinnedItem;
 
@@ -62,12 +64,15 @@ public class ItemInspectorTab : ITab
         RenderStatusBar(w);
         ImGui.Spacing(); ImGui.Spacing();
 
-        // Auto-rescan when new packets arrive
+        // Auto-rescan — only when new packets arrive AND enough time has passed
         var packets = _capture.GetPackets();
-        if (_autoScan && packets.Count != _lastPktCount)
+        bool newPackets = packets.Count != _lastPktCount;
+        bool cooldownPassed = (DateTime.Now - _lastScanTime).TotalMilliseconds > ScanIntervalMs;
+        if (_autoScan && newPackets && cooldownPassed)
         {
             _scanResults  = ScanPackets(packets);
             _lastPktCount = packets.Count;
+            _lastScanTime = DateTime.Now;
         }
 
         UiHelper.SectionBox("SCAN CONTROLS", half, 90, () =>
@@ -381,29 +386,29 @@ public class ItemScanResult
     {
         var items = new List<DetectedItem>();
 
-        // Strategy: look for int32 values in item-ID range (100–9999)
-        // followed by or preceded by a count value (1–999)
-        for (int i = 1; i + 8 <= data.Length; i++)
+        // Look for int32 values in item-ID range (100–9999)
+        for (int i = 1; i + 4 <= data.Length; i++)
         {
             int v1 = BitConverter.ToInt32(data, i);
             if (v1 < 100 || v1 > 9999) continue;
 
-            // Check next int32 as count
+            // Stack count — check the next byte (common for count 1–255)
+            // and also try the next int16/int32 for larger stacks
             int count = 1;
-            int slot  = 0;
-            if (i + 8 <= data.Length)
+            if (i + 4 < data.Length)
             {
-                int v2 = BitConverter.ToInt32(data, i + 4);
-                if (v2 >= 1 && v2 <= 999) count = v2;
-            }
-            // Check for slot before the item ID
-            if (i >= 5)
-            {
-                int vs = BitConverter.ToInt32(data, i - 4);
-                if (vs >= 0 && vs <= 255) slot = vs;
+                byte nextByte = data[i + 4];
+                if (nextByte >= 1 && nextByte <= 255) count = nextByte;
             }
 
-            // Confidence based on position
+            // Slot index — check the byte immediately before the item ID
+            int slot = 0;
+            if (i >= 1)
+            {
+                byte prevByte = data[i - 1];
+                if (prevByte <= 64) slot = prevByte; // max 64 inventory slots
+            }
+
             var conf = i <= 5 ? FieldConfidence.High
                      : i <= 9 ? FieldConfidence.Medium
                                : FieldConfidence.Low;

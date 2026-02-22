@@ -239,26 +239,26 @@ public class ServerStats
             var results = new List<NetworkConnection>();
             try
             {
-                // Try ss first (Linux), fall back to netstat
-                string tool = "ss", args = "-unp";
-                try
-                {
-                    var test = Process.Start(new ProcessStartInfo
-                    {
-                        FileName = "ss", Arguments = "--version",
-                        RedirectStandardOutput = true,
-                        UseShellExecute = false, CreateNoWindow = true
-                    });
-                    test?.WaitForExit(500);
-                }
-                catch { tool = "netstat"; args = "-n -p UDP"; }
+                // Use .NET's built-in network info — works on Windows without any external tools
+                var ipProps = System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties();
 
+                // UDP endpoints
+                foreach (var ep in ipProps.GetActiveUdpListeners())
+                {
+                    // We want remote connections, not local listeners — skip
+                }
+
+                // For actual UDP connections we need to cross-reference with
+                // netstat on Windows since .NET doesn't expose UDP remote endpoints directly
                 var psi = new ProcessStartInfo
                 {
-                    FileName = tool, Arguments = args,
+                    FileName               = "netstat",
+                    Arguments              = "-n -p UDP",
                     RedirectStandardOutput = true,
-                    UseShellExecute = false, CreateNoWindow = true
+                    UseShellExecute        = false,
+                    CreateNoWindow         = true,
                 };
+
                 using var proc = Process.Start(psi);
                 if (proc == null) return;
                 string output = proc.StandardOutput.ReadToEnd();
@@ -266,29 +266,30 @@ public class ServerStats
 
                 foreach (var line in output.Split('\n'))
                 {
-                    if (!line.Contains("ESTABLISHED") && !line.Contains("UDP")) continue;
-                    var parts = line.Trim().Split(new[] { ' ', '\t' },
+                    // Windows netstat UDP line format:
+                    // UDP    0.0.0.0:PORT    *:*
+                    // or active:
+                    // UDP    localIP:port    remoteIP:port
+                    var trimmed = line.Trim();
+                    if (!trimmed.StartsWith("UDP")) continue;
+
+                    var parts = trimmed.Split(new[] { ' ', '\t' },
                         StringSplitOptions.RemoveEmptyEntries);
-                    if (parts.Length < 4) continue;
+                    if (parts.Length < 3) continue;
 
-                    // Parse both netstat and ss formats
-                    string foreign = "";
-                    string local   = "";
-                    for (int i = 0; i < parts.Length - 1; i++)
-                    {
-                        if (parts[i].Contains(':') && !parts[i].StartsWith("::"))
-                        {
-                            if (string.IsNullOrEmpty(local))  local   = parts[i];
-                            else if (string.IsNullOrEmpty(foreign)) foreign = parts[i];
-                        }
-                    }
+                    string foreign = parts.Length >= 3 ? parts[2] : "";
+                    string local   = parts.Length >= 2 ? parts[1] : "";
 
-                    if (string.IsNullOrEmpty(foreign) || foreign == "*:*") continue;
+                    // Skip wildcard / unconnected
+                    if (foreign == "*:*" || string.IsNullOrEmpty(foreign)) continue;
+
                     int lc = foreign.LastIndexOf(':');
                     if (lc < 0) continue;
                     string rip = foreign[..lc];
                     if (!int.TryParse(foreign[(lc + 1)..], out int rport)) continue;
-                    if (rip.StartsWith("127.") || rip.StartsWith("0.")) continue;
+
+                    // Skip loopback and system ports
+                    if (rip.StartsWith("127.") || rip == "0.0.0.0") continue;
                     if (rport is 443 or 80 or 53 or 67 or 68) continue;
 
                     results.Add(new NetworkConnection
@@ -296,9 +297,35 @@ public class ServerStats
                         RemoteIp   = rip,
                         RemotePort = rport,
                         LocalAddr  = local,
-                        Protocol   = line.Contains("TCP") ? "TCP" : "UDP"
+                        Protocol   = "UDP"
                     });
                 }
+
+                // Also scan TCP connections for completeness
+                foreach (var conn in ipProps.GetActiveTcpConnections())
+                {
+                    if (conn.RemoteEndPoint.Address.ToString() == "0.0.0.0") continue;
+                    string rip = conn.RemoteEndPoint.Address.ToString();
+                    int rport  = conn.RemoteEndPoint.Port;
+                    if (rip.StartsWith("127.")) continue;
+                    if (rport is 443 or 80 or 53) continue;
+
+                    results.Add(new NetworkConnection
+                    {
+                        RemoteIp   = rip,
+                        RemotePort = rport,
+                        LocalAddr  = conn.LocalEndPoint.ToString(),
+                        Protocol   = "TCP"
+                    });
+                }
+
+                // Deduplicate by IP:port
+                results = results
+                    .GroupBy(c => $"{c.RemoteIp}:{c.RemotePort}")
+                    .Select(g => g.First())
+                    .OrderByDescending(c => c.RemotePort == 5520 ? 100 : 0)
+                    .ThenBy(c => c.RemoteIp)
+                    .ToList();
             }
             catch (Exception ex) { _log.Error($"[NetScan] {ex.Message}"); }
             ActiveConnections = results;

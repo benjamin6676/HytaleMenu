@@ -107,10 +107,10 @@ public class PacketTab : ITab
         ImGui.SameLine();
         UiHelper.AccentText($"0x{_packetId:X4}");
 
-        ImGui.SetNextItemWidth(-60);
+        ImGui.SetNextItemWidth(-72);
         ImGui.InputText("Payload##pay", ref _payloadHex, 512);
-        ImGui.SameLine();
-        UiHelper.SecondaryButton("Rnd", 52, 22, () => _payloadHex = RandomHex(16));
+        ImGui.SameLine(0, 6);
+        UiHelper.SecondaryButton("Rnd", 62, 22, () => _payloadHex = RandomHex(16));
 
         ImGui.SetNextItemWidth(100);
         ImGui.InputInt("Pad bytes##pl", ref _payloadLen);

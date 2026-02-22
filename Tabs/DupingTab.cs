@@ -157,7 +157,7 @@ public class DupingTab : ITab
             RenderBookPicker("Load from Book##pubook", v => _pickupHex = v);
         });
         ImGui.Spacing();
-        UiHelper.SectionBox("RACE CONFIG + RUN", w, 120, () =>
+        UiHelper.SectionBox("RACE CONFIG + RUN", w, 150, () =>
         {
             UiHelper.MutedLabel("Sends Drop + Pickup simultaneously from parallel threads.");
             UiHelper.MutedLabel("If server doesn\u2019t lock item state, both succeed \u2192 dupe.");
@@ -230,7 +230,7 @@ public class DupingTab : ITab
             RenderBookPicker("Load##tcbook", v => _tradeCancelHex = v);
         });
         ImGui.Spacing();
-        UiHelper.SectionBox("RUN", w, 100, () =>
+        UiHelper.SectionBox("RUN", w, 125, () =>
         {
             UiHelper.MutedLabel("Sends Accept + Cancel simultaneously.");
             UiHelper.MutedLabel("If server has no mutex on trade state, both may succeed.");
@@ -279,7 +279,7 @@ public class DupingTab : ITab
             RenderBookPicker("Load##cmbook", v => _containerMoveHex = v);
         });
         ImGui.Spacing();
-        UiHelper.SectionBox("RUN", w, 95, () =>
+        UiHelper.SectionBox("RUN", w, 120, () =>
         {
             UiHelper.MutedLabel("Sends the same MoveItem packet simultaneously \u2014 tests if server allows only one move per item.");
             ImGui.Spacing();
@@ -323,7 +323,7 @@ public class DupingTab : ITab
             RenderBookPicker("Load##rdbook", v => _replayHex = v);
         });
         ImGui.Spacing();
-        UiHelper.SectionBox("RUN", w, 95, () =>
+        UiHelper.SectionBox("RUN", w, 120, () =>
         {
             ImGui.SetNextItemWidth(110); ImGui.InputInt("Count##rdcnt", ref _replayCount);
             _replayCount = Math.Clamp(_replayCount, 1, 10000);
@@ -380,7 +380,7 @@ public class DupingTab : ITab
             ImGui.Checkbox("Mid-trade##rbtrade", ref _rollbackTrade);
         });
         ImGui.Spacing();
-        UiHelper.SectionBox("RUN", w, 75, () =>
+        UiHelper.SectionBox("RUN", w, 100, () =>
         {
             UiHelper.MutedLabel("Sends transaction start, waits delay ms, then kills UDP proxy.");
             UiHelper.MutedLabel("If item committed before disconnect = rollback failure = dupe.");
@@ -430,7 +430,7 @@ public class DupingTab : ITab
             RenderBookPicker("Load##sw2book", v => _sweepPkt2 = v);
         });
         ImGui.Spacing();
-        UiHelper.SectionBox("SWEEP CONFIG + RUN", w, 100, () =>
+        UiHelper.SectionBox("SWEEP CONFIG + RUN", w, 130, () =>
         {
             UiHelper.MutedLabel("Sends Pkt1, waits [delay], sends Pkt2. Sweeps from Start to End ms.");
             ImGui.Spacing();
@@ -513,7 +513,7 @@ public class DupingTab : ITab
     private void RenderHowTo(params string[] steps)
     {
         float w = ImGui.GetContentRegionAvail().X;
-        UiHelper.SectionBox("HOW TO USE", w, 30 + steps.Length * 18, () =>
+        UiHelper.SectionBox("HOW TO USE", w, 40 + steps.Length * 22, () =>
         { foreach (var s in steps) UiHelper.MutedLabel(s); });
     }
 

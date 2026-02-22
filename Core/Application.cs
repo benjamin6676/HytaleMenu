@@ -41,7 +41,9 @@ public sealed class Application : IDisposable
         _input = _window.CreateInput();
         _imgui = new ImGuiController(_gl, _window, _input);
 
-        ImGui.GetIO().ConfigFlags |= ImGuiConfigFlags.NavEnableKeyboard;
+        var io = ImGui.GetIO();
+        io.ConfigFlags    |= ImGuiConfigFlags.NavEnableKeyboard;
+        io.FontGlobalScale = 1.15f;   // bump all text up ~15%
 
         foreach (var keyboard in _input.Keyboards)
             keyboard.KeyDown += OnKeyDown;
