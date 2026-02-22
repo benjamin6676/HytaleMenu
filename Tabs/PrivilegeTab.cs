@@ -72,7 +72,7 @@ public class PrivilegeTab : ITab
         bool ses = _capture.IsRunning;
 
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
-        ImGui.BeginChild("##privst", new Vector2(w, 30), ImGuiChildFlags.Borders);
+        ImGui.BeginChild("##privst", new Vector2(w, 30), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
         ImGui.SetCursorPos(new Vector2(12, 6));
         ImGui.PushStyleColor(ImGuiCol.Text,

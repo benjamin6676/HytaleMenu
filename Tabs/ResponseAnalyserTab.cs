@@ -97,7 +97,7 @@ public class ResponseAnalyserTab : ITab
     private void RenderTopBar(float w)
     {
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
-        ImGui.BeginChild("##rastop", new Vector2(w, 34), ImGuiChildFlags.Borders);
+        ImGui.BeginChild("##rastop", new Vector2(w, 34), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
 
         ImGui.SetCursorPos(new Vector2(12, 7));
@@ -155,7 +155,7 @@ public class ResponseAnalyserTab : ITab
     private void RenderStatBlock(string label, string value, Vector4 col, float w)
     {
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
-        ImGui.BeginChild($"##rasb_{label}", new Vector2(w, 60), ImGuiChildFlags.Borders);
+        ImGui.BeginChild($"##rasb_{label}", new Vector2(w, 60), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
 
         var dl = ImGui.GetWindowDrawList();
@@ -292,7 +292,7 @@ public class ResponseAnalyserTab : ITab
 
         // Feed list
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
-        ImGui.BeginChild("##rafeed", new Vector2(feedW, h - 30), ImGuiChildFlags.Borders);
+        ImGui.BeginChild("##rafeed", new Vector2(feedW, h - 30), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
 
         ImGui.SetCursorPos(new Vector2(8, 6));
@@ -341,7 +341,7 @@ public class ResponseAnalyserTab : ITab
 
         // Detail panel
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
-        ImGui.BeginChild("##radet", new Vector2(detW, h - 30), ImGuiChildFlags.Borders);
+        ImGui.BeginChild("##radet", new Vector2(detW, h - 30), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
 
         if (_selectedIdx >= 0 && _selectedIdx < history.Count)
@@ -413,7 +413,7 @@ public class ResponseAnalyserTab : ITab
         };
 
         ImGui.PushStyleColor(ImGuiCol.ChildBg, bannerBg);
-        ImGui.BeginChild("##rabanner", new Vector2(-1, 36), ImGuiChildFlags.Borders);
+        ImGui.BeginChild("##rabanner", new Vector2(-1, 36), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
         var dl = ImGui.GetWindowDrawList();
         var bp = ImGui.GetWindowPos();

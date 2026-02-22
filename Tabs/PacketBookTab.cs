@@ -45,7 +45,7 @@ public class PacketBookTab : ITab
 
         // Left: packet list
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
-        ImGui.BeginChild("##pblist", new Vector2(listW, h), ImGuiChildFlags.Borders);
+        ImGui.BeginChild("##pblist", new Vector2(listW, h), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
 
         ImGui.SetCursorPos(new Vector2(8, 8));
@@ -113,7 +113,7 @@ public class PacketBookTab : ITab
 
         // Right: detail + actions
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
-        ImGui.BeginChild("##pbdet", new Vector2(detW, h), ImGuiChildFlags.Borders);
+        ImGui.BeginChild("##pbdet", new Vector2(detW, h), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
 
         if (_selectedIdx >= 0 && _selectedIdx < packets.Count)

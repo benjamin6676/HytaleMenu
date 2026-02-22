@@ -79,7 +79,7 @@ public class DiffAnalysisTab : ITab
     private void RenderInstructions(float w)
     {
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
-        ImGui.BeginChild("##diffinfo", new Vector2(w, 44), ImGuiChildFlags.Borders);
+        ImGui.BeginChild("##diffinfo", new Vector2(w, 44), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
         ImGui.SetCursorPos(new Vector2(12, 6));
         UiHelper.AccentText("Workflow: ");
@@ -106,7 +106,7 @@ public class DiffAnalysisTab : ITab
             var borderCol = hasData ? MenuRenderer.ColAccent : MenuRenderer.ColBorder;
 
             ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
-            ImGui.BeginChild($"##slot{i}", new Vector2(slotW, 130), ImGuiChildFlags.Borders);
+            ImGui.BeginChild($"##slot{i}", new Vector2(slotW, 130), ImGuiChildFlags.Border);
             ImGui.PopStyleColor();
 
             // Accent left border if populated
@@ -120,7 +120,10 @@ public class DiffAnalysisTab : ITab
 
             ImGui.SetCursorPos(new Vector2(8, 6));
             ImGui.SetNextItemWidth(slotW - 50);
-            ImGui.InputText($"##slbl{i}", ref slot.Label, 32);
+            // InputText requires a ref to a local string variable (can't pass property directly)
+            string slotLabel = slot.Label;
+            ImGui.InputText($"##slbl{i}", ref slotLabel, 32);
+            slot.Label = slotLabel;
             ImGui.SameLine(0, 4);
 
             // Delete slot button (only if > 2 slots)
@@ -134,7 +137,9 @@ public class DiffAnalysisTab : ITab
             UiHelper.MutedLabel("Hex:");
             ImGui.SetNextItemWidth(slotW - 16);
             ImGui.SetCursorPos(new Vector2(8, 46));
-            ImGui.InputText($"##shex{i}", ref slot.Hex, 1024);
+            string slotHex = slot.Hex;
+            ImGui.InputText($"##shex{i}", ref slotHex, 1024);
+            slot.Hex = slotHex;
 
             ImGui.SetCursorPos(new Vector2(8, 72));
             if (hasData)
@@ -272,7 +277,7 @@ public class DiffAnalysisTab : ITab
 
         // Field list
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
-        ImGui.BeginChild("##fmlist", new Vector2(listW, h), ImGuiChildFlags.Borders);
+        ImGui.BeginChild("##fmlist", new Vector2(listW, h), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
 
         ImGui.SetCursorPos(new Vector2(8, 6));
@@ -340,7 +345,7 @@ public class DiffAnalysisTab : ITab
 
         // Detail panel
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
-        ImGui.BeginChild("##fmdet", new Vector2(detW, h), ImGuiChildFlags.Borders);
+        ImGui.BeginChild("##fmdet", new Vector2(detW, h), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
 
         if (_selectedField >= 0 && _selectedField < _multiResult.Fields.Count)
@@ -472,7 +477,7 @@ public class DiffAnalysisTab : ITab
 
         float h = ImGui.GetContentRegionAvail().Y;
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
-        ImGui.BeginChild("##pdiff", new Vector2(w, h), ImGuiChildFlags.Borders);
+        ImGui.BeginChild("##pdiff", new Vector2(w, h), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
 
         ImGui.SetCursorPos(new Vector2(8, 8));
@@ -538,7 +543,7 @@ public class DiffAnalysisTab : ITab
 
         float h = ImGui.GetContentRegionAvail().Y;
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
-        ImGui.BeginChild("##bgrid", new Vector2(w, h), ImGuiChildFlags.Borders);
+        ImGui.BeginChild("##bgrid", new Vector2(w, h), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
 
         // Header

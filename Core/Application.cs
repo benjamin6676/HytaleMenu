@@ -1,4 +1,3 @@
-using System;
 using Silk.NET.Input;
 using Silk.NET.Maths;
 using Silk.NET.OpenGL;
@@ -11,26 +10,26 @@ namespace HytaleSecurityTester.Core;
 
 public sealed class Application : IDisposable
 {
-    private IWindow? _window;
-    private GL? _gl;
-    private IInputContext? _input;
+    private IWindow?         _window;
+    private GL?              _gl;
+    private IInputContext?   _input;
     private ImGuiController? _imgui;
-    private MenuRenderer? _menu;
+    private MenuRenderer?    _menu;
 
     public Application()
     {
         var opts = WindowOptions.Default with
         {
             Title = "Hytale Security Tester",
-            Size = new Vector2D<int>(1100, 720),
+            Size  = new Vector2D<int>(1100, 720),
             VSync = true,
         };
 
-        _window = Window.Create(opts);
-        _window.Load += OnLoad;
-        _window.Update += OnUpdate;
-        _window.Render += OnRender;
-        _window.Resize += OnResize;
+        _window          = Window.Create(opts);
+        _window.Load    += OnLoad;
+        _window.Update  += OnUpdate;
+        _window.Render  += OnRender;
+        _window.Resize  += OnResize;
         _window.Closing += OnClosing;
     }
 
@@ -38,7 +37,7 @@ public sealed class Application : IDisposable
 
     private void OnLoad()
     {
-        _gl = _window!.CreateOpenGL();
+        _gl    = _window!.CreateOpenGL();
         _input = _window.CreateInput();
         _imgui = new ImGuiController(_gl, _window, _input);
 
@@ -77,9 +76,9 @@ public sealed class Application : IDisposable
                 var p = System.Diagnostics.Process.Start(
                     new System.Diagnostics.ProcessStartInfo
                     {
-                        FileName = "pbpaste",
+                        FileName               = "pbpaste",
                         RedirectStandardOutput = true,
-                        UseShellExecute = false,
+                        UseShellExecute        = false,
                     });
                 return p?.StandardOutput.ReadToEnd() ?? "";
             }
@@ -87,10 +86,10 @@ public sealed class Application : IDisposable
             var xclip = System.Diagnostics.Process.Start(
                 new System.Diagnostics.ProcessStartInfo
                 {
-                    FileName = "xclip",
-                    Arguments = "-selection clipboard -o",
+                    FileName               = "xclip",
+                    Arguments              = "-selection clipboard -o",
                     RedirectStandardOutput = true,
-                    UseShellExecute = false,
+                    UseShellExecute        = false,
                 });
             return xclip?.StandardOutput.ReadToEnd() ?? "";
         }
@@ -123,17 +122,17 @@ public sealed class Application : IDisposable
 
 internal static class WindowsClipboard
 {
-    [DllImport("user32.dll")] static extern bool OpenClipboard(IntPtr h);
-    [DllImport("user32.dll")] static extern bool CloseClipboard();
-    [DllImport("user32.dll")] static extern bool EmptyClipboard();
+    [DllImport("user32.dll")] static extern bool   OpenClipboard(IntPtr h);
+    [DllImport("user32.dll")] static extern bool   CloseClipboard();
+    [DllImport("user32.dll")] static extern bool   EmptyClipboard();
     [DllImport("user32.dll")] static extern IntPtr GetClipboardData(uint f);
     [DllImport("user32.dll")] static extern IntPtr SetClipboardData(uint f, IntPtr h);
     [DllImport("kernel32.dll")] static extern IntPtr GlobalLock(IntPtr h);
-    [DllImport("kernel32.dll")] static extern bool GlobalUnlock(IntPtr h);
+    [DllImport("kernel32.dll")] static extern bool   GlobalUnlock(IntPtr h);
     [DllImport("kernel32.dll")] static extern IntPtr GlobalAlloc(uint f, UIntPtr s);
 
     const uint CF_UNICODE = 13;
-    const uint GMEM_MOVE = 0x0002;
+    const uint GMEM_MOVE  = 0x0002;
 
     public static string Get()
     {
@@ -144,7 +143,7 @@ internal static class WindowsClipboard
             if (h == IntPtr.Zero) return "";
             IntPtr p = GlobalLock(h);
             if (p == IntPtr.Zero) return "";
-            try { return Marshal.PtrToStringUni(p) ?? ""; }
+            try   { return Marshal.PtrToStringUni(p) ?? ""; }
             finally { GlobalUnlock(h); }
         }
         finally { CloseClipboard(); }
@@ -156,11 +155,11 @@ internal static class WindowsClipboard
         try
         {
             EmptyClipboard();
-            int bytes = (text.Length + 1) * 2;
-            IntPtr hg = GlobalAlloc(GMEM_MOVE, (UIntPtr)bytes);
+            int    bytes = (text.Length + 1) * 2;
+            IntPtr hg    = GlobalAlloc(GMEM_MOVE, (UIntPtr)bytes);
             if (hg == IntPtr.Zero) return;
             IntPtr p = GlobalLock(hg);
-            try { Marshal.Copy(text.ToCharArray(), 0, p, text.Length); }
+            try   { Marshal.Copy(text.ToCharArray(), 0, p, text.Length); }
             finally { GlobalUnlock(hg); }
             SetClipboardData(CF_UNICODE, hg);
         }

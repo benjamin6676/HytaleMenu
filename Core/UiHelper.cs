@@ -1,6 +1,5 @@
 using ImGuiNET;
 using System.Numerics;
-using System;
 
 namespace HytaleSecurityTester.Core;
 
@@ -19,7 +18,7 @@ public static class UiHelper
 
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
         ImGui.BeginChild($"##sb_{label}_{(int)p0.X}_{(int)p0.Y}",
-            new Vector2(w, h), ImGuiChildFlags.Borders);
+            new Vector2(w, h), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
 
         // Accent left border stripe

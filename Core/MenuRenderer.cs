@@ -396,9 +396,10 @@ public class MenuRenderer
         c[(int)ImGuiCol.ResizeGripActive]  = ColAccent;
         c[(int)ImGuiCol.Tab]               = ColBg2;
         c[(int)ImGuiCol.TabHovered]        = new Vector4(0.18f, 0.95f, 0.45f, 0.22f);
-        c[(int)ImGuiCol.TabSelected]       = new Vector4(0.18f, 0.95f, 0.45f, 0.28f);
-        c[(int)ImGuiCol.TabDimmed]         = ColBg1;
-        c[(int)ImGuiCol.TabDimmedSelected] = ColBg2;
+        // Map tab-like colors to existing ImGuiCol entries available in this build
+        c[(int)ImGuiCol.HeaderActive]      = new Vector4(0.18f, 0.95f, 0.45f, 0.28f);
+        c[(int)ImGuiCol.ChildBg]           = ColBg1;
+        c[(int)ImGuiCol.FrameBg]           = ColBg2;
         c[(int)ImGuiCol.PlotLines]         = ColAccent;
         c[(int)ImGuiCol.PlotLinesHovered]  = new Vector4(0.18f, 0.95f, 0.45f, 1f);
         c[(int)ImGuiCol.PlotHistogram]     = ColAccentMid;

