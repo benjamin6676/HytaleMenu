@@ -23,12 +23,13 @@ public class MenuRenderer
     private readonly DiffAnalysisTab      _diffAnalysisTab;
     private readonly ResponseAnalyserTab  _responseAnalyserTab;
     private readonly LogTab               _logTab;
+    private readonly MemoryTab            _memoryTab;
 
     // Which sidebar section is active (0-based)
     private int _selectedSection = 0;
 
     private static readonly string[] SectionIcons = {
-        "⌂", "⚡", "◈", "◎", "▲", "⊙", "⊗", "☰", "≋", "◫", "≡"
+        "⌂", "⚡", "◈", "◎", "▲", "⊙", "⊗", "☰", "≋", "◫", "≡", "⬡"
     };
 
     private static readonly string[] SectionNames = {
@@ -42,7 +43,8 @@ public class MenuRenderer
         "Diff\nAnalysis",
         "Packet\nBook",
         "Connection",
-        "Log"
+        "Log",
+        "Memory\nReader"
     };
 
     private static readonly string[] SectionLabels = {
@@ -56,7 +58,8 @@ public class MenuRenderer
         "Diff Analysis",
         "Packet Book",
         "Connection",
-        "Log"
+        "Log",
+        "Memory Reader"
     };
 
     // ── Palette — one place to change every color in the app ──────────────
@@ -105,6 +108,7 @@ public class MenuRenderer
         _responseAnalyserTab = new ResponseAnalyserTab(_log, _tracker, _captureTab.Capture,
                                    _captureTab.UdpProxy, _store, _config);
         _logTab              = new LogTab(_log, _pktLog);
+        _memoryTab           = new MemoryTab(_log);
     }
 
     public void Render()
@@ -331,6 +335,7 @@ public class MenuRenderer
             case 8:  _packetBookTab.Render();       break;
             case 9:  _connectionTab.Render();       break;
             case 10: _logTab.Render();              break;
+            case 11: _memoryTab.Render();           break;
         }
     }
 
