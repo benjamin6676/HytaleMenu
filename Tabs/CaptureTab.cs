@@ -6,6 +6,10 @@ using System.Net.Sockets;
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using System.Security.Cryptography;
+using System;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace HytaleSecurityTester.Tabs;
 
@@ -191,7 +195,7 @@ public class CaptureTab : ITab
         if (_mode == CaptureMode.Tls)
         {
             ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.10f, 0.07f, 0.18f, 1f));
-            ImGui.BeginChild("##tlsi", new Vector2(-1, 30), ImGuiChildFlags.Borders);
+            ImGui.BeginChild("##tlsi", new Vector2(-1, 30), ImGuiChildFlags.Border);
             ImGui.PopStyleColor();
             ImGui.SetCursorPos(new Vector2(12, 6));
             ImGui.PushStyleColor(ImGuiCol.Text,
@@ -219,7 +223,7 @@ public class CaptureTab : ITab
         ImGui.PushStyleColor(ImGuiCol.ChildBg,
             running ? new Vector4(0.05f, 0.15f, 0.06f, 1f)
                     : new Vector4(0.13f, 0.05f, 0.05f, 1f));
-        ImGui.BeginChild("##sbar", new Vector2(-1, 34), ImGuiChildFlags.Borders);
+        ImGui.BeginChild("##sbar", new Vector2(-1, 34), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
         ImGui.SetCursorPos(new Vector2(12, 8));
 
@@ -256,7 +260,7 @@ public class CaptureTab : ITab
 
         // Filter toolbar
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
-        ImGui.BeginChild("##fbar", new Vector2(w, 30), ImGuiChildFlags.Borders);
+        ImGui.BeginChild("##fbar", new Vector2(w, 30), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
         ImGui.SetCursorPos(new Vector2(8, 4));
         ImGui.SetNextItemWidth(180);
@@ -303,7 +307,7 @@ public class CaptureTab : ITab
 
         // Packet list pane
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
-        ImGui.BeginChild("##pl", new Vector2(lw, h), ImGuiChildFlags.Borders);
+        ImGui.BeginChild("##pl", new Vector2(lw, h), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
 
         ImGui.SetCursorPos(new Vector2(8, 6));
@@ -348,7 +352,7 @@ public class CaptureTab : ITab
 
         // Detail pane
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
-        ImGui.BeginChild("##pd", new Vector2(dw, h), ImGuiChildFlags.Borders);
+        ImGui.BeginChild("##pd", new Vector2(dw, h), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
 
         if (_selectedIndex >= 0 && _selectedIndex < filtered.Count)

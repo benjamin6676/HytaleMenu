@@ -1,4 +1,5 @@
-﻿using HytaleSecurityTester.Core;
+﻿using System;
+using HytaleSecurityTester.Core;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
