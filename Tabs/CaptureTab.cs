@@ -37,12 +37,12 @@ public class CaptureTab : ITab
     private bool   _showServerClient = true;
     private bool   _autoScroll       = true;
 
-    public CaptureTab(TestLog log, ServerConfig config)
+    public CaptureTab(TestLog log, PacketLog pktLog, ServerConfig config)
     {
         _log      = log;
         _config   = config;
-        _capture  = new PacketCapture(log);
-        _udpProxy = new UdpProxy(log);
+        _capture  = new PacketCapture(log, pktLog);
+        _udpProxy = new UdpProxy(log, pktLog);
 
         // Forward UdpProxy packets into the shared capture list
         _udpProxy.OnPacket += pkt =>

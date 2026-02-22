@@ -7,6 +7,7 @@ namespace HytaleSecurityTester.Core;
 public class MenuRenderer
 {
     private readonly TestLog              _log;
+    private readonly PacketLog            _pktLog;
     private readonly ServerConfig         _config;
     private readonly PacketStore          _store;
     private readonly ServerStats          _stats;
@@ -81,12 +82,13 @@ public class MenuRenderer
     public MenuRenderer()
     {
         _log     = new TestLog();
+        _pktLog  = new PacketLog(2000);
         _config  = new ServerConfig();
         _store   = new PacketStore();
         _stats   = new ServerStats(_log);
         _tracker = new ResponseTracker();
 
-        _captureTab = new CaptureTab(_log, _config);
+        _captureTab = new CaptureTab(_log, _pktLog, _config);
 
         // Wire up packet feeds — stats + tracker both observe every proxied packet
         _captureTab.UdpProxy.OnPacket += _stats.OnPacket;
@@ -102,7 +104,7 @@ public class MenuRenderer
         _diffAnalysisTab     = new DiffAnalysisTab(_log, _store, _captureTab.Capture);
         _responseAnalyserTab = new ResponseAnalyserTab(_log, _tracker, _captureTab.Capture,
                                    _captureTab.UdpProxy, _store, _config);
-        _logTab              = new LogTab(_log);
+        _logTab              = new LogTab(_log, _pktLog);
     }
 
     public void Render()

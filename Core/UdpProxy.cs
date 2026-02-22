@@ -32,7 +32,8 @@ public class UdpProxy : IDisposable
     public event Action<CapturedPacket>? OnPacket;
 
     // ── Private ───────────────────────────────────────────────────────────
-    private readonly TestLog _log;
+    private readonly TestLog   _log;
+    private readonly PacketLog _pktLog;
 
     private UdpClient?               _listener;
     private CancellationTokenSource? _cts;
@@ -42,7 +43,11 @@ public class UdpProxy : IDisposable
 
     private IPEndPoint _serverEp = new(IPAddress.Loopback, 0);
 
-    public UdpProxy(TestLog log) => _log = log;
+    public UdpProxy(TestLog log, PacketLog pktLog)
+    {
+        _log    = log;
+        _pktLog = pktLog;
+    }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -283,10 +288,10 @@ public class UdpProxy : IDisposable
         };
         OnPacket?.Invoke(pkt);
 
-        string arrow = dir == PacketDirection.ClientToServer ? "C→S" : "S→C";
-        string tag   = injected ? "[INJ]" : "";
-        _log.Info($"[UDP]{tag}[{arrow}] {data.Length}b | " +
-                  $"{pkt.HexString[..Math.Min(48, pkt.HexString.Length)]}");
+        // Per-packet traffic goes to PacketLog only — keeps TestLog clean
+        _pktLog.Add(dir, data.Length,
+            pkt.HexString[..Math.Min(48, pkt.HexString.Length)],
+            injected);
     }
 
     private UdpSession? GetLatestSession()

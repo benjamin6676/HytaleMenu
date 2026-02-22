@@ -6,7 +6,8 @@ namespace HytaleSecurityTester.Core;
 
 public class PacketCapture
 {
-    private readonly TestLog _log;
+    private readonly TestLog   _log;
+    private readonly PacketLog _pktLog;
     private TcpListener?     _listener;
     private CancellationTokenSource? _cts;
 
@@ -20,7 +21,11 @@ public class PacketCapture
     public int    ActiveSessions { get; private set; } = 0;
     public string StatusMessage  { get; set; }         = "Stopped";
 
-    public PacketCapture(TestLog log) => _log = log;
+    public PacketCapture(TestLog log, PacketLog pktLog)
+    {
+        _log    = log;
+        _pktLog = pktLog;
+    }
 
     public List<CapturedPacket> GetPackets()
     {
@@ -182,9 +187,9 @@ public class PacketCapture
 
                 lock (_packetsLock) _packets.Add(packet);
 
-                string dir = direction == PacketDirection.ClientToServer ? "C→S" : "S→C";
-                _log.Info($"[Capture][{dir}] {n} bytes | " +
-                          $"{packet.HexString[..Math.Min(48, packet.HexString.Length)]}");
+                // Per-packet traffic goes to PacketLog only
+                _pktLog.Add(direction, n,
+                    packet.HexString[..Math.Min(48, packet.HexString.Length)]);
             }
         }
         catch (OperationCanceledException) { }
