@@ -17,6 +17,13 @@ public class DashboardTab : ITab
 
     private string _inputIp   = "149.56.241.73";
     private int    _inputPort = 5520;
+
+    // IP Presets — user can save frequently used server IPs
+    private List<(string Label, string Ip, int Port)> _presets = new()
+    {
+        ("Hytale Official", "149.56.241.73", 5520),
+    };
+    private string _presetLabel = "My Server";
     private bool   _detecting = false;
     private bool   _pinging   = false;
 
@@ -131,7 +138,7 @@ public class DashboardTab : ITab
     {
         float half = (w - 12) * 0.5f;
 
-        UiHelper.SectionBox("SERVER CONFIG", half, 230, () =>
+        UiHelper.SectionBox("SERVER CONFIG", half, 320, () =>
         {
             if (_config.IsSet)
             {
@@ -148,6 +155,48 @@ public class DashboardTab : ITab
             ImGui.SetNextItemWidth(110);
             if (ImGui.InputInt("##dport", ref _inputPort))
                 _inputPort = Math.Clamp(_inputPort, 1, 65535);
+            ImGui.Spacing();
+
+            // Presets row
+            UiHelper.MutedLabel("Presets:");
+            ImGui.SameLine(0, 8);
+            foreach (var (label, ip, port) in _presets)
+            {
+                bool active = _config.IsSet && _config.ServerIp == ip && _config.ServerPort == port;
+                ImGui.PushStyleColor(ImGuiCol.Button,
+                    active ? MenuRenderer.ColAccentDim : MenuRenderer.ColBg3);
+                ImGui.PushStyleColor(ImGuiCol.Text,
+                    active ? MenuRenderer.ColAccent : MenuRenderer.ColTextMuted);
+                if (ImGui.Button($"{label}##preset_{label}", new Vector2(0, 22)))
+                {
+                    _inputIp   = ip;
+                    _inputPort = port;
+                }
+                ImGui.PopStyleColor(2);
+                ImGui.SameLine(0, 4);
+            }
+            ImGui.NewLine();
+            ImGui.Spacing();
+
+            // Save current IP as new preset
+            ImGui.SetNextItemWidth(130);
+            ImGui.InputText("Label##plbl", ref _presetLabel, 32);
+            ImGui.SameLine(0, 6);
+            UiHelper.SecondaryButton("Save Preset##psave", 100, 22, () =>
+            {
+                string lbl = string.IsNullOrWhiteSpace(_presetLabel) ? _inputIp : _presetLabel;
+                _presets.RemoveAll(p => p.Ip == _inputIp && p.Port == _inputPort);
+                _presets.Add((lbl, _inputIp, _inputPort));
+                _log.Info($"[Presets] Saved: {lbl} = {_inputIp}:{_inputPort}");
+            });
+            ImGui.SameLine(0, 4);
+            if (_presets.Count > 1)
+            {
+                UiHelper.DangerButton("✕ Last##pdel", 66, 22, () =>
+                {
+                    _presets.RemoveAt(_presets.Count - 1);
+                });
+            }
             ImGui.Spacing();
 
             UiHelper.PrimaryButton("Set Active Server", -1, 32, () =>

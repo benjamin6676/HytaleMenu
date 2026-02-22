@@ -23,6 +23,10 @@ public class PrivilegeTab : ITab
     private bool   _spoofOwner    = false;
     private int    _fakePermLevel = 4;
 
+    // Auto-fill state
+    private ContextSnapshot? _lastFill;
+    private string           _fillStatus = "Click ⟳ to auto-fill from captured packets";
+
     // Sub-tab selection (inline button tabs, not ImGui tabs)
     private int _subTab = 0;
     private static readonly string[] SubTabs = { "Give Item", "Command Inject", "Perm Spoof" };
@@ -37,7 +41,9 @@ public class PrivilegeTab : ITab
         float w = ImGui.GetContentRegionAvail().X;
 
         RenderStatusBar(w);
-        ImGui.Spacing(); ImGui.Spacing();
+        ImGui.Spacing();
+        RenderAutoFillBar(w);
+        ImGui.Spacing();
 
         // Inline sub-tab selector
         for (int i = 0; i < SubTabs.Length; i++)
@@ -91,6 +97,39 @@ public class PrivilegeTab : ITab
         ImGui.EndChild();
     }
 
+    private void RenderAutoFillBar(float w)
+    {
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
+        ImGui.BeginChild("##privaf", new Vector2(w, 30), ImGuiChildFlags.Border);
+        ImGui.PopStyleColor();
+        ImGui.SetCursorPos(new Vector2(8, 5));
+
+        UiHelper.SecondaryButton("⟳ Auto-fill IDs from packets##privafbtn", 200, 22, () =>
+        {
+            _lastFill = ContextFiller.Fill(_capture, _udpProxy);
+            if (_lastFill.HasItem)   { _itemId   = _lastFill.ItemId!.Value; }
+            if (_lastFill.HasPlayer) { _playerId  = _lastFill.PlayerId ?? _playerId; }
+            if (_lastFill.HasItem || _lastFill.HasPlayer)
+            {
+                _fillStatus = $"Filled: ItemID={_itemId}  PlayerID={_playerId}" +
+                              (_lastFill.PlayerName != null ? $"  Name={_lastFill.PlayerName}" : "");
+                _log.Success($"[PrivEsc] Auto-filled from packets — {_fillStatus}");
+            }
+            else
+            {
+                _fillStatus = "Nothing found — capture traffic first, then retry.";
+                _log.Warn("[PrivEsc] Auto-fill: no item/player IDs found in recent packets.");
+            }
+        });
+
+        ImGui.SameLine(0, 14);
+        ImGui.PushStyleColor(ImGuiCol.Text, _lastFill?.HasItem == true
+            ? MenuRenderer.ColAccent : MenuRenderer.ColTextMuted);
+        ImGui.TextUnformatted(_fillStatus);
+        ImGui.PopStyleColor();
+        ImGui.EndChild();
+    }
+
     private void RenderGiveItem()
     {
         UiHelper.MutedLabel("Sends a give-item packet as a normal player.");
@@ -99,8 +138,14 @@ public class PrivilegeTab : ITab
 
         ImGui.SetNextItemWidth(130);
         ImGui.InputInt("Item ID##giid", ref _itemId);
-        ImGui.SameLine();
-        UiHelper.MutedLabel("← capture the real ID from Capture tab");
+        ImGui.SameLine(0, 6);
+        UiHelper.SecondaryButton("⟳##giaf", 26, 22, () => {
+            var f = ContextFiller.Fill(_capture, _udpProxy);
+            if (f.HasItem) { _itemId = f.ItemId!.Value; _log.Info($"[PrivEsc] Item ID filled: {_itemId}"); }
+            else _log.Warn("[PrivEsc] No item ID found — capture traffic while holding/dropping an item.");
+        });
+        ImGui.SameLine(0, 8);
+        UiHelper.MutedLabel("← use ⟳ or auto-fill bar to get real ID");
 
         ImGui.SetNextItemWidth(100);
         ImGui.InputInt("Amount##gicnt", ref _itemCount);
@@ -117,7 +162,7 @@ public class PrivilegeTab : ITab
             pkt.AddRange(BitConverter.GetBytes(_itemCount));
             pkt.AddRange(BitConverter.GetBytes(_playerId));
             SendRaw(pkt.ToArray());
-            _log.Warn("[PrivEsc] Packet ID 0x2A is a placeholder — capture the real ID first.");
+            _log.Info($"[PrivEsc] Give item — ItemID={_itemId} ×{_itemCount} PlayerID={_playerId}");
         });
 
         ImGui.Spacing();
@@ -139,13 +184,12 @@ public class PrivilegeTab : ITab
 
         UiHelper.WarnButton("Send Command", 180, 32, () =>
         {
-            _log.Info($"[PrivEsc] Command: {_rawCommand}");
+            _log.Info($"[PrivEsc] Sending command: {_rawCommand}");
             byte[] bytes = Encoding.UTF8.GetBytes(_rawCommand);
             var pkt = new List<byte> { 0x01 };
             pkt.AddRange(BitConverter.GetBytes((ushort)bytes.Length));
             pkt.AddRange(bytes);
             SendRaw(pkt.ToArray());
-            _log.Warn("[PrivEsc] Packet ID 0x01 is a placeholder — capture the real ID first.");
         });
 
         ImGui.Spacing();

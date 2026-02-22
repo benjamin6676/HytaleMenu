@@ -73,8 +73,10 @@ public class PacketTab : ITab
 
     private void RenderStatusBar(float w)
     {
-        bool srv = _config.IsSet;
-        bool ses = _capture.IsRunning && _capture.ActiveSessions > 0;
+        bool srv    = _config.IsSet;
+        bool udpRun = _udpProxy.IsRunning;
+        bool tcpSes = _capture.IsRunning && _capture.ActiveSessions > 0;
+        bool anyProxy = udpRun || tcpSes;
 
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
         ImGui.BeginChild("##pst", new Vector2(w, 30), ImGuiChildFlags.Border);
@@ -88,10 +90,11 @@ public class PacketTab : ITab
         ImGui.PopStyleColor();
         ImGui.SameLine(0, 24);
         ImGui.PushStyleColor(ImGuiCol.Text,
-            ses ? MenuRenderer.ColAccent : MenuRenderer.ColTextMuted);
-        ImGui.TextUnformatted(ses
-            ? "● Proxy session active — injecting via proxy"
-            : "● No proxy session — will send direct UDP");
+            anyProxy ? MenuRenderer.ColAccent : MenuRenderer.ColTextMuted);
+        string proxyState = udpRun  ? $"● UDP proxy running ({_udpProxy.ActiveSessions} session(s))"
+                          : tcpSes  ? "● TCP proxy session active"
+                          :           "● No proxy active — start UDP proxy in Capture tab";
+        ImGui.TextUnformatted(proxyState);
         ImGui.PopStyleColor();
         ImGui.EndChild();
     }
