@@ -19,6 +19,8 @@ public class PacketCapture
     public bool   IsRunning      { get; private set; } = false;
     public int    TotalClients   { get; set; }         = 0;
     public int    ActiveSessions { get; private set; } = 0;
+
+    public event Action<CapturedPacket>? OnPacket;
     public string StatusMessage  { get; set; }         = "Stopped";
 
     public PacketCapture(TestLog log, PacketLog pktLog)
@@ -186,6 +188,7 @@ public class PacketCapture
                 };
 
                 lock (_packetsLock) _packets.Add(packet);
+                OnPacket?.Invoke(packet);
 
                 // Per-packet traffic goes to PacketLog only
                 _pktLog.Add(direction, n,

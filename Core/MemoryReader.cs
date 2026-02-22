@@ -46,6 +46,19 @@ public class MemoryReader : IDisposable
     private static extern int GetModuleFileNameEx(
         IntPtr hProcess, IntPtr hModule, StringBuilder lpFilename, int nSize);
 
+    [DllImport("psapi.dll", SetLastError = true)]
+    private static extern bool GetModuleInformation(
+        IntPtr hProcess, IntPtr hModule,
+        out MODULEINFO lpmodinfo, uint cb);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MODULEINFO
+    {
+        public IntPtr lpBaseOfDll;
+        public uint   SizeOfImage;
+        public IntPtr EntryPoint;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct MEMORY_BASIC_INFORMATION
     {
@@ -392,9 +405,120 @@ public class MemoryReader : IDisposable
         return candidates;
     }
 
-    // ── Process list helper ───────────────────────────────────────────────
+    // ── Pointer Path Builder ──────────────────────────────────────────────
 
-    public static List<ProcessEntry> GetProcessList()
+    /// <summary>
+    /// Resolves a multi-level pointer chain.
+    /// baseAddress + offsets[0] → dereference → + offsets[1] → dereference → ...
+    ///
+    /// Returns the final resolved address, or IntPtr.Zero on failure.
+    /// Useful for tracking dynamic game objects whose base pointers are stable
+    /// but internal structure changes each session.
+    ///
+    /// Example: ResolvePointerChain(moduleBase + 0x1A2B3C, [0x8, 0x10, 0x30])
+    /// </summary>
+    public IntPtr ResolvePointerChain(IntPtr baseAddress, int[] offsets,
+                                       out string trace)
+    {
+        var sb   = new StringBuilder();
+        var addr = baseAddress;
+        sb.AppendLine($"Base: 0x{addr.ToInt64():X16}");
+
+        for (int i = 0; i < offsets.Length; i++)
+        {
+            // Dereference — read 8-byte pointer (64-bit process)
+            if (!ReadInt64(addr, out long ptr))
+            {
+                sb.AppendLine($"  [offset {i}] FAILED — cannot read at 0x{addr.ToInt64():X16}");
+                trace = sb.ToString();
+                return IntPtr.Zero;
+            }
+            addr = new IntPtr(ptr);
+            sb.AppendLine($"  → deref = 0x{ptr:X16}");
+
+            // Apply next offset
+            addr = IntPtr.Add(addr, offsets[i]);
+            sb.AppendLine($"  + 0x{offsets[i]:X} = 0x{addr.ToInt64():X16}");
+        }
+
+        trace = sb.ToString();
+        return addr;
+    }
+
+    // ── Memory Map ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns a full memory map of the process — all regions with their
+    /// protection, state, and size. Used for the Memory Map UI view.
+    /// </summary>
+    public List<MemoryMapEntry> GetMemoryMap()
+    {
+        var map  = new List<MemoryMapEntry>();
+        if (!IsAttached) return map;
+
+        IntPtr addr = IntPtr.Zero;
+
+        while (true)
+        {
+            int result = VirtualQueryEx(_handle, addr,
+                out MEMORY_BASIC_INFORMATION mbi,
+                (uint)Marshal.SizeOf<MEMORY_BASIC_INFORMATION>());
+            if (result == 0) break;
+
+            long size = mbi.RegionSize.ToInt64();
+            if (size <= 0) break;
+
+            string stateStr = mbi.State switch
+            {
+                0x1000  => "COMMIT",
+                0x2000  => "RESERVE",
+                0x10000 => "FREE",
+                _       => $"0x{mbi.State:X}"
+            };
+
+            string protStr = ProtectToString(mbi.Protect);
+            string typeStr = mbi.Type switch
+            {
+                0x1000000 => "IMAGE",
+                0x40000   => "MAPPED",
+                0x20000   => "PRIVATE",
+                _         => $"0x{mbi.Type:X}"
+            };
+
+            map.Add(new MemoryMapEntry
+            {
+                Base    = mbi.BaseAddress,
+                Size    = size,
+                State   = stateStr,
+                Protect = protStr,
+                Type    = typeStr,
+                RawProtect = mbi.Protect,
+            });
+
+            try { addr = IntPtr.Add(mbi.BaseAddress, (int)Math.Min(size, int.MaxValue)); }
+            catch { break; }
+            if (addr.ToInt64() < 0 || addr.ToInt64() > 0x7FFFFFFFFFFF) break;
+        }
+
+        return map;
+    }
+
+    private static string ProtectToString(uint p)
+    {
+        if ((p & 0x100) != 0) return "GUARD";
+        return (p & 0x7F) switch
+        {
+            0x01 => "---",
+            0x02 => "R--",
+            0x04 => "RW-",
+            0x08 => "RCW",
+            0x10 => "--X",
+            0x20 => "R-X",
+            0x40 => "RWX",
+            0x80 => "RCX",
+            _    => $"0x{p:X2}"
+        };
+    }
     {
         var list = new List<ProcessEntry>();
         try
@@ -407,15 +531,150 @@ public class MemoryReader : IDisposable
                     {
                         Pid  = p.Id,
                         Name = p.ProcessName,
-                        // MainWindowTitle may throw for some system processes
                         Title = p.MainWindowTitle,
                     });
                 }
-                catch { /* skip inaccessible processes */ }
+                catch { }
             }
         }
         catch { }
         return list.OrderBy(p => p.Name).ToList();
+    }
+
+    // ── Module enumeration ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns all loaded modules (DLLs) in the attached process.
+    /// </summary>
+    public List<ModuleInfo> GetModules()
+    {
+        var modules = new List<ModuleInfo>();
+        if (!IsAttached) return modules;
+
+        var buf = new IntPtr[1024];
+        if (!EnumProcessModules(_handle, buf, buf.Length * IntPtr.Size, out int needed))
+            return modules;
+
+        int count = needed / IntPtr.Size;
+        for (int i = 0; i < count; i++)
+        {
+            var nameBuilder = new StringBuilder(260);
+            GetModuleFileNameEx(_handle, buf[i], nameBuilder, 260);
+            string fullPath = nameBuilder.ToString();
+            string name     = Path.GetFileName(fullPath);
+
+            long size = 0;
+            if (GetModuleInformation(_handle, buf[i], out MODULEINFO info,
+                (uint)Marshal.SizeOf<MODULEINFO>()))
+                size = info.SizeOfImage;
+
+            modules.Add(new ModuleInfo
+            {
+                Name     = name,
+                FullPath = fullPath,
+                Base     = buf[i],
+                Size     = size,
+            });
+        }
+        return modules;
+    }
+
+    // ── High-performance AOB (Array-Of-Bytes) scanner using ReadOnlySpan ─
+
+    /// <summary>
+    /// Scans a specific module's memory for a pattern.
+    /// Uses ReadOnlySpan&lt;byte&gt; for zero-allocation in-buffer search — far
+    /// faster than scanning all regions when you know the target module.
+    ///
+    /// Pattern format: hex bytes separated by spaces, '??' = wildcard.
+    /// Example: "48 8B ?? 48 89 C3 ?? 00"
+    ///
+    /// Returns the absolute address of the first match, or IntPtr.Zero.
+    /// </summary>
+    public IntPtr AobScanModule(string moduleName, string hexPattern,
+                                 out string diagnostics)
+    {
+        diagnostics = "";
+        if (!IsAttached) { diagnostics = "Not attached."; return IntPtr.Zero; }
+
+        // Parse pattern
+        byte?[] pattern;
+        try
+        {
+            pattern = hexPattern.Trim()
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Select(t => t == "??" ? (byte?)null : (byte?)Convert.ToByte(t, 16))
+                .ToArray();
+        }
+        catch (Exception ex)
+        {
+            diagnostics = $"Pattern parse error: {ex.Message}";
+            return IntPtr.Zero;
+        }
+
+        if (pattern.Length == 0) { diagnostics = "Empty pattern."; return IntPtr.Zero; }
+
+        // Find the module
+        var mods = GetModules();
+        var mod = mods.FirstOrDefault(m =>
+            m.Name.Equals(moduleName, StringComparison.OrdinalIgnoreCase) ||
+            m.FullPath.Equals(moduleName, StringComparison.OrdinalIgnoreCase));
+
+        if (mod == null)
+        {
+            var names = string.Join(", ", mods.Select(m => m.Name));
+            diagnostics = $"Module '{moduleName}' not found. Loaded: {names}";
+            return IntPtr.Zero;
+        }
+
+        // Read module memory in one shot
+        int  size = (int)Math.Min(mod.Size, 128 * 1024 * 1024L);
+        var  buf  = new byte[size];
+        if (!ReadBytes(mod.Base, buf))
+        {
+            diagnostics = $"Could not read {size:N0}b from {mod.Name}.";
+            return IntPtr.Zero;
+        }
+
+        // Span-based search — no allocations inside the loop
+        ReadOnlySpan<byte> span = buf.AsSpan();
+
+        for (int i = 0; i <= span.Length - pattern.Length; i++)
+        {
+            bool match = true;
+            for (int j = 0; j < pattern.Length; j++)
+            {
+                if (pattern[j].HasValue && span[i + j] != pattern[j]!.Value)
+                { match = false; break; }
+            }
+            if (match)
+            {
+                long abs = mod.Base.ToInt64() + i;
+                diagnostics = $"Match at 0x{abs:X16} (+0x{i:X} in {mod.Name})";
+                return new IntPtr(abs);
+            }
+        }
+
+        diagnostics = $"Pattern not found in {mod.Name} ({size:N0}b scanned).";
+        return IntPtr.Zero;
+    }
+
+    /// <summary>
+    /// Scan all loaded modules for a pattern. Returns all matches across
+    /// every loaded module (exe + all DLLs).
+    /// </summary>
+    public List<AobMatch> AobScanAllModules(string hexPattern,
+                                              int maxResults = 100)
+    {
+        var results = new List<AobMatch>();
+        foreach (var mod in GetModules())
+        {
+            if (results.Count >= maxResults) break;
+            var addr = AobScanModule(mod.Name, hexPattern, out string diag);
+            if (addr != IntPtr.Zero)
+                results.Add(new AobMatch { Address = addr, Module = mod.Name, Diagnostic = diag });
+        }
+        return results;
     }
 }
 
@@ -455,4 +714,39 @@ public class ProcessEntry
     public int    Pid   { get; set; }
     public string Name  { get; set; } = "";
     public string Title { get; set; } = "";
+}
+
+public class ModuleInfo
+{
+    public string Name     { get; set; } = "";
+    public string FullPath { get; set; } = "";
+    public IntPtr Base     { get; set; }
+    public long   Size     { get; set; }
+
+    public string BaseHex => $"0x{Base.ToInt64():X16}";
+    public string SizeStr => $"{Size / 1024}KB";
+}
+
+public class AobMatch
+{
+    public IntPtr Address    { get; set; }
+    public string Module     { get; set; } = "";
+    public string Diagnostic { get; set; } = "";
+    public string AddressHex => $"0x{Address.ToInt64():X16}";
+}
+
+public class MemoryMapEntry
+{
+    public IntPtr Base       { get; set; }
+    public long   Size       { get; set; }
+    public string State      { get; set; } = "";
+    public string Protect    { get; set; } = "";
+    public string Type       { get; set; } = "";
+    public uint   RawProtect { get; set; }
+
+    public string BaseHex  => $"0x{Base.ToInt64():X16}";
+    public string SizeStr  => Size >= 1024 * 1024 ? $"{Size / (1024 * 1024)}MB"
+                            : Size >= 1024        ? $"{Size / 1024}KB"
+                            :                       $"{Size}B";
+    public bool   Readable => (RawProtect & 0xFE) != 0 && (RawProtect & 0x100) == 0;
 }

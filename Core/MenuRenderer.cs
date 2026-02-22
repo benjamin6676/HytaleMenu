@@ -94,8 +94,10 @@ public class MenuRenderer
         _captureTab = new CaptureTab(_log, _pktLog, _config);
 
         // Wire up packet feeds — stats + tracker both observe every proxied packet
-        _captureTab.UdpProxy.OnPacket += _stats.OnPacket;
-        _captureTab.UdpProxy.OnPacket += _tracker.Feed;
+        _captureTab.UdpProxy.OnPacket   += _stats.OnPacket;
+        _captureTab.UdpProxy.OnPacket   += _tracker.Feed;
+        _captureTab.Capture.OnPacket    += _tracker.Feed;
+        _captureTab.Capture.OnPacket    += _stats.OnPacket;
 
         _dashboardTab        = new DashboardTab(_log, _config, _stats);
         _packetTab           = new PacketTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config);
