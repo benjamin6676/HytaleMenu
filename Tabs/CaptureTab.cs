@@ -101,14 +101,14 @@ public class CaptureTab : ITab
             ImGui.SetNextItemWidth(190);
             ImGui.InputText("Server IP##csr",  ref dispIp,   64);
             ImGui.SameLine();
-            ImGui.SetNextItemWidth(90);
+            ImGui.SetNextItemWidth(130);
             ImGui.InputInt("Port##csrp", ref dispPort);
             ImGui.EndDisabled();
 
             ImGui.Spacing();
 
             ImGui.BeginDisabled(running);
-            ImGui.SetNextItemWidth(90);
+            ImGui.SetNextItemWidth(130);
             if (ImGui.InputInt("Proxy Port##plp", ref _listenPort))
                 _listenPort = Math.Clamp(_listenPort, 1, 65535);
             ImGui.SameLine();

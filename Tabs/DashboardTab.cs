@@ -15,13 +15,14 @@ public class DashboardTab : ITab
     private readonly ServerConfig _config;
     private readonly ServerStats  _stats;
 
-    private string _inputIp   = "149.56.241.73";
+    private string _inputIp   = "ServerIP here(IPv4)";
     private int    _inputPort = 5520;
 
     // IP Presets — user can save frequently used server IPs
     private List<(string Label, string Ip, int Port)> _presets = new()
     {
-        ("Hytale Official", "149.56.241.73", 5520),
+        ("Hytide", "149.56.241.73", 5520),
+        ("HyTown", "51.195.60.80", 5520),
     };
     private string _presetLabel = "My Server";
     private bool   _detecting = false;
@@ -119,17 +120,12 @@ public class DashboardTab : ITab
 
     private void RenderSubTabBar()
     {
+        if (!ImGui.BeginTabBar("##db_subtabs", ImGuiTabBarFlags.FittingPolicyScroll))
+            return;
         for (int i = 0; i < SubTabs.Length; i++)
-        {
-            bool sel = _subTab == i;
-            ImGui.PushStyleColor(ImGuiCol.Button,
-                sel ? new Vector4(0.18f, 0.95f, 0.45f, 0.22f) : MenuRenderer.ColBg3);
-            ImGui.PushStyleColor(ImGuiCol.Text,
-                sel ? MenuRenderer.ColAccent : MenuRenderer.ColTextMuted);
-            if (ImGui.Button(SubTabs[i] + $"##dbst{i}", new Vector2(140, 28))) _subTab = i;
-            ImGui.PopStyleColor(2);
-            if (i < SubTabs.Length - 1) ImGui.SameLine(0, 4);
-        }
+            if (ImGui.TabItemButton(SubTabs[i] + $"##dbst{i}", ImGuiTabItemFlags.None))
+                _subTab = i;
+        ImGui.EndTabBar();
     }
 
     // ── Connection sub-tab ─────────────────────────────────────────────────

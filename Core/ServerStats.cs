@@ -428,17 +428,17 @@ public class PortScanResult
 /// </summary>
 public class ServerFingerprint
 {
-    public string Software       { get; private set; } = "Unknown";
-    public string ProtocolHint   { get; private set; } = "Unknown";
-    public int    KeepAliveMs    { get; private set; } = -1;
-    public int    AvgResponseMs  { get; private set; } = -1;
-    public bool   HasEncryption  { get; private set; }
-    public bool   HasCompression { get; private set; }
-    public string Notes          { get; private set; } = "";
+    public string Software { get; private set; } = "Unknown";
+    public string ProtocolHint { get; private set; } = "Unknown";
+    public int KeepAliveMs { get; private set; } = -1;
+    public int AvgResponseMs { get; private set; } = -1;
+    public bool HasEncryption { get; private set; }
+    public bool HasCompression { get; private set; }
+    public string Notes { get; private set; } = "";
 
     private DateTime? _lastServerPkt;
     private readonly List<int> _keepAliveIntervals = new();
-    private readonly List<int> _responseTimes      = new();
+    private readonly List<int> _responseTimes = new();
 
     public void ObserveServerPacket(CapturedPacket pkt)
     {
@@ -471,7 +471,7 @@ public class ServerFingerprint
 
         // Build notes
         var sb = new System.Text.StringBuilder();
-        if (HasEncryption)  sb.Append("Encrypted traffic detected. ");
+        if (HasEncryption) sb.Append("Encrypted traffic detected. ");
         if (HasCompression) sb.Append("zlib compression detected. ");
         if (KeepAliveMs > 0) sb.Append($"Keep-alive ~{KeepAliveMs}ms. ");
         Notes = sb.ToString();

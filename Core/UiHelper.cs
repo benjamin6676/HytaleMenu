@@ -11,6 +11,10 @@ public static class UiHelper
 {
     // ── Section box — the main panel container used on every tab ──────────
 
+    /// <summary>
+    /// Bordered section box. Pass h=0 to auto-size to content height (no clipping).
+    /// Pass a fixed h only when you intentionally want a scrollable region.
+    /// </summary>
     public static void SectionBox(string label, float w, float h, Action content)
     {
         var dl = ImGui.GetWindowDrawList();
@@ -18,12 +22,8 @@ public static class UiHelper
 
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
         ImGui.BeginChild($"##sb_{label}_{(int)p0.X}_{(int)p0.Y}",
-            new Vector2(w, h), ImGuiChildFlags.Border);
+            new Vector2(w, h), ImGuiChildFlags.Border | ImGuiChildFlags.AutoResizeY);
         ImGui.PopStyleColor();
-
-        // Accent left border stripe
-        dl.AddRectFilled(p0, p0 + new Vector2(3, h),
-            ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColBorder));
 
         // Label
         ImGui.SetCursorPos(new Vector2(12, 10));
@@ -31,12 +31,13 @@ public static class UiHelper
         ImGui.TextUnformatted(label);
         ImGui.PopStyleColor();
 
-        // Thin line under label
+        // Thin underline
         var lp = ImGui.GetCursorScreenPos();
         dl.AddLine(new Vector2(p0.X + 12, lp.Y - 2),
                    new Vector2(p0.X + w  - 12, lp.Y - 2),
                    ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColBorder));
 
+        // Accent left stripe — drawn after EndChild when we know final height
         ImGui.SetCursorPosX(12);
         ImGui.Spacing();
 
@@ -45,6 +46,12 @@ public static class UiHelper
         ImGui.PopStyleVar();
 
         ImGui.EndChild();
+
+        // Draw accent left stripe using the child rect that was just finalized
+        var p1 = ImGui.GetItemRectMax();
+        float finalH = p1.Y - p0.Y;
+        dl.AddRectFilled(p0, p0 + new Vector2(3, finalH),
+            ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColBorder));
     }
 
     // ── Buttons ───────────────────────────────────────────────────────────

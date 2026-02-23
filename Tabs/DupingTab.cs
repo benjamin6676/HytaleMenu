@@ -163,17 +163,15 @@ public class DupingTab : ITab
 
     private void RenderSubTabBar()
     {
+        if (!ImGui.BeginTabBar("##dupe_subtabs", ImGuiTabBarFlags.FittingPolicyScroll))
+            return;
         for (int i = 0; i < SubTabs.Length; i++)
         {
-            bool sel = _subTab == i;
-            ImGui.PushStyleColor(ImGuiCol.Button,
-                sel ? new Vector4(0.18f, 0.95f, 0.45f, 0.22f) : MenuRenderer.ColBg3);
-            ImGui.PushStyleColor(ImGuiCol.Text,
-                sel ? MenuRenderer.ColAccent : MenuRenderer.ColTextMuted);
-            if (ImGui.Button(SubTabs[i] + $"##dst{i}", new Vector2(130, 28))) _subTab = i;
-            ImGui.PopStyleColor(2);
-            if (i < SubTabs.Length - 1) ImGui.SameLine(0, 4);
+            if (ImGui.TabItemButton(SubTabs[i] + $"##dst{i}",
+                    ImGuiTabItemFlags.None))
+                _subTab = i;
         }
+        ImGui.EndTabBar();
     }
 
     private void RenderDropRace(float w)

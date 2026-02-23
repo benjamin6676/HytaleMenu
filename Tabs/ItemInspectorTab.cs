@@ -29,35 +29,35 @@ public class ItemInspectorTab : ITab
 {
     public string Title => "  Item Inspector  ";
 
-    private readonly TestLog       _log;
+    private readonly TestLog _log;
     private readonly PacketCapture _capture;
-    private readonly UdpProxy      _udpProxy;
-    private readonly PacketStore   _store;
-    private readonly ServerConfig  _config;
+    private readonly UdpProxy _udpProxy;
+    private readonly PacketStore _store;
+    private readonly ServerConfig _config;
 
     // ── UI state ──────────────────────────────────────────────────────────
-    private int    _selectedIdx = -1;
-    private bool   _autoScan   = true;
-    private string _saveLabel  = "";
-    private string _saveNotes  = "";
-    private bool   _showAllPkts = false;
+    private int _selectedIdx = -1;
+    private bool _autoScan = true;
+    private string _saveLabel = "";
+    private string _saveNotes = "";
+    private bool _showAllPkts = false;
 
     // Pinned item
     private DetectedItem? _pinnedItem;
 
     // Item-packet scan cache (throttled)
-    private List<ItemScanResult> _scanResults  = new();
-    private int                  _lastPktCount = 0;
-    private DateTime             _lastScanTime = DateTime.MinValue;
-    private const double         ScanMs        = 800;
+    private List<ItemScanResult> _scanResults = new();
+    private int _lastPktCount = 0;
+    private DateTime _lastScanTime = DateTime.MinValue;
+    private const double ScanMs = 800;
 
     // Schema discovery cache (slightly longer throttle — heavier scan)
-    private List<DiscoveredId> _discovered      = new();
-    private int                _discPktCount    = 0;
-    private DateTime           _discScanTime    = DateTime.MinValue;
-    private const double       DiscMs           = 1200;
-    private bool               _discShowAll     = false;
-    private int                _discSelected    = -1;
+    private List<DiscoveredId> _discovered = new();
+    private int _discPktCount = 0;
+    private DateTime _discScanTime = DateTime.MinValue;
+    private const double DiscMs = 1200;
+    private bool _discShowAll = false;
+    private int _discSelected = -1;
 
     public DetectedItem? PinnedItem => _pinnedItem;
 
@@ -73,7 +73,7 @@ public class ItemInspectorTab : ITab
 
     public void Render()
     {
-        float w    = ImGui.GetContentRegionAvail().X;
+        float w = ImGui.GetContentRegionAvail().X;
         float half = (w - 12) * 0.5f;
 
         RenderStatusBar(w);
@@ -85,7 +85,7 @@ public class ItemInspectorTab : ITab
         if (_autoScan && packets.Count != _lastPktCount &&
             (DateTime.Now - _lastScanTime).TotalMilliseconds > ScanMs)
         {
-            _scanResults  = ScanPackets(packets);
+            _scanResults = ScanPackets(packets);
             _lastPktCount = packets.Count;
             _lastScanTime = DateTime.Now;
         }
@@ -93,7 +93,7 @@ public class ItemInspectorTab : ITab
         if (_autoScan && packets.Count != _discPktCount &&
             (DateTime.Now - _discScanTime).TotalMilliseconds > DiscMs)
         {
-            _discovered   = PacketAnalyser.AggregateAcrossPackets(packets);
+            _discovered = PacketAnalyser.AggregateAcrossPackets(packets);
             _discPktCount = packets.Count;
             _discScanTime = DateTime.Now;
         }
@@ -106,8 +106,8 @@ public class ItemInspectorTab : ITab
             UiHelper.PrimaryButton("Scan Now", 110, 26, () =>
             {
                 var all = _capture.GetPackets();
-                _scanResults  = ScanPackets(all);
-                _discovered   = PacketAnalyser.AggregateAcrossPackets(all);
+                _scanResults = ScanPackets(all);
+                _discovered = PacketAnalyser.AggregateAcrossPackets(all);
                 _lastPktCount = _discPktCount = all.Count;
                 _lastScanTime = _discScanTime = DateTime.Now;
                 _log.Info($"[Inspector] {all.Count} packets → {_scanResults.Count} item-related," +
@@ -148,10 +148,10 @@ public class ItemInspectorTab : ITab
 
         // ── Layout: Discovered IDs section, then packet list+detail ──────
         float availH = ImGui.GetContentRegionAvail().Y;
-        float discH  = 220f;
-        float listH  = availH - discH - 12f;
-        float listW  = w * 0.55f;
-        float detW   = w - listW - 8f;
+        float discH = 220f;
+        float listH = availH - discH - 12f;
+        float listW = w * 0.55f;
+        float detW = w - listW - 8f;
 
         RenderDiscoveredIds(w, discH);
         ImGui.Spacing();
@@ -191,8 +191,8 @@ public class ItemInspectorTab : ITab
             : _discovered.Where(d => d.Confidence >= FieldConfidence.Medium).ToList();
 
         float tableH = h - 34f;
-        float btnW   = 116f;
-        float pinW   = 70f;
+        float btnW = 116f;
+        float pinW = 70f;
 
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
         ImGui.BeginChild("##disctbl", new Vector2(w, tableH), ImGuiChildFlags.Border);
@@ -212,8 +212,8 @@ public class ItemInspectorTab : ITab
 
         for (int i = 0; i < show.Count; i++)
         {
-            var  d        = show[i];
-            bool sel      = _discSelected == i;
+            var d = show[i];
+            bool sel = _discSelected == i;
             bool isTarget = _config.HasTargetItem && _config.TargetItemId == (int)d.Value;
             bool itemLike = d.TypeTag == "Item ID";
             bool canTarget = itemLike || d.TypeTag == "Entity/Player ID";
@@ -228,9 +228,9 @@ public class ItemInspectorTab : ITab
             }
 
             // Row text color
-            var rowCol = d.Confidence == FieldConfidence.High   ? MenuRenderer.ColAccent
+            var rowCol = d.Confidence == FieldConfidence.High ? MenuRenderer.ColAccent
                        : d.Confidence == FieldConfidence.Medium ? MenuRenderer.ColBlue
-                       :                                          MenuRenderer.ColTextMuted;
+                       : MenuRenderer.ColTextMuted;
 
             // Selectable row (leaves room for buttons on the right)
             ImGui.PushStyleColor(ImGuiCol.Text, rowCol);
@@ -267,11 +267,11 @@ public class ItemInspectorTab : ITab
             {
                 _pinnedItem = new DetectedItem
                 {
-                    ItemId     = (int)d.Value,
+                    ItemId = (int)d.Value,
                     StackCount = 1,
-                    SlotIndex  = 0,
+                    SlotIndex = 0,
                     Confidence = d.Confidence,
-                    NameHint   = GuessItemName((int)d.Value),
+                    NameHint = GuessItemName((int)d.Value),
                 };
                 _log.Info($"[Inspector] Pinned discovered item {d.Value}.");
             }
@@ -315,14 +315,14 @@ public class ItemInspectorTab : ITab
 
         for (int i = 0; i < display.Count; i++)
         {
-            var  r   = display[i];
-            bool cs  = r.Packet.Direction == PacketDirection.ClientToServer;
-            var  col = r.HasItemData
+            var r = display[i];
+            bool cs = r.Packet.Direction == PacketDirection.ClientToServer;
+            var col = r.HasItemData
                 ? (cs ? MenuRenderer.ColBlue : MenuRenderer.ColAccent)
                 : MenuRenderer.ColTextMuted;
 
-            string dir     = cs ? "C\u2192S" : "S\u2192C";
-            string idStr   = r.Packet.RawBytes.Length > 0 ? $"0x{r.Packet.RawBytes[0]:X2}" : "0x??";
+            string dir = cs ? "C\u2192S" : "S\u2192C";
+            string idStr = r.Packet.RawBytes.Length > 0 ? $"0x{r.Packet.RawBytes[0]:X2}" : "0x??";
             string summary = r.HasItemData
                 ? $"ItemID={r.BestItem?.ItemId}  ×{r.BestItem?.StackCount}  slot={r.BestItem?.SlotIndex}"
                 : r.Analysis.IdGuess;
@@ -337,7 +337,7 @@ public class ItemInspectorTab : ITab
 
             ImGui.PushStyleColor(ImGuiCol.Text, col);
             if (ImGui.Selectable(
-                $"  {i+1,-5} {dir,-7} {idStr,-8} {summary,-35} {r.Packet.RawBytes.Length}b##ir{i}",
+                $"  {i + 1,-5} {dir,-7} {idStr,-8} {summary,-35} {r.Packet.RawBytes.Length}b##ir{i}",
                 sel, ImGuiSelectableFlags.None, new Vector2(0, 20)))
                 _selectedIdx = i;
             ImGui.PopStyleColor();
@@ -368,7 +368,7 @@ public class ItemInspectorTab : ITab
             return;
         }
 
-        var r   = display[_selectedIdx];
+        var r = display[_selectedIdx];
         var pkt = r.Packet;
         bool cs = pkt.Direction == PacketDirection.ClientToServer;
 
@@ -379,15 +379,15 @@ public class ItemInspectorTab : ITab
         ImGui.Spacing();
 
         UiHelper.StatusRow("Direction", cs ? "Client → Server" : "Server → Client", cs, 80);
-        UiHelper.StatusRow("Size",      $"{pkt.RawBytes.Length} bytes", true, 80);
+        UiHelper.StatusRow("Size", $"{pkt.RawBytes.Length} bytes", true, 80);
         UiHelper.StatusRow("Packet ID", pkt.RawBytes.Length > 0 ? $"0x{pkt.RawBytes[0]:X2}" : "??", true, 80);
-        UiHelper.StatusRow("Guess",     r.Analysis.IdGuess, r.HasItemData, 80);
+        UiHelper.StatusRow("Guess", r.Analysis.IdGuess, r.HasItemData, 80);
 
         var dlp = ImGui.GetWindowDrawList();
         var wpp = ImGui.GetWindowPos();
         ImGui.Spacing();
         dlp.AddLine(new Vector2(wpp.X + 12, ImGui.GetCursorScreenPos().Y),
-                    new Vector2(wpp.X + w  - 12, ImGui.GetCursorScreenPos().Y),
+                    new Vector2(wpp.X + w - 12, ImGui.GetCursorScreenPos().Y),
                     ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColBorder));
         ImGui.Spacing();
 
@@ -442,7 +442,7 @@ public class ItemInspectorTab : ITab
 
         ImGui.Spacing();
         dlp.AddLine(new Vector2(wpp.X + 12, ImGui.GetCursorScreenPos().Y),
-                    new Vector2(wpp.X + w  - 12, ImGui.GetCursorScreenPos().Y),
+                    new Vector2(wpp.X + w - 12, ImGui.GetCursorScreenPos().Y),
                     ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColBorder));
         ImGui.Spacing();
 
@@ -456,11 +456,11 @@ public class ItemInspectorTab : ITab
         {
             var col = f.Type switch
             {
-                FieldType.Id     => MenuRenderer.ColWarn,
-                FieldType.Int32  => MenuRenderer.ColBlue,
+                FieldType.Id => MenuRenderer.ColWarn,
+                FieldType.Int32 => MenuRenderer.ColBlue,
                 FieldType.String => MenuRenderer.ColAccent,
-                FieldType.Float  => new Vector4(0.8f, 0.6f, 1f, 1f),
-                _                => MenuRenderer.ColTextMuted,
+                FieldType.Float => new Vector4(0.8f, 0.6f, 1f, 1f),
+                _ => MenuRenderer.ColTextMuted,
             };
             ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
             ImGui.TextUnformatted($"  {f.Name,-28}");
@@ -478,7 +478,7 @@ public class ItemInspectorTab : ITab
         ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 1.0f, 0.7f, 1f));
         for (int row = 0; row < pkt.RawBytes.Length; row += 16)
         {
-            int    len = Math.Min(16, pkt.RawBytes.Length - row);
+            int len = Math.Min(16, pkt.RawBytes.Length - row);
             string hex = string.Join(" ", pkt.RawBytes.Skip(row).Take(len).Select(b => $"{b:X2}"));
             string asc = new string(pkt.RawBytes.Skip(row).Take(len)
                 .Select(b => b >= 32 && b < 127 ? (char)b : '.').ToArray());
@@ -550,18 +550,18 @@ public class ItemInspectorTab : ITab
 
 public class ItemScanResult
 {
-    public CapturedPacket     Packet   { get; private set; } = null!;
-    public int                Index    { get; private set; }
-    public AnalysisResult     Analysis { get; private set; } = null!;
-    public List<DetectedItem> Items    { get; private set; } = new();
-    public bool               HasItemData => Items.Count > 0;
-    public DetectedItem?      BestItem    => Items.FirstOrDefault();
+    public CapturedPacket Packet { get; private set; } = null!;
+    public int Index { get; private set; }
+    public AnalysisResult Analysis { get; private set; } = null!;
+    public List<DetectedItem> Items { get; private set; } = new();
+    public bool HasItemData => Items.Count > 0;
+    public DetectedItem? BestItem => Items.FirstOrDefault();
 
     public static ItemScanResult FromPacket(CapturedPacket pkt, int idx)
     {
         var r = new ItemScanResult { Packet = pkt, Index = idx };
         r.Analysis = PacketAnalyser.Analyse(pkt);
-        r.Items    = ExtractItems(pkt.RawBytes, r.Analysis);
+        r.Items = ExtractItems(pkt.RawBytes, r.Analysis);
         return r;
     }
 
@@ -597,8 +597,12 @@ public class ItemScanResult
 
             items.Add(new DetectedItem
             {
-                ItemId = v, StackCount = count, SlotIndex = slot,
-                Offset = i, Confidence = conf, NameHint = GuessItemNamePublic(v),
+                ItemId = v,
+                StackCount = count,
+                SlotIndex = slot,
+                Offset = i,
+                Confidence = conf,
+                NameHint = GuessItemNamePublic(v),
             });
         }
 
@@ -609,8 +613,11 @@ public class ItemScanResult
             {
                 items.Add(new DetectedItem
                 {
-                    ItemId = guess.IntValue, StackCount = 1, SlotIndex = 0,
-                    Offset = guess.Offset, Confidence = guess.Confidence,
+                    ItemId = guess.IntValue,
+                    StackCount = 1,
+                    SlotIndex = 0,
+                    Offset = guess.Offset,
+                    Confidence = guess.Confidence,
                     NameHint = GuessItemNamePublic(guess.IntValue),
                 });
             }
@@ -623,22 +630,28 @@ public class ItemScanResult
 
     public static string GuessItemNamePublic(int id) => id switch
     {
-        1    => "Stone",       2   => "Grass Block",
-        264  => "Diamond",     265 => "Iron Ingot",
-        266  => "Gold Ingot",  267 => "Iron Sword",
-        276  => "Diamond Sword", 278 => "Diamond Pickaxe",
-        282  => "Mushroom Stew", 297 => "Bread",
-        1001 => "Item 1001",  1002 => "Item 1002",
-        _    => ""
+        1 => "Stone",
+        2 => "Grass Block",
+        264 => "Diamond",
+        265 => "Iron Ingot",
+        266 => "Gold Ingot",
+        267 => "Iron Sword",
+        276 => "Diamond Sword",
+        278 => "Diamond Pickaxe",
+        282 => "Mushroom Stew",
+        297 => "Bread",
+        1001 => "Item 1001",
+        1002 => "Item 1002",
+        _ => ""
     };
 }
 
 public class DetectedItem
 {
-    public int             ItemId     { get; set; }
-    public int             StackCount { get; set; } = 1;
-    public int             SlotIndex  { get; set; }
-    public int             Offset     { get; set; }
+    public int ItemId { get; set; }
+    public int StackCount { get; set; } = 1;
+    public int SlotIndex { get; set; }
+    public int Offset { get; set; }
     public FieldConfidence Confidence { get; set; }
-    public string          NameHint   { get; set; } = "";
+    public string NameHint { get; set; } = "";
 }

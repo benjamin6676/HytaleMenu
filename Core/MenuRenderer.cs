@@ -16,58 +16,35 @@ public class MenuRenderer
     private readonly DashboardTab         _dashboardTab;
     private readonly PacketTab            _packetTab;
     private readonly DupingTab            _dupingTab;
-    private readonly ConnectionTab        _connectionTab;
     private readonly PrivilegeTab         _privilegeTab;
     private readonly ItemInspectorTab     _itemInspectorTab;
     private readonly PacketBookTab        _packetBookTab;
-    private readonly DiffAnalysisTab      _diffAnalysisTab;
     private readonly ResponseAnalyserTab  _responseAnalyserTab;
+    private readonly DiffAnalysisTab      _diffAnalysisTab;
     private readonly LogTab               _logTab;
     private readonly MemoryTab            _memoryTab;
     private readonly VisualsTab           _visualsTab;
 
-    // Which sidebar section is active (0-based)
     private int _selectedSection = 0;
 
-    private static readonly string[] SectionIcons = {
-        "⌂", "⚡", "◈", "◎", "▲", "⊙", "⊗", "☰", "≋", "◫", "≡", "⬡", "👁"
+    // 9 sidebar sections (merged from 13)
+    // Dashboard absorbs: Log
+    // Packets absorbs:   Response Analyser
+    // Capture absorbs:   Diff Analysis
+    // Connection tab removed (its features live in Dashboard > Connection sub-tab)
+    private static readonly (string Icon, string Short, string Full)[] Sections = {
+        ("⌂", "Dashboard",  "Dashboard"),
+        ("⚡", "Packets",    "Packet Exploiting"),
+        ("◈", "Duping",     "Dupe Methods"),
+        ("◎", "Capture",    "Capture & Analysis"),
+        ("▲", "Privilege",  "Privilege Escalation"),
+        ("⊙", "Inspector",  "Item Inspector"),
+        ("◫", "Book",       "Packet Book"),
+        ("≡", "Memory",     "Memory Reader"),
+        ("👁️", "Visuals", "Visuals / ESP"),
     };
 
-
-    private static readonly string[] SectionNames = {
-        "Dashboard",
-        "Packet\nExploiting",
-        "Dupe\nMethods",
-        "Capture",
-        "Privilege\nEscalation",
-        "Item\nInspector",
-        "Response\nAnalyser",
-        "Diff\nAnalysis",
-        "Packet\nBook",
-        "Connection",
-        "Log",
-        "Memory\nReader",
-        "Visuals\n/ ESP"
-    };
-
-    private static readonly string[] SectionLabels = {
-        "Dashboard",
-        "Packet Exploiting",
-        "Dupe Methods",
-        "Capture",
-        "Privilege Escalation",
-        "Item Inspector",
-        "Response Analyser",
-        "Diff Analysis",
-        "Packet Book",
-        "Connection",
-        "Log",
-        "Memory Reader",
-        "Visuals / ESP"
-    };
-
-    // ── Palette — one place to change every color in the app ──────────────
-
+    // Palette
     public static readonly Vector4 ColAccent       = new(0.18f, 0.95f, 0.45f, 1.00f);
     public static readonly Vector4 ColAccentDim    = new(0.18f, 0.95f, 0.45f, 0.18f);
     public static readonly Vector4 ColAccentMid    = new(0.18f, 0.95f, 0.45f, 0.55f);
@@ -96,23 +73,20 @@ public class MenuRenderer
         _tracker = new ResponseTracker();
 
         _captureTab = new CaptureTab(_log, _pktLog, _config);
-
-        // Wire up packet feeds — stats + tracker both observe every proxied packet
-        _captureTab.UdpProxy.OnPacket   += _stats.OnPacket;
-        _captureTab.UdpProxy.OnPacket   += _tracker.Feed;
-        _captureTab.Capture.OnPacket    += _tracker.Feed;
-        _captureTab.Capture.OnPacket    += _stats.OnPacket;
+        _captureTab.UdpProxy.OnPacket += _stats.OnPacket;
+        _captureTab.UdpProxy.OnPacket += _tracker.Feed;
+        _captureTab.Capture.OnPacket  += _tracker.Feed;
+        _captureTab.Capture.OnPacket  += _stats.OnPacket;
 
         _dashboardTab        = new DashboardTab(_log, _config, _stats);
         _packetTab           = new PacketTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config);
         _dupingTab           = new DupingTab(_log, _captureTab.UdpProxy, _captureTab.Capture, _store, _config);
-        _connectionTab       = new ConnectionTab(_log, _config);
         _privilegeTab        = new PrivilegeTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config, _store);
         _itemInspectorTab    = new ItemInspectorTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _store, _config);
         _packetBookTab       = new PacketBookTab(_log, _store, _captureTab.UdpProxy, _captureTab.Capture, _config);
-        _diffAnalysisTab     = new DiffAnalysisTab(_log, _store, _captureTab.Capture);
         _responseAnalyserTab = new ResponseAnalyserTab(_log, _tracker, _captureTab.Capture,
                                    _captureTab.UdpProxy, _store, _config);
+        _diffAnalysisTab     = new DiffAnalysisTab(_log, _store, _captureTab.Capture);
         _logTab              = new LogTab(_log, _pktLog);
         _memoryTab           = new MemoryTab(_log, _store);
         _visualsTab          = new VisualsTab(_log, _config);
@@ -128,8 +102,8 @@ public class MenuRenderer
         ImGui.SetNextWindowBgAlpha(0f);
 
         var outerFlags =
-            ImGuiWindowFlags.NoTitleBar    | ImGuiWindowFlags.NoResize  |
-            ImGuiWindowFlags.NoMove        | ImGuiWindowFlags.NoCollapse |
+            ImGuiWindowFlags.NoTitleBar   | ImGuiWindowFlags.NoResize  |
+            ImGuiWindowFlags.NoMove       | ImGuiWindowFlags.NoCollapse |
             ImGuiWindowFlags.NoBringToFrontOnFocus | ImGuiWindowFlags.NoScrollbar;
 
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
@@ -138,152 +112,124 @@ public class MenuRenderer
         ImGui.PopStyleColor();
         ImGui.PopStyleVar();
 
-        float sideW    = 120f;
+        const float SideW = 110f;
         float totalH   = display.Y;
-        float contentW = display.X - sideW;
+        float contentW = display.X - SideW;
 
-        // Left sidebar
         ImGui.PushStyleColor(ImGuiCol.ChildBg, ColBg1);
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
-        ImGui.BeginChild("##Sidebar", new Vector2(sideW, totalH), ImGuiChildFlags.None);
+        ImGui.BeginChild("##Sidebar", new Vector2(SideW, totalH),
+            ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar);
         ImGui.PopStyleVar();
         ImGui.PopStyleColor();
-
-        RenderSidebar(sideW, totalH);
-
+        RenderSidebar(SideW, totalH);
         ImGui.EndChild();
+
         ImGui.SameLine(0, 0);
 
-        // Right content area
         ImGui.PushStyleColor(ImGuiCol.ChildBg, ColBg0);
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(22, 18));
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(20, 16));
         ImGui.BeginChild("##Content", new Vector2(contentW, totalH), ImGuiChildFlags.None);
         ImGui.PopStyleVar();
         ImGui.PopStyleColor();
-
         RenderTopBar();
         RenderContent();
-
         ImGui.EndChild();
+
         ImGui.End();
     }
 
-    // ── Sidebar ───────────────────────────────────────────────────────────
-
     private void RenderSidebar(float sideW, float totalH)
     {
-        // Logo / header area
-        ImGui.PushStyleColor(ImGuiCol.ChildBg, ColBg0);
-        ImGui.BeginChild("##Logo", new Vector2(sideW, 72), ImGuiChildFlags.None);
-        ImGui.PopStyleColor();
-
         var dl = ImGui.GetWindowDrawList();
-        var p  = ImGui.GetWindowPos();
+        var wp = ImGui.GetWindowPos(); // screen-space, no offset issues
 
-        // Green accent bar across top
-        dl.AddRectFilled(p, p + new Vector2(sideW, 3),
+        // Top green bar
+        dl.AddRectFilled(wp, wp + new Vector2(sideW, 3),
             ImGui.ColorConvertFloat4ToU32(ColAccent));
 
-        ImGui.SetCursorPos(new Vector2(12, 16));
+        // Logo
+        ImGui.SetCursorPos(new Vector2(14, 14));
         ImGui.PushStyleColor(ImGuiCol.Text, ColAccent);
-        ImGui.Text("HST");
+        ImGui.TextUnformatted("HST");
         ImGui.PopStyleColor();
 
-        ImGui.SetCursorPos(new Vector2(12, 36));
+        ImGui.SetCursorPos(new Vector2(14, 32));
         ImGui.PushStyleColor(ImGuiCol.Text, ColTextMuted);
-        ImGui.TextUnformatted("v1.0");
+        ImGui.TextUnformatted("v8.0");
         ImGui.PopStyleColor();
 
-        ImGui.EndChild();
-
-        // Server status pill under logo
-        ImGui.PushStyleColor(ImGuiCol.ChildBg,
-            _config.IsSet ? ColAccentDim : ColDangerDim);
-        ImGui.BeginChild("##SrvPill", new Vector2(sideW, 30), ImGuiChildFlags.None);
+        // Server status strip
+        bool connected = _config.IsSet;
+        ImGui.SetCursorPosY(54);
+        var sp = ImGui.GetCursorScreenPos();
+        dl.AddRectFilled(sp, sp + new Vector2(sideW, 26),
+            ImGui.ColorConvertFloat4ToU32(connected ? ColAccentDim : ColDangerDim));
+        ImGui.SetCursorPos(new Vector2(10, 59));
+        ImGui.PushStyleColor(ImGuiCol.Text, connected ? ColAccent : ColDanger);
+        ImGui.TextUnformatted(connected ? "● " + _config.ServerPort : "● OFFLINE");
         ImGui.PopStyleColor();
-        ImGui.SetCursorPos(new Vector2(10, 7));
-        ImGui.PushStyleColor(ImGuiCol.Text,
-            _config.IsSet ? ColAccent : ColDanger);
-        ImGui.TextUnformatted(_config.IsSet
-            ? $"● {_config.ServerPort}"
-            : "● NO SERVER");
-        ImGui.PopStyleColor();
-        ImGui.EndChild();
 
-        ImGui.Spacing();
+        // Separator
+        ImGui.SetCursorPosY(83);
+        var sep = ImGui.GetCursorScreenPos();
+        dl.AddLine(sep, sep + new Vector2(sideW, 0),
+            ImGui.ColorConvertFloat4ToU32(ColBorder));
+        ImGui.SetCursorPosY(87);
 
-        // Nav buttons
-        float btnH = 64f;
-        for (int i = 0; i < SectionNames.Length; i++)
+        // Nav buttons in scrollable child — prevents vertical clipping on small monitors
+        float navH = totalH - 87 - 30;
+        ImGui.BeginChild("##NavScroll", new Vector2(sideW, navH),
+            ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar);
+
+        const float BtnH = 52f;
+        for (int i = 0; i < Sections.Length; i++)
         {
-            bool selected = _selectedSection == i;
+            bool sel = _selectedSection == i;
 
-            if (selected)
+            // Capture screen pos BEFORE the button renders — used for background rects
+            var btnSP = ImGui.GetCursorScreenPos();
+
+            if (sel)
             {
-                var wdl = ImGui.GetWindowDrawList();
-                var wp  = ImGui.GetWindowPos();
-                float cy = ImGui.GetCursorPosY();
-
-                // Active indicator bar on left edge
-                wdl.AddRectFilled(
-                    wp + new Vector2(0, cy),
-                    wp + new Vector2(3, cy + btnH),
+                // Left accent bar — 3px wide strip
+                dl.AddRectFilled(btnSP, btnSP + new Vector2(3, BtnH),
                     ImGui.ColorConvertFloat4ToU32(ColAccent));
-
-                // Active button background tint
-                wdl.AddRectFilled(
-                    wp + new Vector2(0, cy),
-                    wp + new Vector2(sideW, cy + btnH),
+                // Tinted background exactly over button area (no overflow into adjacent rects)
+                dl.AddRectFilled(btnSP, btnSP + new Vector2(sideW, BtnH),
                     ImGui.ColorConvertFloat4ToU32(ColAccentDim));
             }
 
-            ImGui.PushStyleColor(ImGuiCol.Button,
-                selected ? ColAccentDim : new Vector4(0, 0, 0, 0));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered,
-                new Vector4(0.18f, 0.95f, 0.45f, 0.10f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive,
-                new Vector4(0.18f, 0.95f, 0.45f, 0.22f));
-            ImGui.PushStyleColor(ImGuiCol.Text,
-                selected ? ColAccent : ColTextMuted);
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0, 0, 0, 0));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.18f, 0.95f, 0.45f, 0.10f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive,  new Vector4(0.18f, 0.95f, 0.45f, 0.22f));
+            ImGui.PushStyleColor(ImGuiCol.Text, sel ? ColAccent : ColTextMuted);
             ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, new Vector2(0.5f, 0.5f));
 
-            string[] nameParts = SectionNames[i].Split('\n');
-            string   btnLabel  = SectionIcons[i] + "\n" +
-                                 string.Join("\n", nameParts) +
-                                 $"##nav{i}";
-
-            if (ImGui.Button(btnLabel, new Vector2(sideW, btnH)))
+            if (ImGui.Button(Sections[i].Icon + "\n" + Sections[i].Short + $"##nav{i}",
+                new Vector2(sideW, BtnH)))
                 _selectedSection = i;
 
             ImGui.PopStyleVar();
             ImGui.PopStyleColor(4);
 
-            // Divider between items
-            if (!selected && i < SectionNames.Length - 1)
+            if (i < Sections.Length - 1)
             {
-                var wdl2 = ImGui.GetWindowDrawList();
-                var wp2  = ImGui.GetWindowPos();
-                float cy2 = ImGui.GetCursorPosY();
-                wdl2.AddLine(
-                    wp2 + new Vector2(16, cy2),
-                    wp2 + new Vector2(sideW - 16, cy2),
+                var divSP = ImGui.GetCursorScreenPos();
+                dl.AddLine(divSP + new Vector2(12, 0), divSP + new Vector2(sideW - 12, 0),
                     ImGui.ColorConvertFloat4ToU32(ColBorder));
             }
         }
 
-        // Footer label
-        ImGui.SetCursorPosY(totalH - 36);
-        ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0, 0, 0, 0));
-        ImGui.BeginChild("##SideBottom", new Vector2(sideW, 36), ImGuiChildFlags.None);
-        ImGui.PopStyleColor();
-        ImGui.SetCursorPos(new Vector2(10, 8));
+        ImGui.EndChild();
+
+        // Footer
+        ImGui.SetCursorPosY(totalH - 26);
+        ImGui.SetCursorPosX(10);
         ImGui.PushStyleColor(ImGuiCol.Text, ColTextMuted);
         ImGui.TextUnformatted("Hytale Sec");
         ImGui.PopStyleColor();
-        ImGui.EndChild();
     }
-
-    // ── Top bar ───────────────────────────────────────────────────────────
 
     private void RenderTopBar()
     {
@@ -291,137 +237,157 @@ public class MenuRenderer
         var p  = ImGui.GetWindowPos();
         float w = ImGui.GetContentRegionAvail().X;
 
-        // Section title
         ImGui.PushStyleColor(ImGuiCol.Text, ColAccent);
-        ImGui.SetWindowFontScale(1.25f);
-        ImGui.Text(SectionLabels[_selectedSection]);
+        ImGui.SetWindowFontScale(1.20f);
+        ImGui.TextUnformatted(Sections[_selectedSection].Full);
         ImGui.SetWindowFontScale(1.0f);
         ImGui.PopStyleColor();
 
-        ImGui.SameLine(w - 200);
-
-        // Server badge (top right)
+        ImGui.SameLine(w - 180);
         if (_config.IsSet)
         {
             ImGui.PushStyleColor(ImGuiCol.Text, ColTextMuted);
-            ImGui.Text($"{_config.ServerIp}:{_config.ServerPort}");
+            ImGui.TextUnformatted($"{_config.ServerIp}:{_config.ServerPort}");
             ImGui.PopStyleColor();
         }
         else
         {
             ImGui.PushStyleColor(ImGuiCol.Text, ColDanger);
-            ImGui.Text("No server configured");
+            ImGui.TextUnformatted("No server configured");
             ImGui.PopStyleColor();
         }
 
-        // Accent underline
-        float lineY = p.Y + ImGui.GetCursorPosY() - 4;
-        dl.AddLine(
-            new Vector2(p.X, lineY),
-            new Vector2(p.X + w, lineY),
-            ImGui.ColorConvertFloat4ToU32(ColBorder), 1f);
-
+        float lineY = p.Y + ImGui.GetCursorPosY() - 3;
+        dl.AddLine(new Vector2(p.X, lineY), new Vector2(p.X + w + 20, lineY),
+            ImGui.ColorConvertFloat4ToU32(ColBorder));
         ImGui.Spacing();
         ImGui.Spacing();
     }
-
-    // ── Content routing ───────────────────────────────────────────────────
 
     private void RenderContent()
     {
         switch (_selectedSection)
         {
-            case 0:  _dashboardTab.Render();        break;
-            case 1:  _packetTab.Render();           break;
-            case 2:  _dupingTab.Render();           break;
-            case 3:  _captureTab.Render();          break;
-            case 4:  _privilegeTab.Render();        break;
-            case 5:  _itemInspectorTab.Render();    break;
-            case 6:  _responseAnalyserTab.Render(); break;
-            case 7:  _diffAnalysisTab.Render();     break;
-            case 8:  _packetBookTab.Render();       break;
-            case 9:  _connectionTab.Render();       break;
-            case 10: _logTab.Render();              break;
-            case 11: _memoryTab.Render();           break;
-            case 12: _visualsTab.Render();          break;
+            case 0: RenderDashboardMerged();    break;
+            case 1: RenderPacketsMerged();      break;
+            case 2: _dupingTab.Render();        break;
+            case 3: RenderCaptureMerged();      break;
+            case 4: _privilegeTab.Render();     break;
+            case 5: _itemInspectorTab.Render(); break;
+            case 6: _packetBookTab.Render();    break;
+            case 7: _memoryTab.Render();        break;
+            case 8: _visualsTab.Render();       break;
         }
     }
 
-    // ── Theme ─────────────────────────────────────────────────────────────
+    // Dashboard absorbs Log
+    private void RenderDashboardMerged()
+    {
+        if (ImGui.BeginTabBar("##dash_tabs"))
+        {
+            if (ImGui.BeginTabItem("  Dashboard  "))
+            { ImGui.Spacing(); _dashboardTab.Render(); ImGui.EndTabItem(); }
+            if (ImGui.BeginTabItem("  Log  "))
+            { ImGui.Spacing(); _logTab.Render(); ImGui.EndTabItem(); }
+            ImGui.EndTabBar();
+        }
+    }
+
+    // Packets absorbs Response Analyser
+    private void RenderPacketsMerged()
+    {
+        if (ImGui.BeginTabBar("##pkt_tabs"))
+        {
+            if (ImGui.BeginTabItem("  Packet Exploiting  "))
+            { ImGui.Spacing(); _packetTab.Render(); ImGui.EndTabItem(); }
+            if (ImGui.BeginTabItem("  Response Analyser  "))
+            { ImGui.Spacing(); _responseAnalyserTab.Render(); ImGui.EndTabItem(); }
+            ImGui.EndTabBar();
+        }
+    }
+
+    // Capture absorbs Diff Analysis
+    private void RenderCaptureMerged()
+    {
+        if (ImGui.BeginTabBar("##cap_tabs"))
+        {
+            if (ImGui.BeginTabItem("  Capture  "))
+            { ImGui.Spacing(); _captureTab.Render(); ImGui.EndTabItem(); }
+            if (ImGui.BeginTabItem("  Diff Analysis  "))
+            { ImGui.Spacing(); _diffAnalysisTab.Render(); ImGui.EndTabItem(); }
+            ImGui.EndTabBar();
+        }
+    }
 
     public static void ApplyTheme()
     {
         var style = ImGui.GetStyle();
-
-        style.WindowPadding    = new Vector2(16, 12);
-        style.FramePadding     = new Vector2(8, 5);
+        style.WindowPadding    = new Vector2(14, 10);
+        style.FramePadding     = new Vector2(7, 4);
         style.ItemSpacing      = new Vector2(8, 6);
         style.ItemInnerSpacing = new Vector2(6, 4);
         style.IndentSpacing    = 16f;
         style.ScrollbarSize    = 8f;
         style.GrabMinSize      = 8f;
-
         style.WindowRounding    = 0f;
         style.ChildRounding     = 4f;
         style.FrameRounding     = 3f;
         style.PopupRounding     = 4f;
         style.ScrollbarRounding = 4f;
         style.GrabRounding      = 3f;
-        style.TabRounding       = 3f;
-
-        style.WindowBorderSize = 0f;
-        style.ChildBorderSize  = 1f;
-        style.FrameBorderSize  = 0f;
-        style.PopupBorderSize  = 1f;
+        style.TabRounding       = 4f;
+        style.WindowBorderSize  = 0f;
+        style.ChildBorderSize   = 1f;
+        style.FrameBorderSize   = 0f;
+        style.PopupBorderSize   = 1f;
 
         var c = style.Colors;
-
-        c[(int)ImGuiCol.WindowBg]          = ColBg0;
-        c[(int)ImGuiCol.ChildBg]           = ColBg1;
-        c[(int)ImGuiCol.PopupBg]           = ColBg2;
-        c[(int)ImGuiCol.Border]            = ColBorder;
-        c[(int)ImGuiCol.BorderShadow]      = new Vector4(0, 0, 0, 0);
-        c[(int)ImGuiCol.Text]              = ColText;
-        c[(int)ImGuiCol.TextDisabled]      = ColTextMuted;
-        c[(int)ImGuiCol.FrameBg]           = ColBg2;
-        c[(int)ImGuiCol.FrameBgHovered]    = ColBg3;
-        c[(int)ImGuiCol.FrameBgActive]     = new Vector4(0.18f, 0.95f, 0.45f, 0.20f);
-        c[(int)ImGuiCol.TitleBg]           = ColBg0;
-        c[(int)ImGuiCol.TitleBgActive]     = ColBg0;
-        c[(int)ImGuiCol.TitleBgCollapsed]  = ColBg0;
-        c[(int)ImGuiCol.MenuBarBg]         = ColBg1;
-        c[(int)ImGuiCol.ScrollbarBg]       = ColBg1;
-        c[(int)ImGuiCol.ScrollbarGrab]     = ColBg3;
+        c[(int)ImGuiCol.WindowBg]             = ColBg0;
+        c[(int)ImGuiCol.ChildBg]              = ColBg1;
+        c[(int)ImGuiCol.PopupBg]              = ColBg2;
+        c[(int)ImGuiCol.Border]               = ColBorder;
+        c[(int)ImGuiCol.BorderShadow]         = new Vector4(0, 0, 0, 0);
+        c[(int)ImGuiCol.Text]                 = ColText;
+        c[(int)ImGuiCol.TextDisabled]         = ColTextMuted;
+        c[(int)ImGuiCol.FrameBg]              = ColBg2;
+        c[(int)ImGuiCol.FrameBgHovered]       = ColBg3;
+        c[(int)ImGuiCol.FrameBgActive]        = new Vector4(0.18f, 0.95f, 0.45f, 0.20f);
+        c[(int)ImGuiCol.TitleBg]              = ColBg0;
+        c[(int)ImGuiCol.TitleBgActive]        = ColBg0;
+        c[(int)ImGuiCol.TitleBgCollapsed]     = ColBg0;
+        c[(int)ImGuiCol.MenuBarBg]            = ColBg1;
+        c[(int)ImGuiCol.ScrollbarBg]          = ColBg1;
+        c[(int)ImGuiCol.ScrollbarGrab]        = ColBg3;
         c[(int)ImGuiCol.ScrollbarGrabHovered] = new Vector4(0.18f, 0.95f, 0.45f, 0.35f);
         c[(int)ImGuiCol.ScrollbarGrabActive]  = ColAccent;
-        c[(int)ImGuiCol.CheckMark]         = ColAccent;
-        c[(int)ImGuiCol.SliderGrab]        = ColAccentMid;
-        c[(int)ImGuiCol.SliderGrabActive]  = ColAccent;
-        c[(int)ImGuiCol.Button]            = ColBg3;
-        c[(int)ImGuiCol.ButtonHovered]     = new Vector4(0.18f, 0.95f, 0.45f, 0.22f);
-        c[(int)ImGuiCol.ButtonActive]      = new Vector4(0.18f, 0.95f, 0.45f, 0.38f);
-        c[(int)ImGuiCol.Header]            = new Vector4(0.18f, 0.95f, 0.45f, 0.16f);
-        c[(int)ImGuiCol.HeaderHovered]     = new Vector4(0.18f, 0.95f, 0.45f, 0.26f);
-        c[(int)ImGuiCol.HeaderActive]      = new Vector4(0.18f, 0.95f, 0.45f, 0.38f);
-        c[(int)ImGuiCol.Separator]         = ColBorder;
-        c[(int)ImGuiCol.SeparatorHovered]  = ColAccentMid;
-        c[(int)ImGuiCol.SeparatorActive]   = ColAccent;
-        c[(int)ImGuiCol.ResizeGrip]        = new Vector4(0, 0, 0, 0);
-        c[(int)ImGuiCol.ResizeGripHovered] = ColAccentMid;
-        c[(int)ImGuiCol.ResizeGripActive]  = ColAccent;
-        c[(int)ImGuiCol.Tab]               = ColBg2;
-        c[(int)ImGuiCol.TabHovered]        = new Vector4(0.18f, 0.95f, 0.45f, 0.22f);
-        // Map tab-like colors to existing ImGuiCol entries available in this build
-        c[(int)ImGuiCol.HeaderActive]      = new Vector4(0.18f, 0.95f, 0.45f, 0.28f);
-        c[(int)ImGuiCol.ChildBg]           = ColBg1;
-        c[(int)ImGuiCol.FrameBg]           = ColBg2;
-        c[(int)ImGuiCol.PlotLines]         = ColAccent;
-        c[(int)ImGuiCol.PlotLinesHovered]  = new Vector4(0.18f, 0.95f, 0.45f, 1f);
-        c[(int)ImGuiCol.PlotHistogram]     = ColAccentMid;
+        c[(int)ImGuiCol.CheckMark]            = ColAccent;
+        c[(int)ImGuiCol.SliderGrab]           = ColAccentMid;
+        c[(int)ImGuiCol.SliderGrabActive]     = ColAccent;
+        c[(int)ImGuiCol.Button]               = ColBg3;
+        c[(int)ImGuiCol.ButtonHovered]        = new Vector4(0.18f, 0.95f, 0.45f, 0.22f);
+        c[(int)ImGuiCol.ButtonActive]         = new Vector4(0.18f, 0.95f, 0.45f, 0.38f);
+        c[(int)ImGuiCol.Header]               = new Vector4(0.18f, 0.95f, 0.45f, 0.16f);
+        c[(int)ImGuiCol.HeaderHovered]        = new Vector4(0.18f, 0.95f, 0.45f, 0.26f);
+        c[(int)ImGuiCol.HeaderActive]         = new Vector4(0.18f, 0.95f, 0.45f, 0.38f);
+        c[(int)ImGuiCol.Separator]            = ColBorder;
+        c[(int)ImGuiCol.SeparatorHovered]     = ColAccentMid;
+        c[(int)ImGuiCol.SeparatorActive]      = ColAccent;
+        c[(int)ImGuiCol.ResizeGrip]           = new Vector4(0, 0, 0, 0);
+        c[(int)ImGuiCol.ResizeGripHovered]    = ColAccentMid;
+        c[(int)ImGuiCol.ResizeGripActive]     = ColAccent;
+        c[(int)ImGuiCol.Tab]                  = ColBg2;
+        c[(int)ImGuiCol.TabHovered]           = new Vector4(0.18f, 0.95f, 0.45f, 0.18f);
+        // use TabActive for selected tab color (this build exposes TabActive, not TabSelected)
+        c[(int)ImGuiCol.TabActive]            = new Vector4(0.18f, 0.95f, 0.45f, 0.28f);
+        c[(int)ImGuiCol.TabUnfocused]         = ColBg1;
+        c[(int)ImGuiCol.TabUnfocusedActive]   = ColBg2;
+        c[(int)ImGuiCol.PlotLines]            = ColAccent;
+        c[(int)ImGuiCol.PlotLinesHovered]     = new Vector4(0.18f, 0.95f, 0.45f, 1f);
+        c[(int)ImGuiCol.PlotHistogram]        = ColAccentMid;
         c[(int)ImGuiCol.PlotHistogramHovered] = ColAccent;
-        c[(int)ImGuiCol.DragDropTarget]    = ColAccent;
-        c[(int)ImGuiCol.NavHighlight]      = ColAccent;
-        c[(int)ImGuiCol.NavWindowingHighlight] = ColAccent;
+        c[(int)ImGuiCol.DragDropTarget]       = ColAccent;
+        c[(int)ImGuiCol.NavHighlight]         = ColAccent;
+        c[(int)ImGuiCol.NavWindowingHighlight]= ColAccent;
         c[(int)ImGuiCol.NavWindowingDimBg]    = new Vector4(0, 0, 0, 0.6f);
         c[(int)ImGuiCol.ModalWindowDimBg]     = new Vector4(0, 0, 0, 0.6f);
     }
