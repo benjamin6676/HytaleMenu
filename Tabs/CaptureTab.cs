@@ -36,6 +36,7 @@ public class CaptureTab : ITab
     private bool   _showClientServer = true;
     private bool   _showServerClient = true;
     private bool   _autoScroll       = true;
+    private bool   _decompressView   = false;   // show decompressed payload in hex view
 
     public CaptureTab(TestLog log, PacketLog pktLog, ServerConfig config)
     {
@@ -391,13 +392,44 @@ public class CaptureTab : ITab
             ImGui.Spacing();
 
             UiHelper.MutedLabel("Hex dump:");
-            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 1.0f, 0.7f, 1f));
-            for (int row = 0; row < p.RawBytes.Length; row += 16)
+            // Decompression toggle
+            ImGui.SameLine(0, 16);
+            ImGui.Checkbox("Auto-decompress##dcv", ref _decompressView);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Attempt zlib/gzip/LZ4/deflate decompression before display");
+
+            byte[] displayBytes = p.RawBytes;
+            string decompLabel  = "";
+            if (_decompressView && p.RawBytes.Length > 4)
             {
-                int    len = Math.Min(16, p.RawBytes.Length - row);
-                string hex = string.Join(" ", p.RawBytes.Skip(row).Take(len)
+                var decompressed = PacketAnalyser.TryDecompress(p.RawBytes, out string method);
+                if (decompressed != null)
+                {
+                    displayBytes = decompressed;
+                    decompLabel  = $"  ← decompressed ({method}) {decompressed.Length}b";
+                }
+                else
+                {
+                    decompLabel = "  (not compressed)";
+                }
+            }
+
+            if (decompLabel.Length > 0)
+            {
+                ImGui.SameLine(0, 8);
+                ImGui.PushStyleColor(ImGuiCol.Text, decompLabel.Contains("←")
+                    ? MenuRenderer.ColAccent : MenuRenderer.ColTextMuted);
+                ImGui.TextUnformatted(decompLabel);
+                ImGui.PopStyleColor();
+            }
+
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 1.0f, 0.7f, 1f));
+            for (int row = 0; row < displayBytes.Length; row += 16)
+            {
+                int    len = Math.Min(16, displayBytes.Length - row);
+                string hex = string.Join(" ", displayBytes.Skip(row).Take(len)
                     .Select(b => $"{b:X2}"));
-                string asc = new string(p.RawBytes.Skip(row).Take(len)
+                string asc = new string(displayBytes.Skip(row).Take(len)
                     .Select(b => b >= 32 && b < 127 ? (char)b : '.').ToArray());
                 ImGui.Text($"{row:X4}  {hex,-47}  {asc}");
             }

@@ -24,6 +24,7 @@ public class VisualsTab : ITab
 
     private readonly TestLog     _log;
     private readonly MemoryReader _reader = new();
+    private readonly ServerConfig _config;
 
     // ── Overlay master state ──────────────────────────────────────────────
     private bool _overlayEnabled  = true;
@@ -76,7 +77,7 @@ public class VisualsTab : ITab
     private List<System.Diagnostics.Process> _procs = new();
     private int                              _manualPid = 0;
 
-    public VisualsTab(TestLog log) { _log = log; }
+    public VisualsTab(TestLog log, ServerConfig config) { _log = log; _config = config; }
 
     // ── Render ────────────────────────────────────────────────────────────
 
@@ -97,6 +98,8 @@ public class VisualsTab : ITab
         ImGui.PopStyleColor();
 
         RenderOverlayControl(leftW);
+        ImGui.Spacing();
+        RenderGazeEntityResolver(leftW);
         ImGui.Spacing();
         RenderDCF(leftW);
         ImGui.Spacing();
@@ -261,6 +264,227 @@ public class VisualsTab : ITab
     // ══════════════════════════════════════════════════════════════════════
     // DYNAMIC COMPONENT FINDER
     // ══════════════════════════════════════════════════════════════════════
+
+    // ══════════════════════════════════════════════════════════════════════
+    // GAZE-ENTITY RESOLVER
+    // ══════════════════════════════════════════════════════════════════════
+    //
+    // Extracts the camera forward vector from the stored ViewProjectionMatrix,
+    // then computes the dot product between that vector and the direction to
+    // every entity currently in Application.EntityPositions.
+    //
+    // The entity with the highest dot product (most directly in front of the
+    // camera) is selected as the "Active Target" and its entity ID is pushed
+    // into ServerConfig so that the Item Inspector, Privilege Escalation, and
+    // Dupe Methods tabs can all use it automatically.
+
+    // Gaze Resolver state
+    private bool   _gazeEnabled     = false;     // auto-update every frame
+    private float  _gazeFovDeg      = 15f;       // acceptance cone half-angle (degrees)
+    private int    _gazeEntityIdOffset = 0;      // byte offset in entity struct to read int32 ID
+    private string _gazeActiveLabel = "";        // label of selected entity
+    private int    _gazeActiveId    = 0;         // entity ID pushed to config
+    private float  _gazeActiveDot   = 0f;        // dot product of selected (1.0 = perfect aim)
+    private float  _gazeLastUpdateS = 0f;        // elapsed seconds since last resolve
+    private bool   _gazeAutoRead    = true;      // auto-read ID from memory at resolved address
+
+    // Camera override — allow manual entry when VP matrix auto-detection isn't set up
+    private string  _gazeCamFwdOverride = "";    // "X,Y,Z"
+    private string  _gazeCamPosOverride = "";    // "X,Y,Z"
+    private bool    _gazeUseCamOverride = false;
+
+    private void RenderGazeEntityResolver(float w)
+    {
+        UiHelper.SectionBox("GAZE-ENTITY RESOLVER", w, 220, () =>
+        {
+            UiHelper.MutedLabel("Extracts camera forward vector from the VP matrix and computes dot product");
+            UiHelper.MutedLabel("against all overlay entities to auto-select the entity you're looking at.");
+            ImGui.Spacing();
+
+            // Active target display
+            if (_gazeActiveId > 0)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
+                ImGui.TextUnformatted($"  ★ Active Target: [{_gazeActiveId}]  {_gazeActiveLabel}" +
+                                      $"  (dot={_gazeActiveDot:F3})");
+                ImGui.PopStyleColor();
+            }
+            else
+            {
+                UiHelper.MutedLabel("  No target selected — aim at an entity and resolve.");
+            }
+
+            ImGui.Spacing();
+
+            // Config row
+            ImGui.SetNextItemWidth(80); ImGui.SliderFloat("FOV cone°##gzfov", ref _gazeFovDeg, 1f, 90f);
+            ImGui.SameLine(0, 8);
+            ImGui.Checkbox("Auto##gzauto",     ref _gazeEnabled);
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Re-resolve every render frame");
+            ImGui.SameLine(0, 8);
+            ImGui.Checkbox("Push to Inspector##gzpush", ref _gazeAutoRead);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Automatically call ServerConfig.SetTargetItemId when a new target is selected");
+
+            ImGui.Spacing();
+
+            // Camera override
+            ImGui.Checkbox("Manual camera vectors##gzmo", ref _gazeUseCamOverride);
+            if (_gazeUseCamOverride)
+            {
+                ImGui.SetNextItemWidth((w - 20) * 0.5f);
+                ImGui.InputText("Forward X,Y,Z##gzfw", ref _gazeCamFwdOverride, 48);
+                ImGui.SameLine(0, 4);
+                ImGui.SetNextItemWidth((w - 20) * 0.5f);
+                ImGui.InputText("Cam pos X,Y,Z##gzcp", ref _gazeCamPosOverride, 48);
+            }
+            else
+            {
+                UiHelper.MutedLabel("Camera forward extracted from ViewProjectionMatrix row 2 (Z-axis).");
+            }
+
+            ImGui.Spacing();
+            UiHelper.WarnButton("Resolve Now##gzres", 130, 26, ResolveGazeTarget);
+            ImGui.SameLine(0, 8);
+            UiHelper.SecondaryButton("Clear Target##gzclr", 120, 26, () =>
+            {
+                _gazeActiveId    = 0;
+                _gazeActiveLabel = "";
+                _gazeActiveDot   = 0f;
+            });
+
+            ImGui.Spacing();
+            UiHelper.MutedLabel(
+                $"Entities in overlay: {Application.EntityPositions.Count}  |  " +
+                $"Last resolve: {(_gazeLastUpdateS > 0 ? $"{_gazeLastUpdateS:F2}s ago" : "never")}");
+        });
+
+        // If auto-mode is on, resolve every frame (called from Render which runs per-frame)
+        if (_gazeEnabled)
+        {
+            _gazeLastUpdateS += ImGui.GetIO().DeltaTime;
+            if (_gazeLastUpdateS > 0.05f) // max 20 Hz
+            {
+                _gazeLastUpdateS = 0;
+                ResolveGazeTarget();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Calculates the dot product between the camera forward vector and the
+    /// direction to each overlay entity. Selects the entity most aligned with
+    /// the camera gaze (highest dot product) within the FOV cone, then pushes
+    /// its ID to ServerConfig as the active target for the Item Inspector.
+    /// </summary>
+    private void ResolveGazeTarget()
+    {
+        // ── 1. Extract camera forward ──────────────────────────────────────
+        Vector3 camForward, camPos;
+
+        if (_gazeUseCamOverride)
+        {
+            camForward = ParseVec3(_gazeCamFwdOverride, Vector3.UnitZ);
+            camPos     = ParseVec3(_gazeCamPosOverride, Vector3.Zero);
+        }
+        else
+        {
+            // ViewProjectionMatrix:
+            // Row 2 (M13,M23,M33,M43) gives the camera's Z-axis (forward in view space).
+            // Row 3 (M14,M24,M34,M44) is the translation row — camera world position.
+            var m      = Application.ViewProjectionMatrix;
+            camForward = Vector3.Normalize(new Vector3(m.M13, m.M23, m.M33));
+            camPos     = new Vector3(-m.M41, -m.M42, -m.M43); // inverse translation
+        }
+
+        if (camForward == Vector3.Zero) return;
+
+        // ── 2. Find best entity by dot product ────────────────────────────
+        float   bestDot   = MathF.Cos(_gazeFovDeg * MathF.PI / 180f); // min dot within cone
+        string  bestLabel = "";
+        int     bestId    = 0;
+        float   bestDotV  = 0f;
+        Vector3 bestPos   = Vector3.Zero;
+
+        List<EntityOverlayEntry> snapshot;
+        lock (Application.EntityPositions)
+            snapshot = new List<EntityOverlayEntry>(Application.EntityPositions);
+
+        foreach (var entity in snapshot)
+        {
+            Vector3 toEntity = Vector3.Normalize(entity.Position - camPos);
+            float   dot      = Vector3.Dot(camForward, toEntity);
+
+            if (dot > bestDot)
+            {
+                bestDot   = dot;
+                bestDotV  = dot;
+                bestLabel = entity.Label;
+                bestPos   = entity.Position;
+            }
+        }
+
+        if (bestLabel.Length == 0) return; // nothing in cone
+
+        // ── 3. Parse entity ID from label (format: "TypeName  0xABCDEF" or "Type 1234") ──
+        int resolvedId = 0;
+        var parts = bestLabel.Split(new char[]{' ', '\t'}, StringSplitOptions.RemoveEmptyEntries);
+        foreach (var part in parts)
+        {
+            // Try hex suffix (last 6 chars of address printed in label)
+            if (part.StartsWith("0x") &&
+                int.TryParse(part[2..], System.Globalization.NumberStyles.HexNumber, null, out int hid))
+            { resolvedId = hid; break; }
+            // Try plain integer
+            if (int.TryParse(part, out int pid) && pid > 0)
+            { resolvedId = pid; break; }
+        }
+
+        // ── 4. Optionally read ID from memory at entity's position address ─
+        //      (EntityOverlayEntry.Label contains the address suffix for DCF hits)
+        //      This is a best-effort: if we can read a more authoritative ID, use it.
+        if (_gazeAutoRead && _reader.IsAttached && resolvedId == 0)
+        {
+            // The label suffix for DCF entities is the last 6 hex digits of the AOB hit address.
+            // We can't reverse that to a full address without storing it, so we skip memory
+            // read in that case and rely on the parsed ID.
+        }
+
+        // ── 5. Push to config ─────────────────────────────────────────────
+        int newId = resolvedId > 0 ? resolvedId : (int)(bestPos.X * 1000); // fallback hash
+
+        if (newId != _gazeActiveId)
+        {
+            _gazeActiveId    = newId;
+            _gazeActiveLabel = bestLabel;
+            _gazeActiveDot   = bestDotV;
+
+            if (_gazeAutoRead && newId > 0)
+            {
+                _config.SetTargetItemId(newId, "Gaze Resolver");
+                _log.Info($"[Gaze] Active target → [{newId}] '{bestLabel}'" +
+                          $"  dot={bestDotV:F3}  pushed to Item Inspector.");
+            }
+        }
+        else
+        {
+            // Update dot even if ID is same (entity moved)
+            _gazeActiveDot   = bestDotV;
+            _gazeActiveLabel = bestLabel;
+        }
+    }
+
+    private static Vector3 ParseVec3(string s, Vector3 fallback)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return fallback;
+        var parts = s.Split(',');
+        if (parts.Length < 3) return fallback;
+        if (float.TryParse(parts[0].Trim(), out float x) &&
+            float.TryParse(parts[1].Trim(), out float y) &&
+            float.TryParse(parts[2].Trim(), out float z))
+            return new Vector3(x, y, z);
+        return fallback;
+    }
 
     private void RenderDCF(float w)
     {

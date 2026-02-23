@@ -28,7 +28,8 @@ public class MemoryTab : ITab
     private int _subTab = 0;
     private static readonly string[] SubTabs =
         { "Attach", "Read", "Pattern Scan", "Value Scan", "Inventory Scan",
-          "AOB Scan", "Memory Map", "Pointer Path" };
+          "AOB Scan", "Memory Map", "Pointer Path",
+          "String Scan", "VTable", "Breakpoints", "Ptr Tree", "CT Import", "Correlator" };
 
     // ── AOB scan ──────────────────────────────────────────────────────────
     private string          _aobModule     = "";
@@ -94,7 +95,15 @@ public class MemoryTab : ITab
 
     private int _manualPid = 0;
 
-    public MemoryTab(TestLog log) => _log = log;
+    private readonly PacketStore  _store;
+    private LiveMemoryCorrelator? _correlator;
+
+    public MemoryTab(TestLog log, PacketStore store)
+    {
+        _log   = log;
+        _store = store;
+        _correlator = new LiveMemoryCorrelator(log, store, _reader);
+    }
 
     public void Render()
     {
@@ -115,6 +124,12 @@ public class MemoryTab : ITab
             case 5: RenderAobScan(w);       break;
             case 6: RenderMemoryMap(w);     break;
             case 7: RenderPointerPath(w);   break;
+            case 8: RenderStringScan(w);    break;
+            case 9: RenderVTable(w);        break;
+            case 10: RenderBreakpoints(w);  break;
+            case 11: RenderPointerTree(w);  break;
+            case 12: RenderCtImport(w);     break;
+            case 13: RenderCorrelator(w);   break;
         }
     }
 
@@ -1167,13 +1182,747 @@ public class MemoryTab : ITab
             _ppResult = $"Error: {ex.Message}";
         }
     }
+    // ══════════════════════════════════════════════════════════════════════
+    // SUB-TAB 8: STRING-TO-POINTER SCANNER
+    // ══════════════════════════════════════════════════════════════════════
+
+    private string            _ssFilter    = "";
+    private int               _ssMinLen    = 4;
+    private int               _ssMaxLen    = 64;
+    private bool              _ssUtf8      = true;
+    private bool              _ssUtf16     = true;
+    private bool              _ssScanning  = false;
+    private List<StringMatch> _ssResults   = new();
+    private string            _ssStatus    = "";
+
+    private void RenderStringScan(float w)
     {
-        _refreshing = true;
+        UiHelper.SectionBox("STRING-TO-POINTER SCANNER", w, 130, () =>
+        {
+            UiHelper.MutedLabel("Scans all readable heap memory for UTF-8 and UTF-16 strings.");
+            UiHelper.MutedLabel("Use the filter to find custom item names, entity names, or protocol strings.");
+            ImGui.Spacing();
+
+            ImGui.SetNextItemWidth(90); ImGui.InputInt("Min len##ssmin", ref _ssMinLen);
+            _ssMinLen = Math.Clamp(_ssMinLen, 1, 256);
+            ImGui.SameLine(0, 8);
+            ImGui.SetNextItemWidth(90); ImGui.InputInt("Max len##ssmax", ref _ssMaxLen);
+            _ssMaxLen = Math.Clamp(_ssMaxLen, _ssMinLen, 512);
+            ImGui.SameLine(0, 12);
+            ImGui.Checkbox("UTF-8##ssu8",   ref _ssUtf8);
+            ImGui.SameLine(0, 8);
+            ImGui.Checkbox("UTF-16##ssu16", ref _ssUtf16);
+            ImGui.Spacing();
+
+            ImGui.SetNextItemWidth(300); ImGui.InputText("Filter##ssf", ref _ssFilter, 128);
+            ImGui.SameLine(0, 8);
+            ImGui.BeginDisabled(!_reader.IsAttached || _ssScanning);
+            UiHelper.WarnButton(_ssScanning ? "Scanning...##ssscan" : "Scan##ssscan",
+                90, 26, StartStringScan);
+            ImGui.EndDisabled();
+
+            if (_ssStatus.Length > 0)
+            {
+                ImGui.Spacing();
+                ImGui.PushStyleColor(ImGuiCol.Text,
+                    _ssStatus.StartsWith("Done") ? MenuRenderer.ColAccent : MenuRenderer.ColTextMuted);
+                ImGui.TextUnformatted($"  {_ssStatus}");
+                ImGui.PopStyleColor();
+            }
+        });
+
+        if (_ssResults.Count > 0)
+        {
+            ImGui.Spacing();
+            float resultsH = ImGui.GetContentRegionAvail().Y;
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
+            ImGui.BeginChild("##ssres", new Vector2(w, resultsH), ImGuiChildFlags.Border);
+            ImGui.PopStyleColor();
+
+            UiHelper.MutedLabel($"  {"Address",-20} {"Enc",-8} {"Len",-6} {"Value"}");
+            ImGui.Separator();
+
+            var filtered = string.IsNullOrEmpty(_ssFilter)
+                ? _ssResults
+                : _ssResults.Where(r => r.Value.Contains(_ssFilter,
+                    StringComparison.OrdinalIgnoreCase)).ToList();
+
+            foreach (var m in filtered.Take(500))
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccent);
+                ImGui.TextUnformatted($"  {m.AddressHex,-20} {m.Encoding,-8} {m.Length,-6}");
+                ImGui.PopStyleColor();
+                ImGui.SameLine(0, 6);
+                UiHelper.MutedLabel(m.Value.Length > 80 ? m.Value[..80] + "…" : m.Value);
+                ImGui.SameLine(0, 8);
+                ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBg3);
+                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
+                if (ImGui.Button($"Read##ssr{m.AddressHex}", new Vector2(44, 18)))
+                {
+                    _readAddrHex = m.AddressHex;
+                    _readBytes   = m.Length + 8;
+                    DoRead();
+                    _subTab = 1;
+                }
+                ImGui.PopStyleColor(2);
+            }
+
+            ImGui.EndChild();
+        }
+    }
+
+    private void StartStringScan()
+    {
+        _ssScanning = true;
+        _ssResults.Clear();
+        _ssStatus = "Scanning...";
+        _log.Info("[StringScan] Starting scan...");
+        var progress = new Progress<int>(p => _ssStatus = $"Scanning... {p}%");
+
         Task.Run(() =>
         {
-            _processes  = MemoryReader.GetProcessList();
-            _refreshing = false;
-            _log.Info($"[Memory] Process list refreshed — {_processes.Count} processes.");
+            _ssResults = _reader.ScanStrings(_ssMinLen, _ssMaxLen, 3000, progress);
+            _ssScanning = false;
+            _ssStatus = $"Done — {_ssResults.Count} strings found.";
+            _log.Success($"[StringScan] {_ssResults.Count} strings found.");
         });
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // SUB-TAB 9: VTABLE RESOLVER
+    // ══════════════════════════════════════════════════════════════════════
+
+    private string    _vtObjAddr  = "";
+    private int       _vtMaxMethods = 32;
+    private VTableInfo? _vtResult  = null;
+
+    private void RenderVTable(float w)
+    {
+        UiHelper.SectionBox("VTABLE RESOLVER", w, 120, () =>
+        {
+            UiHelper.MutedLabel("Reads the vtable pointer at the given object address, then walks up to N");
+            UiHelper.MutedLabel("function pointer slots and resolves each to [module + offset].");
+            ImGui.Spacing();
+
+            ImGui.SetNextItemWidth(260); ImGui.InputText("Object address##vto", ref _vtObjAddr, 32);
+            ImGui.SameLine(0, 8);
+            ImGui.SetNextItemWidth(90);  ImGui.InputInt("Max methods##vtmm", ref _vtMaxMethods);
+            _vtMaxMethods = Math.Clamp(_vtMaxMethods, 1, 256);
+            ImGui.SameLine(0, 8);
+            ImGui.BeginDisabled(!_reader.IsAttached || string.IsNullOrWhiteSpace(_vtObjAddr));
+            UiHelper.WarnButton("Resolve##vtres", 90, 26, DoResolveVTable);
+            ImGui.EndDisabled();
+        });
+
+        if (_vtResult != null)
+        {
+            ImGui.Spacing();
+            if (_vtResult.Error.Length > 0)
+            {
+                UiHelper.SectionBox("ERROR", w, 50, () =>
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColDanger);
+                    ImGui.TextUnformatted($"  {_vtResult.Error}");
+                    ImGui.PopStyleColor();
+                });
+            }
+            else
+            {
+                UiHelper.SectionBox($"VTABLE @ 0x{_vtResult.VTableAddress.ToInt64():X16}" +
+                                    $"  —  {_vtResult.Methods.Count} method(s)", w,
+                    ImGui.GetContentRegionAvail().Y, () =>
+                {
+                    UiHelper.MutedLabel($"  {"Slot",-6} {"Address",-22} {"Module",-28} {"Offset"}");
+                    ImGui.Separator();
+                    foreach (var m in _vtResult.Methods)
+                    {
+                        ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccent);
+                        ImGui.TextUnformatted(
+                            $"  [{m.Index,-3}] {m.AddressHex,-22} {m.Module,-28} {m.OffsetHex}");
+                        ImGui.PopStyleColor();
+                        ImGui.SameLine(0, 8);
+                        ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBg3);
+                        ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
+                        if (ImGui.Button($"Copy##vtc{m.Index}", new Vector2(44, 18)))
+                            ImGui.SetClipboardText($"{m.Module} {m.OffsetHex}");
+                        ImGui.PopStyleColor(2);
+                    }
+                });
+            }
+        }
+    }
+
+    private void DoResolveVTable()
+    {
+        try
+        {
+            string clean = _vtObjAddr.Replace("0x", "").Replace("0X", "").Trim();
+            long addr = Convert.ToInt64(clean, 16);
+            _vtResult = _reader.ResolveVTable(new IntPtr(addr), _vtMaxMethods);
+            if (_vtResult.Error.Length > 0)
+                _log.Error($"[VTable] {_vtResult.Error}");
+            else
+                _log.Success($"[VTable] Resolved {_vtResult.Methods.Count} methods from " +
+                             $"0x{_vtResult.VTableAddress.ToInt64():X16}");
+        }
+        catch (Exception ex) { _log.Error($"[VTable] {ex.Message}"); }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // SUB-TAB 10: HARDWARE BREAKPOINT MONITOR
+    // ══════════════════════════════════════════════════════════════════════
+
+    private string              _bpWatchAddr   = "";
+    private int                 _bpSlot        = 0;
+    private string              _bpStatus      = "";
+    private List<BreakpointHit> _bpHits        = new();
+    private bool                _bpPolling     = false;
+    private CancellationTokenSource? _bpCts;
+
+    private void RenderBreakpoints(float w)
+    {
+        UiHelper.SectionBox("HARDWARE BREAKPOINT MONITOR", w, 140, () =>
+        {
+            UiHelper.MutedLabel("Sets a CPU-level hardware write breakpoint on the target address (DR0–DR3).");
+            UiHelper.MutedLabel("Polls all threads for DR6 hit status to log which functions write to that address.");
+            ImGui.Spacing();
+
+            ImGui.SetNextItemWidth(260); ImGui.InputText("Watch address##bpwa", ref _bpWatchAddr, 32);
+            ImGui.SameLine(0, 8);
+            ImGui.SetNextItemWidth(60);  ImGui.InputInt("Slot##bpsl", ref _bpSlot);
+            _bpSlot = Math.Clamp(_bpSlot, 0, 3);
+            ImGui.Spacing();
+
+            ImGui.BeginDisabled(!_reader.IsAttached || string.IsNullOrWhiteSpace(_bpWatchAddr));
+            UiHelper.WarnButton("Set Breakpoint##bpset", 150, 26, SetBreakpoint);
+            ImGui.EndDisabled();
+            ImGui.SameLine(0, 8);
+            UiHelper.SecondaryButton("Clear All##bpclr", 100, 26, ClearBreakpoints);
+            ImGui.SameLine(0, 8);
+
+            if (_bpPolling)
+            {
+                UiHelper.DangerButton("Stop Poll##bpstopoll", 100, 26, () =>
+                {
+                    _bpCts?.Cancel(); _bpPolling = false;
+                });
+            }
+            else
+            {
+                ImGui.BeginDisabled(!_reader.IsAttached);
+                UiHelper.SecondaryButton("Start Poll##bpoll", 100, 26, StartBpPoll);
+                ImGui.EndDisabled();
+            }
+
+            if (_bpStatus.Length > 0)
+            {
+                ImGui.Spacing();
+                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColBlue);
+                ImGui.TextUnformatted($"  {_bpStatus}");
+                ImGui.PopStyleColor();
+            }
+        });
+
+        if (_bpHits.Count > 0)
+        {
+            ImGui.Spacing();
+            UiHelper.SectionBox($"HITS — {_bpHits.Count}", w, ImGui.GetContentRegionAvail().Y, () =>
+            {
+                UiHelper.MutedLabel($"  {"Time",-12} {"Thread",-10} {"Slot"}");
+                ImGui.Separator();
+                foreach (var h in _bpHits.TakeLast(50).Reverse())
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
+                    ImGui.TextUnformatted(
+                        $"  {h.Timestamp:HH:mm:ss.fff}  TID={h.ThreadId,-8} DR{h.Slot}");
+                    ImGui.PopStyleColor();
+                }
+            });
+        }
+    }
+
+    private void SetBreakpoint()
+    {
+        try
+        {
+            string clean = _bpWatchAddr.Replace("0x","").Replace("0X","").Trim();
+            long addr = Convert.ToInt64(clean, 16);
+            _bpStatus = _reader.SetHardwareBreakpoint(new IntPtr(addr), _bpSlot);
+            _log.Info($"[BP] {_bpStatus}");
+        }
+        catch (Exception ex) { _bpStatus = $"Error: {ex.Message}"; }
+    }
+
+    private void ClearBreakpoints()
+    {
+        _bpStatus = _reader.ClearHardwareBreakpoints();
+        _log.Info($"[BP] {_bpStatus}");
+    }
+
+    private void StartBpPoll()
+    {
+        _bpPolling = true;
+        _bpCts     = new CancellationTokenSource();
+        var cts    = _bpCts;
+        Task.Run(async () =>
+        {
+            _log.Info("[BP] Polling started (250ms interval)...");
+            while (!cts.Token.IsCancellationRequested)
+            {
+                var hits = _reader.PollBreakpointHits();
+                if (hits.Count > 0)
+                {
+                    lock (_bpHits) _bpHits.AddRange(hits);
+                    _log.Warn($"[BP] {hits.Count} hit(s) detected!");
+                }
+                await Task.Delay(250, cts.Token).ContinueWith(_ => { });
+            }
+            _bpPolling = false;
+            _log.Info("[BP] Polling stopped.");
+        });
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // SUB-TAB 11: POINTER TREE VIEW
+    // ══════════════════════════════════════════════════════════════════════
+
+    private string              _ptBaseAddr    = "";
+    private int                 _ptDepth       = 3;
+    private int                 _ptMaxChildren = 8;
+    private List<PointerNode>   _ptRoots       = new();
+    private bool                _ptBuilding    = false;
+
+    private void RenderPointerTree(float w)
+    {
+        UiHelper.SectionBox("POINTER TREE VIEW", w, 130, () =>
+        {
+            UiHelper.MutedLabel("Starting from a base address, dereferences pointer chains to build a tree.");
+            UiHelper.MutedLabel("Visualizes nested memory structures — entities → components → fields.");
+            ImGui.Spacing();
+
+            ImGui.SetNextItemWidth(260); ImGui.InputText("Root address##ptba", ref _ptBaseAddr, 32);
+            ImGui.SameLine(0, 8);
+            ImGui.SetNextItemWidth(70); ImGui.InputInt("Depth##ptd", ref _ptDepth);
+            _ptDepth = Math.Clamp(_ptDepth, 1, 6);
+            ImGui.SameLine(0, 8);
+            ImGui.SetNextItemWidth(70); ImGui.InputInt("Width##ptw", ref _ptMaxChildren);
+            _ptMaxChildren = Math.Clamp(_ptMaxChildren, 1, 32);
+            ImGui.SameLine(0, 8);
+            ImGui.BeginDisabled(!_reader.IsAttached || string.IsNullOrWhiteSpace(_ptBaseAddr) || _ptBuilding);
+            UiHelper.WarnButton(_ptBuilding ? "Building...##ptbld" : "Build Tree##ptbld",
+                110, 26, BuildPointerTree);
+            ImGui.EndDisabled();
+        });
+
+        if (_ptRoots.Count > 0)
+        {
+            ImGui.Spacing();
+            float treeH = ImGui.GetContentRegionAvail().Y;
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
+            ImGui.BeginChild("##pttree", new Vector2(w, treeH), ImGuiChildFlags.Border);
+            ImGui.PopStyleColor();
+
+            foreach (var root in _ptRoots)
+                RenderPointerNode(root, 0);
+
+            ImGui.EndChild();
+        }
+    }
+
+    private void RenderPointerNode(PointerNode node, int depth)
+    {
+        string indent  = new string(' ', depth * 4);
+        string addrStr = $"0x{node.Address.ToInt64():X16}";
+        string valStr  = node.IsValid
+            ? $"→ 0x{node.DereferencedValue:X16}  [{node.BytePreview}]"
+            : "(unreadable)";
+
+        bool hasChildren = node.Children.Count > 0;
+
+        ImGui.PushStyleColor(ImGuiCol.Text,
+            node.IsValid ? MenuRenderer.ColAccent : MenuRenderer.ColTextMuted);
+
+        if (hasChildren)
+        {
+            bool open = ImGui.TreeNodeEx(
+                $"{indent}{addrStr}  {valStr}##ptn{addrStr}{depth}",
+                ImGuiTreeNodeFlags.OpenOnArrow);
+            ImGui.PopStyleColor();
+            if (open)
+            {
+                foreach (var child in node.Children)
+                    RenderPointerNode(child, depth + 1);
+                ImGui.TreePop();
+            }
+        }
+        else
+        {
+            ImGui.TextUnformatted($"  {indent}{addrStr}  {valStr}");
+            ImGui.PopStyleColor();
+        }
+
+        // Inline Read button
+        if (node.IsValid)
+        {
+            ImGui.SameLine(0, 8);
+            ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBg3);
+            ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
+            if (ImGui.Button($"R##ptnr{addrStr}{depth}", new Vector2(22, 16)))
+            {
+                _readAddrHex = addrStr;
+                _readBytes   = 64;
+                DoRead();
+                _subTab = 1;
+            }
+            ImGui.PopStyleColor(2);
+        }
+    }
+
+    private void BuildPointerTree()
+    {
+        _ptBuilding = true;
+        _ptRoots.Clear();
+        Task.Run(() =>
+        {
+            try
+            {
+                string clean = _ptBaseAddr.Replace("0x","").Replace("0X","").Trim();
+                long   root  = Convert.ToInt64(clean, 16);
+                _ptRoots = BuildNodeChildren(new IntPtr(root), 0, _ptDepth, _ptMaxChildren);
+                _log.Success($"[PtrTree] Built from 0x{root:X16} depth={_ptDepth}");
+            }
+            catch (Exception ex) { _log.Error($"[PtrTree] {ex.Message}"); }
+            finally { _ptBuilding = false; }
+        });
+    }
+
+    private List<PointerNode> BuildNodeChildren(IntPtr addr, int depth, int maxDepth, int maxW)
+    {
+        var nodes = new List<PointerNode>();
+        if (depth >= maxDepth) return nodes;
+
+        // Read up to maxW pointer slots (8 bytes each) starting at addr
+        for (int i = 0; i < maxW; i++)
+        {
+            var slotAddr = IntPtr.Add(addr, i * 8);
+            var node     = new PointerNode { Address = slotAddr };
+
+            if (_reader.ReadInt64(slotAddr, out long ptrVal) && ptrVal != 0
+                && ptrVal > 0x10000 && ptrVal < 0x7FFFFFFFFFFF)
+            {
+                node.IsValid            = true;
+                node.DereferencedValue  = ptrVal;
+
+                // Read 8 bytes at the pointer for preview
+                var preview = new byte[8];
+                if (_reader.ReadBytes(new IntPtr(ptrVal), preview))
+                    node.BytePreview = string.Join(" ", preview.Select(b => $"{b:X2}"));
+
+                // Recurse
+                node.Children = BuildNodeChildren(new IntPtr(ptrVal), depth + 1, maxDepth, maxW);
+            }
+
+            nodes.Add(node);
+        }
+        return nodes;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // SUB-TAB 12: CHEAT ENGINE .CT / XML SCHEMA IMPORT
+    // ══════════════════════════════════════════════════════════════════════
+
+    private string         _ctFilePath  = "";
+    private List<CtEntry>  _ctEntries   = new();
+    private string         _ctStatus    = "";
+    private bool           _ctLiveRead  = false;
+    private string         _ctFilter    = "";
+
+    private void RenderCtImport(float w)
+    {
+        UiHelper.SectionBox("CHEAT ENGINE .CT / XML SCHEMA IMPORT", w, 90, () =>
+        {
+            UiHelper.MutedLabel("Import a .CT or .XML memory map. Resolves addresses and reads live values.");
+            UiHelper.MutedLabel("Supports module-relative addresses (e.g. game.exe+1A2B3C) and pointer chains.");
+            ImGui.Spacing();
+
+            ImGui.SetNextItemWidth(-1);
+            ImGui.InputText("File path##ctfp", ref _ctFilePath, 512);
+            UiHelper.MutedLabel("Drag & drop a .ct or .xml file path above, or type the full path.");
+            ImGui.Spacing();
+
+            UiHelper.PrimaryButton("Load File##ctload", 120, 28, LoadCtFile);
+            ImGui.SameLine(0, 8);
+            ImGui.Checkbox("Live read##ctlive", ref _ctLiveRead);
+            ImGui.SameLine(0, 8);
+            if (_ctLiveRead && _reader.IsAttached)
+                UiHelper.SecondaryButton("Refresh Values##ctref", 140, 28, RefreshCtValues);
+
+            if (_ctStatus.Length > 0)
+            {
+                ImGui.SameLine(0, 12);
+                ImGui.PushStyleColor(ImGuiCol.Text, _ctStatus.StartsWith("Loaded")
+                    ? MenuRenderer.ColAccent : MenuRenderer.ColDanger);
+                ImGui.TextUnformatted(_ctStatus);
+                ImGui.PopStyleColor();
+            }
+        });
+
+        if (_ctEntries.Count > 0)
+        {
+            ImGui.Spacing();
+
+            ImGui.SetNextItemWidth(300);
+            ImGui.InputText("Filter##ctfilt", ref _ctFilter, 64);
+            ImGui.SameLine(0, 8);
+            UiHelper.MutedLabel($"{_ctEntries.Count} entries loaded");
+
+            ImGui.Spacing();
+            float tblH = ImGui.GetContentRegionAvail().Y;
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
+            ImGui.BeginChild("##cttbl", new Vector2(w, tblH), ImGuiChildFlags.Border);
+            ImGui.PopStyleColor();
+
+            UiHelper.MutedLabel($"  {"Description",-32} {"Type",-12} {"Address",-20} {"Offsets",-24} {"Value"}");
+            ImGui.Separator();
+
+            var filtered = string.IsNullOrEmpty(_ctFilter)
+                ? _ctEntries
+                : _ctEntries.Where(e => e.Description.Contains(_ctFilter,
+                    StringComparison.OrdinalIgnoreCase)).ToList();
+
+            foreach (var e in filtered)
+            {
+                bool en = e.Enabled;
+                if (ImGui.Checkbox($"##cten{e.Description.GetHashCode()}", ref en)) e.Enabled = en;
+                ImGui.SameLine(0, 4);
+
+                ImGui.PushStyleColor(ImGuiCol.Text,
+                    e.Enabled ? MenuRenderer.ColAccent : MenuRenderer.ColTextMuted);
+
+                string addrStr = e.IsModuleRelative
+                    ? $"{e.ModuleName}+{e.BaseOffset:X}"
+                    : $"0x{e.AbsoluteAddress.ToInt64():X}";
+                string offStr  = e.Offsets.Count > 0
+                    ? string.Join(",", e.Offsets.Select(o => $"{o:X}"))
+                    : "";
+                string valStr  = e.LiveValue.Length > 0 ? e.LiveValue : "—";
+
+                ImGui.TextUnformatted(
+                    $"  {e.Description[..Math.Min(30, e.Description.Length)],-32}" +
+                    $" {e.VariableType,-12} {addrStr,-20} {offStr,-24} {valStr}");
+                ImGui.PopStyleColor();
+            }
+
+            ImGui.EndChild();
+        }
+    }
+
+    private void LoadCtFile()
+    {
+        if (string.IsNullOrWhiteSpace(_ctFilePath))
+        { _ctStatus = "Enter a file path first."; return; }
+
+        try
+        {
+            _ctEntries = MemoryReader.LoadCheatTable(_ctFilePath);
+            _ctStatus  = $"Loaded {_ctEntries.Count} entries from {Path.GetFileName(_ctFilePath)}";
+            _log.Success($"[CT] {_ctStatus}");
+        }
+        catch (Exception ex) { _ctStatus = $"Error: {ex.Message}"; _log.Error($"[CT] {ex.Message}"); }
+    }
+
+    private void RefreshCtValues()
+    {
+        if (!_reader.IsAttached) return;
+        var mods = _reader.GetModules();
+
+        foreach (var e in _ctEntries.Where(e => e.Enabled))
+        {
+            try
+            {
+                IntPtr baseAddr;
+                if (e.IsModuleRelative)
+                {
+                    var mod = mods.FirstOrDefault(m =>
+                        m.Name.Equals(e.ModuleName, StringComparison.OrdinalIgnoreCase));
+                    if (mod == null) { e.LiveValue = "(mod not found)"; continue; }
+                    baseAddr = IntPtr.Add(mod.Base, (int)e.BaseOffset);
+                }
+                else baseAddr = e.AbsoluteAddress;
+
+                // Follow pointer chain
+                IntPtr addr = e.Offsets.Count > 0
+                    ? _reader.ResolvePointerChain(baseAddr, e.Offsets.ToArray(), out _)
+                    : baseAddr;
+
+                if (addr == IntPtr.Zero) { e.LiveValue = "(resolve failed)"; continue; }
+
+                e.LiveValue = e.VariableType.ToLower() switch
+                {
+                    "float"   => _reader.ReadFloat(addr, out float f) ? $"{f:F4}" : "?",
+                    "4 bytes" => _reader.ReadInt32(addr, out int v32) ? $"{v32}" : "?",
+                    "8 bytes" => _reader.ReadInt64(addr, out long v64) ? $"{v64}" : "?",
+                    _         => _reader.ReadInt32(addr, out int vi)  ? $"{vi}" : "?",
+                };
+            }
+            catch { e.LiveValue = "(error)"; }
+        }
+
+        _log.Info($"[CT] Values refreshed for {_ctEntries.Count(e => e.Enabled)} entries.");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // SUB-TAB 13: LIVE MEMORY CORRELATOR
+    // ══════════════════════════════════════════════════════════════════════
+
+    private string   _corrWatchAddr  = "";
+    private string   _corrWatchLabel = "";
+    private WatchSize _corrWatchSize = WatchSize.Int32;
+    private int      _corrPollMs    = 150;
+    private int      _corrWindowMs  = 800;
+
+    private void RenderCorrelator(float w)
+    {
+        float half = (w - 12) * 0.5f;
+
+        UiHelper.SectionBox("LIVE MEMORY CORRELATOR", w, 80, () =>
+        {
+            UiHelper.MutedLabel("Monitors PacketStore for new entries and cross-references memory value");
+            UiHelper.MutedLabel("changes in the target process to find dynamic offsets for player attributes.");
+            ImGui.Spacing();
+            ImGui.SetNextItemWidth(90); ImGui.InputInt("Poll ms##corrpl", ref _corrPollMs);
+            _corrPollMs = Math.Clamp(_corrPollMs, 50, 5000);
+            if (_correlator != null) _correlator.PollIntervalMs = _corrPollMs;
+            ImGui.SameLine(0, 8);
+            ImGui.SetNextItemWidth(90); ImGui.InputInt("Window ms##corrwm", ref _corrWindowMs);
+            _corrWindowMs = Math.Clamp(_corrWindowMs, 50, 5000);
+            if (_correlator != null) _correlator.WindowMs = _corrWindowMs;
+        });
+
+        // Watch address adder
+        UiHelper.SectionBox("WATCH LIST", half, 120, () =>
+        {
+            ImGui.SetNextItemWidth(-1);
+            ImGui.InputText("Address##corrwa", ref _corrWatchAddr, 32);
+            ImGui.SetNextItemWidth(-1);
+            ImGui.InputText("Label##corrwl", ref _corrWatchLabel, 64);
+
+            var sizeNames = Enum.GetNames<WatchSize>();
+            int sizeIdx   = (int)_corrWatchSize;
+            ImGui.SetNextItemWidth(100);
+            if (ImGui.BeginCombo("Size##corrws", sizeNames[sizeIdx]))
+            {
+                for (int i = 0; i < sizeNames.Length; i++)
+                    if (ImGui.Selectable(sizeNames[i], i == sizeIdx))
+                        _corrWatchSize = (WatchSize)i;
+                ImGui.EndCombo();
+            }
+            ImGui.SameLine(0, 8);
+            UiHelper.PrimaryButton("Add Watch##corradd", 100, 24, () =>
+            {
+                try
+                {
+                    string clean = _corrWatchAddr.Replace("0x","").Replace("0X","").Trim();
+                    long addr    = Convert.ToInt64(clean, 16);
+                    _correlator?.AddWatch(new IntPtr(addr),
+                        _corrWatchLabel.Length > 0 ? _corrWatchLabel : $"0x{addr:X}",
+                        _corrWatchSize);
+                    _log.Info($"[Corr] Watch added: {_corrWatchLabel} @ 0x{addr:X}");
+                    _corrWatchAddr = _corrWatchLabel = "";
+                }
+                catch (Exception ex) { _log.Error($"[Corr] {ex.Message}"); }
+            });
+
+            ImGui.Spacing();
+            var watches = _correlator?.GetWatches() ?? new();
+            foreach (var ww in watches)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
+                ImGui.TextUnformatted($"  {ww.Label}  ({ww.Size})  {ww.AddressHex}");
+                ImGui.PopStyleColor();
+                ImGui.SameLine(w * 0.42f);
+                ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBg3);
+                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColDanger);
+                if (ImGui.Button($"✕##cwrem{ww.AddressHex}", new Vector2(22, 18)))
+                    _correlator?.RemoveWatch(ww.Address);
+                ImGui.PopStyleColor(2);
+            }
+        });
+
+        ImGui.SameLine(0, 12);
+
+        // Controls
+        UiHelper.SectionBox("CONTROLS", half, 120, () =>
+        {
+            bool running = _correlator?.IsRunning == true;
+            if (running)
+            {
+                UiHelper.DangerButton("Stop Correlator##corrstop", -1, 28, () =>
+                {
+                    _correlator?.Stop();
+                });
+                ImGui.Spacing();
+                UiHelper.WarnText("● Correlating — perform actions in-game...");
+            }
+            else
+            {
+                ImGui.BeginDisabled(!_reader.IsAttached);
+                UiHelper.WarnButton("Start Correlator##corrstart", -1, 28, () =>
+                {
+                    _correlator?.Start();
+                });
+                ImGui.EndDisabled();
+                if (!_reader.IsAttached)
+                    UiHelper.MutedLabel("Attach to process first (Attach tab).");
+            }
+
+            ImGui.Spacing();
+            UiHelper.SecondaryButton("Clear Results##corrclear", -1, 24, () =>
+                _correlator?.ClearResults());
+        });
+
+        // Results table
+        ImGui.Spacing();
+        var results = _correlator?.GetResults() ?? new();
+        if (results.Count > 0)
+        {
+            float tblH = ImGui.GetContentRegionAvail().Y;
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
+            ImGui.BeginChild("##corrres", new Vector2(w, tblH), ImGuiChildFlags.Border);
+            ImGui.PopStyleColor();
+
+            UiHelper.MutedLabel($"  {"Time",-12} {"Label",-24} {"Before",-14} {"After",-14} {"Δ",-10} Triggered by");
+            ImGui.Separator();
+
+            foreach (var r in results.TakeLast(200).Reverse())
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text,
+                    r.Delta > 0 ? MenuRenderer.ColAccent : MenuRenderer.ColWarn);
+                ImGui.TextUnformatted(
+                    $"  {r.Timestamp:HH:mm:ss}  {r.Label,-24} {r.ValueBefore,-14} {r.ValueAfter,-14}" +
+                    $" {r.DeltaStr,-10} {r.PacketLabel}");
+                ImGui.PopStyleColor();
+            }
+
+            ImGui.EndChild();
+        }
+        else
+        {
+            ImGui.Spacing();
+            UiHelper.MutedLabel("No correlations yet — add watches, start the correlator,");
+            UiHelper.MutedLabel("then save packets to the PacketStore to trigger observations.");
+        }
+    }
+
+}
+
+// ── Pointer tree node ─────────────────────────────────────────────────────────
+
+public class PointerNode
+{
+    public IntPtr          Address            { get; set; }
+    public bool            IsValid            { get; set; }
+    public long            DereferencedValue  { get; set; }
+    public string          BytePreview        { get; set; } = "";
+    public List<PointerNode> Children         { get; set; } = new();
 }
