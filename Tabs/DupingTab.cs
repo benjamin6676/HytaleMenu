@@ -17,6 +17,7 @@ public class DupingTab : ITab
 
     private int  _itemId    = 1001;
     private int  _itemCount = 1;
+    private bool _itemIdFromInspector = false; // true when set via TargetItemId
 
     // Drop race
     private string _dropHex    = "";
@@ -59,13 +60,25 @@ public class DupingTab : ITab
 
     private int _subTab = 0;
     private static readonly string[] SubTabs =
-        { "Drop Race", "Trade Race", "Container Race", "Replay", "Rollback", "Timing Sweep" };
+        { "Drop Race", "Trade Race", "Container Race", "Replay", "Rollback", "Timing Sweep", "Burst Test" };
 
     public DupingTab(TestLog log, UdpProxy udpProxy, PacketCapture capture,
                      PacketStore store, ServerConfig config)
     {
         _log = log; _udpProxy = udpProxy; _capture = capture;
         _store = store; _config = config;
+
+        // Auto-fill item ID whenever Item Inspector sets a new target
+        _config.OnTargetItemChanged += () =>
+        {
+            if (_config.HasTargetItem)
+            {
+                _itemId              = _config.TargetItemId;
+                _itemIdFromInspector = true;
+                _log.Success($"[Dupe] Target item auto-filled: {_itemId} " +
+                             $"(from {_config.TargetItemSource})");
+            }
+        };
     }
 
     public void Render()
@@ -85,6 +98,7 @@ public class DupingTab : ITab
             case 3: RenderReplayDupe(w);    break;
             case 4: RenderRollback(w);      break;
             case 5: RenderTimingSweep(w);   break;
+            case 6: RenderBurstTest(w);     break;
         }
     }
 
@@ -113,15 +127,37 @@ public class DupingTab : ITab
 
     private void RenderItemConfig(float w)
     {
-        UiHelper.SectionBox("TARGET ITEM", w, 65, () =>
+        UiHelper.SectionBox("TARGET ITEM", w, 68, () =>
         {
-            ImGui.SetNextItemWidth(130); ImGui.InputInt("Item ID##dit", ref _itemId);
+            ImGui.SetNextItemWidth(130);
+            if (ImGui.InputInt("Item ID##dit", ref _itemId))
+                _itemIdFromInspector = false; // manual edit clears the badge
             _itemId = Math.Max(1, _itemId);
+
+            ImGui.SameLine(0, 8);
+
+            // Badge showing where the ID came from
+            if (_itemIdFromInspector && _config.HasTargetItem && _config.TargetItemId == _itemId)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
+                ImGui.TextUnformatted($"★ from {_config.TargetItemSource}");
+                ImGui.PopStyleColor();
+                ImGui.SameLine(0, 10);
+                UiHelper.SecondaryButton("✕##clrtgt", 26, 22, () =>
+                {
+                    _itemIdFromInspector = false;
+                    _log.Info("[Dupe] Item ID cleared from inspector target.");
+                });
+            }
+            else
+            {
+                UiHelper.MutedLabel("← set via Item Inspector or enter manually");
+            }
+
             ImGui.SameLine(0, 16);
-            ImGui.SetNextItemWidth(100); ImGui.InputInt("Stack##dic", ref _itemCount);
+            ImGui.SetNextItemWidth(100);
+            ImGui.InputInt("Stack##dic", ref _itemCount);
             _itemCount = Math.Max(1, _itemCount);
-            ImGui.SameLine(0, 16);
-            UiHelper.MutedLabel("← from Item Inspector or enter manually");
         });
     }
 
@@ -491,6 +527,276 @@ public class DupingTab : ITab
             }
             _sweepRunning = false;
             _log.Success("[Sweep] Complete. Watch for dupes at specific delays.");
+        });
+    }
+
+    // ── Burst Test ────────────────────────────────────────────────────────
+    // Up to 3 packet templates can be burst simultaneously to test how the
+    // server handles rapid concurrent state changes.
+
+    private string _burstPkt1      = "";
+    private string _burstPkt2      = "";
+    private string _burstPkt3      = "";
+    private bool   _burstUsePkt2   = false;
+    private bool   _burstUsePkt3   = false;
+    private int    _burstCount     = 500;     // total packets per template
+    private int    _burstThreads   = 16;      // degree of parallelism
+    private int    _burstDelayUs   = 0;       // microsecond gap between sends (0 = flat out)
+    private int    _burstBatchSize  = 10;     // packets per thread batch before yielding
+    private bool   _burstRunning   = false;
+    private CancellationTokenSource? _burstCts;
+
+    // Live telemetry updated from the burst task
+    private volatile int   _burstSent       = 0;
+    private volatile int   _burstErrors     = 0;
+    private          long  _burstStartTicks = 0;
+    private          long  _burstEndTicks   = 0;
+
+    // Histogram: latency buckets in µs (0-1, 1-5, 5-20, 20-100, 100-500, 500+)
+    private readonly int[] _burstBuckets  = new int[6];
+    private static readonly string[] BucketLabels =
+        { "<1µs", "1–5µs", "5–20µs", "20–100µs", "100–500µs", "500µs+" };
+
+    private void RenderBurstTest(float w)
+    {
+        float half = (w - 12) * 0.5f;
+
+        // ── Packet templates ──────────────────────────────────────────────
+        UiHelper.SectionBox("BURST PACKETS", w, 180, () =>
+        {
+            UiHelper.MutedLabel("Define up to 3 packet templates. All enabled templates are sent");
+            UiHelper.MutedLabel("concurrently on every burst cycle to maximise race condition exposure.");
+            ImGui.Spacing();
+
+            UiHelper.MutedLabel("Packet 1 (required):");
+            ImGui.SetNextItemWidth(-1); ImGui.InputText("##bp1", ref _burstPkt1, 1024);
+            RenderBookPicker("Load##bp1book", v => _burstPkt1 = v);
+
+            ImGui.Spacing();
+            ImGui.Checkbox("Packet 2##bpu2", ref _burstUsePkt2);
+            ImGui.BeginDisabled(!_burstUsePkt2);
+            ImGui.SetNextItemWidth(-1); ImGui.InputText("##bp2", ref _burstPkt2, 1024);
+            RenderBookPicker("Load##bp2book", v => _burstPkt2 = v);
+            ImGui.EndDisabled();
+
+            ImGui.Spacing();
+            ImGui.Checkbox("Packet 3##bpu3", ref _burstUsePkt3);
+            ImGui.BeginDisabled(!_burstUsePkt3);
+            ImGui.SetNextItemWidth(-1); ImGui.InputText("##bp3", ref _burstPkt3, 1024);
+            RenderBookPicker("Load##bp3book", v => _burstPkt3 = v);
+            ImGui.EndDisabled();
+        });
+
+        ImGui.Spacing();
+
+        // ── Burst config ──────────────────────────────────────────────────
+        UiHelper.SectionBox("BURST CONFIG", half, 150, () =>
+        {
+            UiHelper.MutedLabel("Total sends per template:");
+            ImGui.SetNextItemWidth(120); ImGui.InputInt("Count##brcnt", ref _burstCount);
+            _burstCount = Math.Clamp(_burstCount, 1, 100_000);
+
+            UiHelper.MutedLabel("Parallel threads:");
+            ImGui.SetNextItemWidth(120); ImGui.InputInt("Threads##brth", ref _burstThreads);
+            _burstThreads = Math.Clamp(_burstThreads, 1, 128);
+
+            UiHelper.MutedLabel("Intra-burst delay (µs, 0 = full speed):");
+            ImGui.SetNextItemWidth(120); ImGui.InputInt("Delay µs##brdly", ref _burstDelayUs);
+            _burstDelayUs = Math.Max(0, _burstDelayUs);
+
+            UiHelper.MutedLabel("Batch size per thread yield:");
+            ImGui.SetNextItemWidth(120); ImGui.InputInt("Batch##brbatch", ref _burstBatchSize);
+            _burstBatchSize = Math.Clamp(_burstBatchSize, 1, 1000);
+        });
+
+        ImGui.SameLine(0, 12);
+
+        // ── Live telemetry ────────────────────────────────────────────────
+        UiHelper.SectionBox("LIVE TELEMETRY", half, 150, () =>
+        {
+            if (_burstRunning || _burstSent > 0)
+            {
+                long elapsed = _burstRunning
+                    ? (long)((DateTime.UtcNow.Ticks - _burstStartTicks) / (double)TimeSpan.TicksPerMillisecond)
+                    : (long)((_burstEndTicks - _burstStartTicks) / (double)TimeSpan.TicksPerMillisecond);
+
+                float pps = elapsed > 0 ? _burstSent / (elapsed / 1000f) : 0;
+
+                UiHelper.StatusRow("Sent",   $"{_burstSent:N0}", true, 70);
+                UiHelper.StatusRow("Errors", $"{_burstErrors:N0}", _burstErrors == 0, 70);
+                UiHelper.StatusRow("Elapsed",$"{elapsed}ms", true, 70);
+                UiHelper.StatusRow("Rate",   $"{pps:N0} pkt/s", true, 70);
+
+                // Progress bar
+                if (_burstRunning && _burstCount > 0)
+                {
+                    float progress = Math.Clamp((float)_burstSent / _burstCount, 0f, 1f);
+                    ImGui.ProgressBar(progress, new Vector2(-1, 16), $"{progress*100:F0}%");
+                }
+
+                // Histogram
+                ImGui.Spacing();
+                UiHelper.MutedLabel("Send latency histogram:");
+                int maxBucket = _burstBuckets.Max();
+                for (int b = 0; b < _burstBuckets.Length; b++)
+                {
+                    float barW = maxBucket > 0 ? (_burstBuckets[b] / (float)maxBucket) * 140f : 0;
+                    ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
+                    ImGui.TextUnformatted($"  {BucketLabels[b],-12}");
+                    ImGui.PopStyleColor();
+                    ImGui.SameLine(0, 4);
+                    ImGui.PushStyleColor(ImGuiCol.PlotHistogram, MenuRenderer.ColAccent);
+                    ImGui.ProgressBar(_burstBuckets[b] / Math.Max(1f, maxBucket),
+                        new Vector2(120, 12), "");
+                    ImGui.PopStyleColor();
+                    ImGui.SameLine(0, 6);
+                    UiHelper.MutedLabel($"{_burstBuckets[b]}");
+                }
+            }
+            else
+            {
+                UiHelper.MutedLabel("Telemetry appears here");
+                UiHelper.MutedLabel("once a burst is running.");
+            }
+        });
+
+        ImGui.Spacing();
+
+        // ── Run / Stop ────────────────────────────────────────────────────
+        if (_burstRunning)
+        {
+            UiHelper.DangerButton("STOP BURST##brstop", 140, 34, () =>
+            {
+                _burstCts?.Cancel();
+                _burstRunning = false;
+                _burstEndTicks = DateTime.UtcNow.Ticks;
+                _log.Warn($"[Burst] Stopped — {_burstSent:N0} sent, {_burstErrors} errors.");
+            });
+            ImGui.SameLine(0, 12);
+            UiHelper.WarnText("● BURST RUNNING — monitor server for state corruption...");
+        }
+        else
+        {
+            UiHelper.WarnButton("RUN BURST TEST##brrun", 180, 34, RunBurstTest);
+            ImGui.SameLine(0, 12);
+            if (_burstSent > 0)
+            {
+                UiHelper.SecondaryButton("Reset Stats##brreset", 110, 34, () =>
+                {
+                    _burstSent = _burstErrors = 0;
+                    Array.Clear(_burstBuckets);
+                    _burstStartTicks = _burstEndTicks = 0;
+                });
+            }
+        }
+
+        ImGui.Spacing();
+        RenderHowTo(
+            "1. Capture a state-changing packet (item pickup, inventory move, trade accept)",
+            "2. Paste it into Packet 1 — optionally add competing packets in slots 2 & 3",
+            "3. Set Count=500, Threads=16 for a solid race window",
+            "4. Run — watch for: duplicate items, negative balances, state desync",
+            "5. Lower Delay µs → more aggressive; higher Threads → wider race window",
+            "6. Errors column: non-zero = server started rejecting under load (good sign of rate limiting)",
+            "7. Histogram skewing right = server processing lag under burst pressure"
+        );
+    }
+
+    private void RunBurstTest()
+    {
+        if (string.IsNullOrWhiteSpace(_burstPkt1))
+        { _log.Error("[Burst] Packet 1 is required."); return; }
+
+        if (!TryParseHex(_burstPkt1, out byte[]? p1) || p1 == null)
+        { _log.Error("[Burst] Invalid hex in Packet 1."); return; }
+
+        byte[]? p2 = null, p3 = null;
+        if (_burstUsePkt2 && !string.IsNullOrWhiteSpace(_burstPkt2))
+            if (!TryParseHex(_burstPkt2, out p2)) { _log.Error("[Burst] Invalid hex in Packet 2."); return; }
+        if (_burstUsePkt3 && !string.IsNullOrWhiteSpace(_burstPkt3))
+            if (!TryParseHex(_burstPkt3, out p3)) { _log.Error("[Burst] Invalid hex in Packet 3."); return; }
+
+        // Build the send list (interleaved templates for maximum overlap)
+        var templates = new List<byte[]> { p1! };
+        if (p2 != null) templates.Add(p2);
+        if (p3 != null) templates.Add(p3);
+
+        _burstRunning    = true;
+        _burstSent       = 0;
+        _burstErrors     = 0;
+        _burstStartTicks = DateTime.UtcNow.Ticks;
+        _burstEndTicks   = 0;
+        Array.Clear(_burstBuckets);
+
+        _burstCts = new CancellationTokenSource();
+        var cts         = _burstCts;
+        int count       = _burstCount;
+        int threads     = _burstThreads;
+        int delayUs     = _burstDelayUs;
+        int batchSize   = _burstBatchSize;
+
+        _log.Info($"[Burst] Starting — {count} × {templates.Count} template(s), " +
+                  $"{threads} threads, {delayUs}µs inter-send delay.");
+
+        Task.Run(() =>
+        {
+            int perThread = (count + threads - 1) / threads;
+
+            Parallel.For(0, threads, new ParallelOptions
+            {
+                MaxDegreeOfParallelism = threads,
+                CancellationToken      = cts.Token,
+            },
+            threadIdx =>
+            {
+                int myCount = Math.Min(perThread, count - threadIdx * perThread);
+                if (myCount <= 0) return;
+
+                int batch = 0;
+                for (int i = 0; i < myCount && !cts.Token.IsCancellationRequested; i++)
+                {
+                    // Interleave all templates on each iteration
+                    foreach (var tmpl in templates)
+                    {
+                        var t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                        try
+                        {
+                            SendRaw(tmpl);
+                            Interlocked.Increment(ref _burstSent);
+                        }
+                        catch
+                        {
+                            Interlocked.Increment(ref _burstErrors);
+                        }
+                        long elapsedUs = (System.Diagnostics.Stopwatch.GetTimestamp() - t0)
+                                       * 1_000_000L / System.Diagnostics.Stopwatch.Frequency;
+
+                        // Bucket the send latency
+                        int bucket = elapsedUs < 1   ? 0
+                                   : elapsedUs < 5   ? 1
+                                   : elapsedUs < 20  ? 2
+                                   : elapsedUs < 100 ? 3
+                                   : elapsedUs < 500 ? 4
+                                   :                   5;
+                        Interlocked.Increment(ref _burstBuckets[bucket]);
+                    }
+
+                    if (delayUs > 0)
+                        Thread.SpinWait(delayUs * 30); // ~1µs per 30 spins on modern hardware
+
+                    if (++batch >= batchSize)
+                    {
+                        batch = 0;
+                        Thread.Yield();
+                    }
+                }
+            });
+
+            _burstRunning  = false;
+            _burstEndTicks = DateTime.UtcNow.Ticks;
+            long ms = (_burstEndTicks - _burstStartTicks) / TimeSpan.TicksPerMillisecond;
+            _log.Success($"[Burst] Complete — {_burstSent:N0} sent, {_burstErrors} errors, " +
+                         $"{ms}ms elapsed ({(_burstSent / Math.Max(1.0, ms / 1000.0)):N0} pkt/s).");
         });
     }
 
