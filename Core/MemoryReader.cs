@@ -520,6 +520,8 @@ public class MemoryReader : IDisposable
             _    => $"0x{p:X2}"
         };
     }
+
+    public List<ProcessEntry> GetProcesses()
     {
         var list = new List<ProcessEntry>();
         try

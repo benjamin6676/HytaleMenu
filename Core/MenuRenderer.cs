@@ -30,8 +30,9 @@ public class MenuRenderer
     private int _selectedSection = 0;
 
     private static readonly string[] SectionIcons = {
-        "⌂", "⚡", "◈", "◎", "▲", "⊙", "⊗", "☰", "≋", "◫", "≡", "⬡"
+        "⌂", "⚡", "◈", "◎", "▲", "⊙", "⊗", "☰", "≋", "◫", "≡", "⬡", "👁"
     };
+
 
     private static readonly string[] SectionNames = {
         "Dashboard",
