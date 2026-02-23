@@ -15,7 +15,7 @@ public class DashboardTab : ITab
     private readonly ServerConfig _config;
     private readonly ServerStats  _stats;
 
-    private string _inputIp   = "ServerIP here(IPv4)";
+    private string _inputIp   = "149.56.241.73";
     private int    _inputPort = 5520;
 
     // IP Presets — user can save frequently used server IPs
@@ -23,6 +23,7 @@ public class DashboardTab : ITab
     {
         ("Hytide", "149.56.241.73", 5520),
         ("HyTown", "51.195.60.80", 5520),
+        ("Hyblock", "66.70.180.128", 5520),
     };
     private string _presetLabel = "My Server";
     private bool   _detecting = false;

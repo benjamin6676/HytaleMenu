@@ -218,6 +218,16 @@ public class MemoryReader : IDisposable
 
     // ── Pattern scanner ───────────────────────────────────────────────────
 
+    // Minimal LocalPlayer scanner stub. Real implementation should scan readable
+    // regions for player-name strings and read nearby int32 values to guess entity IDs.
+    public List<LocalPlayerCandidate> ScanLocalPlayerEntityId(string? playerName, IProgress<int>? progress)
+    {
+        // Return empty list for now — placeholder to satisfy UI.
+        progress?.Report(100);
+        return new List<LocalPlayerCandidate>();
+    }
+
+
     /// <summary>
     /// Scan all readable memory for a byte pattern.
     /// Use ?? (0x100 encoded as -1 in the int array) for wildcards.
@@ -520,6 +530,7 @@ public class MemoryReader : IDisposable
             _    => $"0x{p:X2}"
         };
     }
+
     public List<ProcessEntry> GetProcesses()
     {
         var list = new List<ProcessEntry>();
@@ -579,6 +590,118 @@ public class MemoryReader : IDisposable
             });
         }
         return modules;
+    }
+
+    // ── Symbolic address resolution ───────────────────────────────────────
+
+    /// <summary>
+    /// Resolves a symbolic address string to an absolute 64-bit address.
+    /// Accepted formats:
+    ///   "0x140001234"                 — raw hex
+    ///   "Hytale.exe+0x1A2B3C"        — module + offset
+    ///   "Hytale.exe+1745844"         — module + decimal offset
+    ///   "Hytale.exe"                 — module base only
+    /// </summary>
+    public bool TryResolveSymbolicAddress(string input, out long result, out string error)
+    {
+        result = 0; error = "";
+        input  = input.Trim();
+
+        if (string.IsNullOrWhiteSpace(input))
+        { error = "Empty address"; return false; }
+
+        // Check for module+offset pattern
+        int plusIdx = input.IndexOf('+');
+        if (plusIdx > 0)
+        {
+            string modName  = input[..plusIdx].Trim();
+            string offStr   = input[(plusIdx + 1)..].Trim();
+
+            long modBase = GetModuleBaseAddress(modName);
+            if (modBase == 0)
+            { error = $"Module '{modName}' not found in process"; return false; }
+
+            long offset;
+            try
+            {
+                string clean = offStr.Replace("0x", "").Replace("0X", "");
+                offset = Convert.ToInt64(clean, offStr.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ||
+                    clean != offStr ? 16 : 10);
+            }
+            catch { error = $"Cannot parse offset '{offStr}'"; return false; }
+
+            result = modBase + offset;
+            return true;
+        }
+
+        // Module name only (no +offset)
+        if (!input.StartsWith("0x", StringComparison.OrdinalIgnoreCase) &&
+            (input.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
+             input.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)))
+        {
+            long b = GetModuleBaseAddress(input);
+            if (b == 0) { error = $"Module '{input}' not found"; return false; }
+            result = b;
+            return true;
+        }
+
+        // Raw hex / decimal
+        try
+        {
+            string clean = input.Replace("0x", "").Replace("0X", "");
+            result = Convert.ToInt64(clean,
+                input.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? 16 : 10);
+            return true;
+        }
+        catch { error = $"Cannot parse address '{input}'"; return false; }
+    }
+
+    /// <summary>Returns the base address of a named module, or 0 if not found.</summary>
+    public long GetModuleBaseAddress(string moduleName)
+    {
+        if (!IsAttached) return 0;
+        foreach (var m in GetModules())
+        {
+            if (m.Name.Equals(moduleName, StringComparison.OrdinalIgnoreCase))
+                return m.Base.ToInt64();
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// Improved pointer chain that emits rich per-step trace information
+    /// including the fail reason and which step number failed.
+    /// </summary>
+    public IntPtr ResolvePointerChainDetailed(IntPtr baseAddress, int[] offsets,
+                                               out string[] traceLines)
+    {
+        var lines = new List<string>();
+        lines.Add($"BASE    0x{baseAddress.ToInt64():X16}");
+
+        var addr = baseAddress;
+
+        for (int i = 0; i < offsets.Length; i++)
+        {
+            // Dereference
+            if (!ReadInt64(addr, out long ptr))
+            {
+                lines.Add($"STEP {i + 1}  DEREF  0x{addr.ToInt64():X16}  ← FAILED (unreadable)");
+                lines.Add($"ERROR   Step {i + 1} of {offsets.Length} failed to dereference.");
+                traceLines = lines.ToArray();
+                return IntPtr.Zero;
+            }
+
+            addr = new IntPtr(ptr);
+            lines.Add($"STEP {i + 1}  DEREF  → 0x{ptr:X16}  ✓");
+
+            // Apply offset
+            addr = IntPtr.Add(addr, offsets[i]);
+            lines.Add($"        +OFF   +0x{offsets[i]:X} = 0x{addr.ToInt64():X16}");
+        }
+
+        lines.Add($"FINAL   0x{addr.ToInt64():X16}  ✓");
+        traceLines = lines.ToArray();
+        return addr;
     }
 
     // ── High-performance AOB (Array-Of-Bytes) scanner using ReadOnlySpan ─

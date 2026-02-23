@@ -23,13 +23,15 @@ public class MemoryTab : ITab
 
     private readonly TestLog     _log;
     private readonly MemoryReader _reader = new();
+    private readonly ServerConfig _config;
 
     // ── Sub-tabs ──────────────────────────────────────────────────────────
     private int _subTab = 0;
     private static readonly string[] SubTabs =
         { "Attach", "Read", "Pattern Scan", "Value Scan", "Inventory Scan",
           "AOB Scan", "Memory Map", "Pointer Path",
-          "String Scan", "VTable", "Breakpoints", "Ptr Tree", "CT Import", "Correlator" };
+          "String Scan", "VTable", "Breakpoints", "Ptr Tree", "CT Import", "Correlator",
+          "LocalPlayer" };
 
     // ── AOB scan ──────────────────────────────────────────────────────────
     private string          _aobModule     = "";
@@ -46,6 +48,14 @@ public class MemoryTab : ITab
     private bool                 _memMapOnlyR  = true;
     private string               _memMapFilter = "";
     private int                  _memMapSel    = -1;
+
+    // ── LocalPlayer EntityID Scanner ─────────────────────────────────────
+    private string                    _lpPlayerName  = "";
+    private List<LocalPlayerCandidate> _lpCandidates = new();
+    private bool                      _lpScanning    = false;
+    private int                       _lpProgress    = 0;
+    private int                       _lpSelected    = -1;
+    private string                    _lpStatus      = "";
 
     // ── Pointer Path ──────────────────────────────────────────────────────
     private string _ppBase        = "0x0000000000000000";
@@ -100,10 +110,11 @@ public class MemoryTab : ITab
     private readonly PacketStore  _store;
     private LiveMemoryCorrelator? _correlator;
 
-    public MemoryTab(TestLog log, PacketStore store)
+    public MemoryTab(TestLog log, PacketStore store, ServerConfig config)
     {
-        _log   = log;
-        _store = store;
+        _log    = log;
+        _store  = store;
+        _config = config;
         _correlator = new LiveMemoryCorrelator(log, store, _reader);
     }
 
@@ -132,6 +143,7 @@ public class MemoryTab : ITab
             case 11: RenderPointerTree(w);  break;
             case 12: RenderCtImport(w);     break;
             case 13: RenderCorrelator(w);   break;
+            case 14: RenderLocalPlayer(w);  break;
         }
     }
 
@@ -170,22 +182,36 @@ public class MemoryTab : ITab
         ImGui.EndChild();
     }
 
-    // ── Sub-tab bar ───────────────────────────────────────────────────────
+    // ── Sub-tab bar — uses ImGui TabBar for auto-scrolling on overflow ────
 
     private void RenderSubTabBar()
     {
+        // FittingPolicyScroll: when tabs overflow, arrow buttons appear automatically
+        if (!ImGui.BeginTabBar("##mem_subtabs", ImGuiTabBarFlags.FittingPolicyScroll))
+            return;
+
         for (int i = 0; i < SubTabs.Length; i++)
         {
-            bool sel = _subTab == i;
-            ImGui.PushStyleColor(ImGuiCol.Button,
-                sel ? new Vector4(0.18f, 0.95f, 0.45f, 0.22f) : MenuRenderer.ColBg3);
-            ImGui.PushStyleColor(ImGuiCol.Text,
-                sel ? MenuRenderer.ColAccent : MenuRenderer.ColTextMuted);
-            if (ImGui.Button(SubTabs[i] + $"##mst{i}", new Vector2(130, 28))) _subTab = i;
-            ImGui.PopStyleColor(2);
-            if (i < SubTabs.Length - 1) ImGui.SameLine(0, 4);
+            // Push selected styling
+            if (_subTab == i)
+            {
+                ImGui.PushStyleColor(ImGuiCol.TabActive,
+                    new Vector4(0.18f, 0.95f, 0.45f, 0.35f));
+            }
+
+            // TabItemButton renders a tab that doesn't host child content inside it —
+            // we render the content below the entire bar instead.
+            if (ImGui.TabItemButton(SubTabs[i] + $"##mst{i}",
+                    _subTab == i ? ImGuiTabItemFlags.None : ImGuiTabItemFlags.None))
+                _subTab = i;
+
+            if (_subTab == i) ImGui.PopStyleColor();
         }
+
+        ImGui.EndTabBar();
     }
+
+    private bool _memTabOpen = true; // kept for future tab-close support
 
     // ── Attach ────────────────────────────────────────────────────────────
 
@@ -1089,30 +1115,49 @@ public class MemoryTab : ITab
 
     private void RenderPointerPath(float w)
     {
-        UiHelper.SectionBox("POINTER CHAIN RESOLVER", w, 190, () =>
+        UiHelper.SectionBox("POINTER CHAIN RESOLVER", w, 0, () =>
         {
-            UiHelper.MutedLabel("Resolve a multi-level pointer chain: base → deref → +offset → deref → ...");
-            UiHelper.MutedLabel("Use this when the target data structure is dynamic (address changes each session).");
+            UiHelper.MutedLabel("Resolves multi-level pointer chains. Base supports module+offset syntax.");
             ImGui.Spacing();
 
-            ImGui.SetNextItemWidth(260);
-            ImGui.InputText("Base address (hex)##ppbase", ref _ppBase, 32);
-            ImGui.SameLine(0, 10);
-            UiHelper.MutedLabel("e.g. module base + 0x1A2B3C");
+            // Base address — accepts "Hytale.exe+0x1A2B3C" or raw hex
+            ImGui.SetNextItemWidth(-1);
+            ImGui.InputText("Base  (e.g. Hytale.exe+0x1A2B3C or 0x140001234)##ppbase",
+                ref _ppBase, 128);
             ImGui.Spacing();
 
             ImGui.SetNextItemWidth(-1);
             ImGui.InputText("Offsets (space-separated hex)##ppoff", ref _ppOffsets, 256);
-            UiHelper.MutedLabel("e.g.  0x8 0x10 0x30   (applied after each dereference)");
+            UiHelper.MutedLabel("e.g.  0x8 0x10 0x30   — applied after each dereference step");
             ImGui.Spacing();
 
-            ImGui.SetNextItemWidth(100);
+            ImGui.SetNextItemWidth(110);
             ImGui.InputInt("Read bytes##pprbyt", ref _ppReadBytes);
             _ppReadBytes = Math.Clamp(_ppReadBytes, 1, 1024);
             ImGui.SameLine(0, 8);
 
             ImGui.BeginDisabled(!_reader.IsAttached);
             UiHelper.PrimaryButton("Resolve + Read##ppres", 140, 28, DoResolvePointerChain);
+            ImGui.SameLine(0, 8);
+
+            // Resolve & Watch button — continuously refreshes in background
+            if (_ppWatching)
+            {
+                UiHelper.DangerButton("Stop Watch##ppstopw", 110, 28, () =>
+                {
+                    _ppWatchCts?.Cancel();
+                    _ppWatching = false;
+                    _log.Info("[PtrPath] Watch stopped.");
+                });
+                ImGui.SameLine(0, 10);
+                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccent);
+                ImGui.TextUnformatted($"▶ {_ppWatchResult}");
+                ImGui.PopStyleColor();
+            }
+            else
+            {
+                UiHelper.SecondaryButton("Resolve & Watch##ppwatch", 140, 28, StartPointerWatch);
+            }
             ImGui.EndDisabled();
 
             if (!string.IsNullOrEmpty(_ppResult))
@@ -1127,17 +1172,32 @@ public class MemoryTab : ITab
 
         ImGui.Spacing();
 
-        if (!string.IsNullOrEmpty(_ppTrace))
+        // Step-by-step trace with colour coding
+        if (_ppTraceLines.Length > 0)
         {
-            UiHelper.SectionBox("RESOLUTION TRACE", w, 200, () =>
+            UiHelper.SectionBox("STEP-BY-STEP RESOLUTION TRACE", w, 0, () =>
             {
-                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
-                foreach (var line in _ppTrace.Split('\n'))
+                foreach (var line in _ppTraceLines)
                 {
-                    if (!string.IsNullOrEmpty(line))
-                        ImGui.TextUnformatted(line);
+                    if (string.IsNullOrEmpty(line)) continue;
+
+                    // Colour by outcome keyword
+                    Vector4 col;
+                    if (line.Contains("FAILED") || line.Contains("ERROR"))
+                        col = MenuRenderer.ColDanger;
+                    else if (line.Contains("FINAL") || line.StartsWith("BASE"))
+                        col = MenuRenderer.ColAccent;
+                    else if (line.Contains("DEREF") && line.Contains("✓"))
+                        col = MenuRenderer.ColBlue;
+                    else if (line.Contains("+OFF"))
+                        col = MenuRenderer.ColTextMuted;
+                    else
+                        col = MenuRenderer.ColText;
+
+                    ImGui.PushStyleColor(ImGuiCol.Text, col);
+                    ImGui.TextUnformatted("  " + line);
+                    ImGui.PopStyleColor();
                 }
-                ImGui.PopStyleColor();
             });
         }
 
@@ -1161,31 +1221,263 @@ public class MemoryTab : ITab
         }
     }
 
+    // ── LocalPlayer EntityID Scanner ─────────────────────────────────────
+
+    private void RenderLocalPlayer(float w)
+    {
+        UiHelper.SectionBox("LOCAL PLAYER — EntityID FINDER", w, 0, () =>
+        {
+            UiHelper.MutedLabel("Scans process memory for strings near the LocalPlayer struct.");
+            UiHelper.MutedLabel("Finds the EntityID field offset by searching for a player-name string");
+            UiHelper.MutedLabel("and reading int32 values in the surrounding struct layout windows.");
+            ImGui.Spacing();
+
+            // Optional known player name to narrow the search
+            ImGui.SetNextItemWidth(200);
+            ImGui.InputText("Your in-game name (optional)##lpname", ref _lpPlayerName, 32);
+            ImGui.SameLine(0, 10);
+            UiHelper.MutedLabel("— leave blank to scan all plausible player names");
+            ImGui.Spacing();
+
+            ImGui.BeginDisabled(!_reader.IsAttached || _lpScanning);
+            UiHelper.PrimaryButton("Scan for LocalPlayer##lpscan", 200, 30, () =>
+            {
+                _lpCandidates.Clear();
+                _lpSelected   = -1;
+                _lpStatus     = "Scanning...";
+                _lpScanning   = true;
+                _lpProgress   = 0;
+
+                string? name = string.IsNullOrWhiteSpace(_lpPlayerName) ? null : _lpPlayerName.Trim();
+                var progress  = new Progress<int>(p => _lpProgress = p);
+
+                Task.Run(() =>
+                {
+                    try
+                    {
+                        var results = _reader.ScanLocalPlayerEntityId(name, progress);
+                        _lpCandidates = results;
+                        _lpStatus     = results.Count > 0
+                            ? $"Found {results.Count} candidate(s). Click a row to inspect."
+                            : "No candidates found. Try attaching to Hytale while in-game with your name set.";
+                    }
+                    catch (Exception ex)
+                    {
+                        _lpStatus = $"Error: {ex.Message}";
+                    }
+                    finally
+                    {
+                        _lpScanning = false;
+                    }
+                });
+            });
+            ImGui.EndDisabled();
+
+            if (_lpScanning)
+            {
+                ImGui.SameLine(0, 12);
+                ImGui.ProgressBar(_lpProgress / 100f, new Vector2(200, 28),
+                    $"{_lpProgress}% scanning...");
+            }
+
+            if (!string.IsNullOrEmpty(_lpStatus))
+            {
+                ImGui.Spacing();
+                bool ok = _lpStatus.StartsWith("Found");
+                ImGui.PushStyleColor(ImGuiCol.Text,
+                    ok ? MenuRenderer.ColAccent : MenuRenderer.ColTextMuted);
+                ImGui.TextUnformatted($"  {_lpStatus}");
+                ImGui.PopStyleColor();
+            }
+        });
+
+        ImGui.Spacing();
+
+        if (_lpCandidates.Count == 0) return;
+
+        // ── Results table ─────────────────────────────────────────────────
+        UiHelper.SectionBox("CANDIDATE RESULTS", w, 0, () =>
+        {
+            ImGui.SetCursorPos(new Vector2(8, 4));
+            UiHelper.MutedLabel($"  {"Score",-6} {"EntityID",-12} {"Name Found",-20} {"Name Addr",-20} {"EntityID Addr",-20} {"Offset"}");
+
+            var dlh = ImGui.GetWindowDrawList();
+            float hly = ImGui.GetCursorScreenPos().Y - 2;
+            dlh.AddLine(new Vector2(ImGui.GetWindowPos().X, hly),
+                        new Vector2(ImGui.GetWindowPos().X + w, hly),
+                        ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColBorder));
+
+            const float RowH = 20f;
+            float tableH = Math.Min(300f, _lpCandidates.Count * RowH + 20f);
+
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
+            ImGui.BeginChild("##lptbl", new Vector2(-1, tableH), ImGuiChildFlags.Border);
+            ImGui.PopStyleColor();
+
+            var dl = ImGui.GetWindowDrawList();
+            float tw = ImGui.GetContentRegionAvail().X;
+
+            var clip = new ImGuiListClipper();
+            clip.Begin(_lpCandidates.Count, RowH);
+            while (clip.Step())
+            {
+                for (int i = clip.DisplayStart; i < clip.DisplayEnd; i++)
+                {
+                    var c   = _lpCandidates[i];
+                    bool sel = _lpSelected == i;
+
+                    if (sel)
+                    {
+                        var sp = ImGui.GetCursorScreenPos();
+                        dl.AddRectFilled(sp, sp + new Vector2(tw, RowH),
+                            ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColAccentDim));
+                    }
+
+                    var col = c.Score >= 100 ? MenuRenderer.ColAccent
+                            : c.Score >=  60 ? MenuRenderer.ColBlue
+                            :                  MenuRenderer.ColTextMuted;
+
+                    ImGui.PushStyleColor(ImGuiCol.Text, col);
+                    if (ImGui.Selectable(
+                        $"  {c.Score,-6} {c.EntityId,-12} {c.FoundName,-20} " +
+                        $"{c.NameAddrHex,-20} {c.EntityIdAddrHex,-20} {(c.Offset >= 0 ? "+" : "")}{c.Offset}##lpr{i}",
+                        sel, ImGuiSelectableFlags.None, new Vector2(0, RowH)))
+                        _lpSelected = i;
+                    ImGui.PopStyleColor();
+                }
+            }
+            clip.End();
+
+            ImGui.EndChild();
+        });
+
+        // ── Detail view for selected candidate ────────────────────────────
+        if (_lpSelected >= 0 && _lpSelected < _lpCandidates.Count)
+        {
+            ImGui.Spacing();
+            var sel = _lpCandidates[_lpSelected];
+
+            UiHelper.SectionBox("SELECTED CANDIDATE DETAIL", w, 0, () =>
+            {
+                UiHelper.StatusRow("Player Name",    sel.FoundName,          true,  140);
+                UiHelper.StatusRow("Name Address",   sel.NameAddrHex,        true,  140);
+                UiHelper.StatusRow("Entity ID",      sel.EntityId.ToString(), true,  140);
+                UiHelper.StatusRow("EntityID Addr",  sel.EntityIdAddrHex,    true,  140);
+                UiHelper.StatusRow("Struct Offset",
+                    $"{(sel.Offset >= 0 ? "+" : "")}{sel.Offset} bytes from name",  true, 140);
+                UiHelper.StatusRow("Score",          sel.Score.ToString(),    sel.Score >= 60, 140);
+                ImGui.Spacing();
+
+                // Convenience button: pre-fill Pointer Path base field
+                UiHelper.PrimaryButton("Use as Pointer Path Base##lpuse", 220, 28, () =>
+                {
+                    // Jump to Pointer Path sub-tab and populate the base address
+                    _subTab = 7;
+                    _ppBase = sel.EntityIdAddrHex;
+                    _log.Success($"[LocalPlayer] EntityID addr {sel.EntityIdAddrHex} → Pointer Path base.");
+                });
+                ImGui.SameLine(0, 10);
+                UiHelper.SecondaryButton("Copy EntityID##lpcopy", 140, 28, () =>
+                {
+                    ImGui.SetClipboardText(sel.EntityId.ToString());
+                    _log.Info($"[LocalPlayer] Copied EntityID {sel.EntityId}.");
+                });
+                ImGui.SameLine(0, 10);
+                UiHelper.WarnButton("Copy Address##lpca", 130, 28, () =>
+                {
+                    ImGui.SetClipboardText(sel.EntityIdAddrHex);
+                    _log.Info($"[LocalPlayer] Copied EntityID address.");
+                });
+                ImGui.Spacing();
+
+                // Push LocalPlayer EntityID to SmartDetectionEngine via ServerConfig
+                bool alreadyPushed = _config.HasLocalPlayer &&
+                                     _config.LocalPlayerEntityId == sel.EntityId;
+                ImGui.PushStyleColor(ImGuiCol.Button,
+                    alreadyPushed ? MenuRenderer.ColAccentDim : MenuRenderer.ColBg3);
+                ImGui.PushStyleColor(ImGuiCol.Text,
+                    alreadyPushed ? MenuRenderer.ColAccent : MenuRenderer.ColWarn);
+                if (ImGui.Button(
+                    (alreadyPushed ? "★ Pushed to SmartDetect" : "Push to SmartDetect") + "##lpsdp",
+                    new Vector2(220, 28)))
+                {
+                    _config.SetLocalPlayerEntityId((uint)sel.EntityId, sel.FoundName);
+                    _log.Success($"[LocalPlayer] EntityID {sel.EntityId} " +
+                                 $"({sel.FoundName}) → SmartDetection tagged as LocalPlayer.");
+                }
+                ImGui.PopStyleColor(2);
+            });
+        }
+
+        ImGui.Spacing();
+
+        UiHelper.SectionBox("HOW TO USE", w, 0, () =>
+        {
+            UiHelper.MutedLabel("1. Launch Hytale and log in to a world.");
+            UiHelper.MutedLabel("2. In the Attach sub-tab, attach to the Hytale process.");
+            UiHelper.MutedLabel("3. Enter your exact in-game player name above (optional but recommended).");
+            UiHelper.MutedLabel("4. Click 'Scan for LocalPlayer' — scan takes 5–30 seconds.");
+            UiHelper.MutedLabel("5. The highest-scored row (green) is the most likely EntityID candidate.");
+            UiHelper.MutedLabel("6. Click 'Use as Pointer Path Base' to open it in the Pointer Path resolver.");
+            UiHelper.MutedLabel("7. Cross-reference the EntityID with what Item Inspector shows in 0x4A packets.");
+        });
+    }
+
+    // ── Pointer path watch state ─────────────────────────────────────────
+    private bool   _ppWatching       = false;
+    private string _ppWatchResult    = "";
+    private string[] _ppTraceLines   = Array.Empty<string>();
+    private CancellationTokenSource? _ppWatchCts;
+
+    /// <summary>
+    /// Parses the base field (supports "Hytale.exe+0x1A2B" and raw hex),
+    /// resolves the full chain via ResolvePointerChainDetailed for rich
+    /// per-step trace output, and reads bytes at the final address.
+    /// </summary>
     private void DoResolvePointerChain()
     {
         _ppResult     = "";
         _ppTrace      = "";
+        _ppTraceLines = Array.Empty<string>();
         _ppReadResult = Array.Empty<byte>();
         try
         {
-            string baseClean = _ppBase.Replace("0x", "").Replace("0X", "").Trim();
-            long   baseAddr  = Convert.ToInt64(baseClean, 16);
+            // --- Parse base address (supports "Module.exe+0xOFFSET" or raw hex) ---
+            if (!_reader.TryResolveSymbolicAddress(_ppBase, out long baseAddr, out string addrErr))
+            {
+                _ppResult = $"Base address error: {addrErr}";
+                _log.Error($"[PtrPath] {_ppResult}");
+                return;
+            }
 
-            int[] offsets = _ppOffsets.Trim()
-                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Select(t =>
-                {
-                    t = t.Replace("0x", "").Replace("0X", "");
-                    return Convert.ToInt32(t, 16);
-                })
-                .ToArray();
+            // --- Parse offsets ---
+            int[] offsets;
+            try
+            {
+                offsets = _ppOffsets.Trim()
+                    .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(t =>
+                    {
+                        t = t.Replace("0x", "").Replace("0X", "");
+                        return Convert.ToInt32(t, 16);
+                    })
+                    .ToArray();
+            }
+            catch (Exception ex)
+            {
+                _ppResult = $"Offset parse error: {ex.Message}";
+                return;
+            }
 
-            var final = _reader.ResolvePointerChain(new IntPtr(baseAddr), offsets, out string trace);
-            _ppTrace = trace;
+            // --- Resolve with detailed per-step trace ---
+            var final = _reader.ResolvePointerChainDetailed(
+                new IntPtr(baseAddr), offsets, out string[] traceLines);
+            _ppTraceLines = traceLines;
+            _ppTrace      = string.Join("\n", traceLines);
 
             if (final == IntPtr.Zero)
             {
-                _ppResult = "Failed — see trace for details.";
+                _ppResult = "FAILED — see trace (step that failed is marked in red)";
                 return;
             }
 
@@ -1196,13 +1488,65 @@ public class MemoryTab : ITab
             if (_reader.ReadBytes(final, buf))
                 _ppReadResult = buf;
             else
-                _ppResult += "  (read failed)";
+                _ppResult += "  (bytes unreadable at resolved addr)";
         }
         catch (Exception ex)
         {
-            _ppResult = $"Error: {ex.Message}";
+            _ppResult = $"Exception: {ex.Message}";
+            _log.Error($"[PtrPath] {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// Starts a background thread that continuously resolves the pointer chain
+    /// and updates _ppWatchResult every ~500ms so the user can see if the
+    /// final address is stable across game frames.
+    /// </summary>
+    private void StartPointerWatch()
+    {
+        _ppWatchCts?.Cancel();
+        _ppWatching = true;
+        _ppWatchCts = new CancellationTokenSource();
+        var cts = _ppWatchCts;
+
+        if (!_reader.TryResolveSymbolicAddress(_ppBase, out long baseAddr, out string err))
+        {
+            _ppWatchResult = $"Bad base: {err}";
+            _ppWatching = false;
+            return;
+        }
+
+        int[] offsets;
+        try
+        {
+            offsets = _ppOffsets.Trim()
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Select(t => Convert.ToInt32(t.Replace("0x","").Replace("0X",""), 16))
+                .ToArray();
+        }
+        catch { _ppWatchResult = "Bad offsets"; _ppWatching = false; return; }
+
+        _log.Info($"[PtrPath] Watch started — refreshing every 500ms.");
+
+        Task.Run(async () =>
+        {
+            while (!cts.IsCancellationRequested)
+            {
+                try
+                {
+                    var final = _reader.ResolvePointerChainDetailed(
+                        new IntPtr(baseAddr), offsets, out _);
+                    _ppWatchResult = final == IntPtr.Zero
+                        ? "UNSTABLE — chain broken"
+                        : $"0x{final.ToInt64():X16}  ✓ stable";
+                }
+                catch { _ppWatchResult = "Error during watch"; }
+                await Task.Delay(500, cts.Token).ContinueWith(_ => { });
+            }
+            _ppWatchResult = "(watch stopped)";
+        });
+    }
+
     // ══════════════════════════════════════════════════════════════════════
     // SUB-TAB 8: STRING-TO-POINTER SCANNER
     // ══════════════════════════════════════════════════════════════════════
@@ -1792,147 +2136,20 @@ public class MemoryTab : ITab
         _log.Info($"[CT] Values refreshed for {_ctEntries.Count(e => e.Enabled)} entries.");
     }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // SUB-TAB 13: LIVE MEMORY CORRELATOR
-    // ══════════════════════════════════════════════════════════════════════
-
-    private string   _corrWatchAddr  = "";
-    private string   _corrWatchLabel = "";
-    private WatchSize _corrWatchSize = WatchSize.Int32;
-    private int      _corrPollMs    = 150;
-    private int      _corrWindowMs  = 800;
-
     private void RenderCorrelator(float w)
     {
-        float half = (w - 12) * 0.5f;
-
-        UiHelper.SectionBox("LIVE MEMORY CORRELATOR", w, 80, () =>
+        UiHelper.SectionBox("CORRELATOR", w, 100, () =>
         {
-            UiHelper.MutedLabel("Monitors PacketStore for new entries and cross-references memory value");
-            UiHelper.MutedLabel("changes in the target process to find dynamic offsets for player attributes.");
-            ImGui.Spacing();
-            ImGui.SetNextItemWidth(90); ImGui.InputInt("Poll ms##corrpl", ref _corrPollMs);
-            _corrPollMs = Math.Clamp(_corrPollMs, 50, 5000);
-            if (_correlator != null) _correlator.PollIntervalMs = _corrPollMs;
-            ImGui.SameLine(0, 8);
-            ImGui.SetNextItemWidth(90); ImGui.InputInt("Window ms##corrwm", ref _corrWindowMs);
-            _corrWindowMs = Math.Clamp(_corrWindowMs, 50, 5000);
-            if (_correlator != null) _correlator.WindowMs = _corrWindowMs;
-        });
-
-        // Watch address adder
-        UiHelper.SectionBox("WATCH LIST", half, 120, () =>
-        {
-            ImGui.SetNextItemWidth(-1);
-            ImGui.InputText("Address##corrwa", ref _corrWatchAddr, 32);
-            ImGui.SetNextItemWidth(-1);
-            ImGui.InputText("Label##corrwl", ref _corrWatchLabel, 64);
-
-            var sizeNames = Enum.GetNames<WatchSize>();
-            int sizeIdx   = (int)_corrWatchSize;
-            ImGui.SetNextItemWidth(100);
-            if (ImGui.BeginCombo("Size##corrws", sizeNames[sizeIdx]))
+            UiHelper.MutedLabel("Live memory correlator is not available or not implemented.");
+            if (_correlator == null)
             {
-                for (int i = 0; i < sizeNames.Length; i++)
-                    if (ImGui.Selectable(sizeNames[i], i == sizeIdx))
-                        _corrWatchSize = (WatchSize)i;
-                ImGui.EndCombo();
-            }
-            ImGui.SameLine(0, 8);
-            UiHelper.PrimaryButton("Add Watch##corradd", 100, 24, () =>
-            {
-                try
-                {
-                    string clean = _corrWatchAddr.Replace("0x","").Replace("0X","").Trim();
-                    long addr    = Convert.ToInt64(clean, 16);
-                    _correlator?.AddWatch(new IntPtr(addr),
-                        _corrWatchLabel.Length > 0 ? _corrWatchLabel : $"0x{addr:X}",
-                        _corrWatchSize);
-                    _log.Info($"[Corr] Watch added: {_corrWatchLabel} @ 0x{addr:X}");
-                    _corrWatchAddr = _corrWatchLabel = "";
-                }
-                catch (Exception ex) { _log.Error($"[Corr] {ex.Message}"); }
-            });
-
-            ImGui.Spacing();
-            var watches = _correlator?.GetWatches() ?? new();
-            foreach (var ww in watches)
-            {
-                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
-                ImGui.TextUnformatted($"  {ww.Label}  ({ww.Size})  {ww.AddressHex}");
-                ImGui.PopStyleColor();
-                ImGui.SameLine(w * 0.42f);
-                ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBg3);
-                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColDanger);
-                if (ImGui.Button($"✕##cwrem{ww.AddressHex}", new Vector2(22, 18)))
-                    _correlator?.RemoveWatch(ww.Address);
-                ImGui.PopStyleColor(2);
-            }
-        });
-
-        ImGui.SameLine(0, 12);
-
-        // Controls
-        UiHelper.SectionBox("CONTROLS", half, 120, () =>
-        {
-            bool running = _correlator?.IsRunning == true;
-            if (running)
-            {
-                UiHelper.DangerButton("Stop Correlator##corrstop", -1, 28, () =>
-                {
-                    _correlator?.Stop();
-                });
-                ImGui.Spacing();
-                UiHelper.WarnText("● Correlating — perform actions in-game...");
+                UiHelper.MutedLabel("No correlator instance created.");
             }
             else
             {
-                ImGui.BeginDisabled(!_reader.IsAttached);
-                UiHelper.WarnButton("Start Correlator##corrstart", -1, 28, () =>
-                {
-                    _correlator?.Start();
-                });
-                ImGui.EndDisabled();
-                if (!_reader.IsAttached)
-                    UiHelper.MutedLabel("Attach to process first (Attach tab).");
+                UiHelper.MutedLabel("Correlator is present — use the correlator UI from its implementation.");
             }
-
-            ImGui.Spacing();
-            UiHelper.SecondaryButton("Clear Results##corrclear", -1, 24, () =>
-                _correlator?.ClearResults());
         });
-
-        // Results table
-        ImGui.Spacing();
-        var results = _correlator?.GetResults() ?? new();
-        if (results.Count > 0)
-        {
-            float tblH = ImGui.GetContentRegionAvail().Y;
-            ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
-            ImGui.BeginChild("##corrres", new Vector2(w, tblH), ImGuiChildFlags.Border);
-            ImGui.PopStyleColor();
-
-            UiHelper.MutedLabel($"  {"Time",-12} {"Label",-24} {"Before",-14} {"After",-14} {"Δ",-10} Triggered by");
-            ImGui.Separator();
-
-            foreach (var r in results.TakeLast(200).Reverse())
-            {
-                ImGui.PushStyleColor(ImGuiCol.Text,
-                    r.Delta > 0 ? MenuRenderer.ColAccent : MenuRenderer.ColWarn);
-                ImGui.TextUnformatted(
-                    $"  {r.Timestamp:HH:mm:ss}  {r.Label,-24} {r.ValueBefore,-14} {r.ValueAfter,-14}" +
-                    $" {r.DeltaStr,-10} {r.PacketLabel}");
-                ImGui.PopStyleColor();
-            }
-
-            ImGui.EndChild();
-        }
-        else
-        {
-            ImGui.Spacing();
-            UiHelper.MutedLabel("No correlations yet — add watches, start the correlator,");
-            UiHelper.MutedLabel("then save packets to the PacketStore to trigger observations.");
-        }
     }
 }
 

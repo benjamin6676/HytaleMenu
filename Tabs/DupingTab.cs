@@ -2,6 +2,7 @@ using ImGuiNET;
 using HytaleSecurityTester.Core;
 using System.Numerics;
 using System.Net.Sockets;
+using System.Diagnostics;
 
 namespace HytaleSecurityTester.Tabs;
 
@@ -226,22 +227,42 @@ public class DupingTab : ITab
         if (!TryParseHex(_pickupHex, out byte[]? pickup)){ _log.Error("[DropRace] Invalid Pickup hex."); return; }
 
         _raceRunning = true; _raceCts = new CancellationTokenSource();
-        var cts = _raceCts;
-        _log.Info($"[DropRace] {_raceThreads} threads \u00d7 {_raceIter} iters...");
-        Task.Run(async () =>
+        var cts      = _raceCts;
+        int threads  = _raceThreads;
+        int iters    = _raceIter;
+
+        _log.Info($"[DropRace] {threads} threads \u00d7 {iters} iters — high-precision timer active.");
+
+        // High-precision synchronised launch: all threads spin-wait on a shared
+        // start tick so Drop + Pickup packets fire within a few microseconds of each other.
+        Task.Run(() =>
         {
-            int wins = 0;
-            var tasks = Enumerable.Range(0, _raceThreads).Select(_ => Task.Run(async () =>
+            long startTick = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 100; // 10ms warm-up
+            int  wins = 0;
+
+            var tasks = Enumerable.Range(0, threads).Select(_ => Task.Run(() =>
             {
-                for (int i = 0; i < _raceIter; i++)
+                // Spin until the shared start tick — gives microsecond-precision alignment
+                while (Stopwatch.GetTimestamp() < startTick)
+                    System.Threading.Thread.SpinWait(1);
+
+                for (int i = 0; i < iters; i++)
                 {
                     if (cts.IsCancellationRequested) break;
-                    await Task.WhenAll(Task.Run(() => SendRaw(drop!)), Task.Run(() => SendRaw(pickup!)));
+
+                    // Fire Drop + Pickup on separate threads without async overhead
+                    var t1 = Task.Run(() => SendRaw(drop!));
+                    var t2 = Task.Run(() => SendRaw(pickup!));
+                    Task.WaitAll(t1, t2);
+
                     Interlocked.Increment(ref wins);
-                    await Task.Delay(Random.Shared.Next(0, 3));
+
+                    // Minimal inter-iteration pause via SpinWait (avoids Task.Delay latency)
+                    System.Threading.SpinWait.SpinUntil(() => false, 1);
                 }
-            })).ToList();
-            await Task.WhenAll(tasks);
+            })).ToArray();
+
+            Task.WaitAll(tasks);
             _raceRunning = false;
             _log.Success($"[DropRace] Done \u2014 {wins} race pairs fired. Check inventory + server logs.");
         });
@@ -414,12 +435,16 @@ public class DupingTab : ITab
             ImGui.Checkbox("Mid-trade##rbtrade", ref _rollbackTrade);
         });
         ImGui.Spacing();
-        UiHelper.SectionBox("RUN", w, 100, () =>
+        UiHelper.SectionBox("RUN", w, 0, () =>
         {
             UiHelper.MutedLabel("Sends transaction start, waits delay ms, then kills UDP proxy.");
             UiHelper.MutedLabel("If item committed before disconnect = rollback failure = dupe.");
             ImGui.Spacing();
             UiHelper.WarnButton("RUN ROLLBACK TEST##rbrun", 200, 28, RunRollback);
+            ImGui.SameLine(0, 12);
+            UiHelper.SecondaryButton("Spam Inventory Update##rbinvspam", 200, 28, RunInventoryUpdateSpam);
+            ImGui.SameLine(0, 10);
+            UiHelper.MutedLabel("← floods inventory-save packets before suspected crash to trigger rollback");
         });
         ImGui.Spacing();
         RenderHowTo("1. Start UDP proxy in Capture tab",
@@ -444,6 +469,36 @@ public class DupingTab : ITab
             await Task.Delay(delay);
             _udpProxy.Stop();
             _log.Warn("[Rollback] Proxy stopped (connection killed). Reconnect in-game and check inventory.");
+        });
+    }
+
+    /// <summary>
+    /// Spams a synthetic "Inventory Update" packet (0x1F) right before a suspected
+    /// server crash or connection drop, attempting to force a character-save that
+    /// preserves the duplicated item state across the rollback boundary.
+    /// </summary>
+    private void RunInventoryUpdateSpam()
+    {
+        _log.Info("[Rollback] Spamming Inventory Update packets (0x1F × 200)...");
+        Task.Run(async () =>
+        {
+            // 0x1F is a heuristic guess for Hytale's inventory-save opcode.
+            // The item ID from ItemInspector is embedded at bytes 1-4 if available.
+            int targetId = _config.HasTargetItem ? _config.TargetItemId : _itemId;
+            var pkt = new byte[9];
+            pkt[0] = 0x1F;
+            BitConverter.GetBytes(targetId).CopyTo(pkt, 1);
+            BitConverter.GetBytes((int)_itemCount).CopyTo(pkt, 5);
+
+            var sw = Stopwatch.StartNew();
+            for (int i = 0; i < 200; i++)
+            {
+                SendRaw(pkt);
+                // High-precision 1ms sleep via SpinWait to avoid OS scheduler jitter
+                long target = sw.ElapsedTicks + Stopwatch.Frequency / 1000;
+                while (sw.ElapsedTicks < target) System.Threading.Thread.SpinWait(10);
+            }
+            _log.Warn("[Rollback] Inventory spam complete — now kill proxy or disconnect.");
         });
     }
 

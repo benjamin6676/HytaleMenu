@@ -721,40 +721,33 @@ public class VisualsTab : ITab
                 ImGui.PopStyleColor();
                 ImGui.SetCursorPos(new Vector2(6, 6));
 
+                // Use locals because properties cannot be passed by ref
+                string etName = et.Name;
                 ImGui.SetNextItemWidth(-1);
-                {
-                    string name = et.Name;
-                    ImGui.InputText($"Name##etn{i}", ref name, 32);
-                    if (name != et.Name) et.Name = name;
-                }
+                if (ImGui.InputText($"Name##etn{i}", ref etName, 32))
+                    et.Name = etName;
+
+                string etPattern = et.Pattern;
                 ImGui.SetNextItemWidth(-1);
-                {
-                    string pattern = et.Pattern;
-                    ImGui.InputText($"AOB Pattern##etp{i}", ref pattern, 256);
-                    if (pattern != et.Pattern) et.Pattern = pattern;
-                }
+                if (ImGui.InputText($"AOB Pattern##etp{i}", ref etPattern, 256))
+                    et.Pattern = etPattern;
                 UiHelper.MutedLabel("Hex bytes with ?? wildcards");
 
-                {
-                    int posOffset = et.PosOffset;
-                    ImGui.SetNextItemWidth(90);
-                    ImGui.InputInt($"Pos offset##etpo{i}", ref posOffset);
-                    ImGui.SameLine(0, 8);
-                    UiHelper.MutedLabel($"= 0x{posOffset:X}  (byte offset to Vector3)");
-                    if (posOffset != et.PosOffset) et.PosOffset = posOffset;
-                }
+                int etPosOffset = et.PosOffset;
+                ImGui.SetNextItemWidth(90);
+                if (ImGui.InputInt($"Pos offset##etpo{i}", ref etPosOffset))
+                    et.PosOffset = etPosOffset;
+                ImGui.SameLine(0, 8); UiHelper.MutedLabel($"= 0x{et.PosOffset:X}  (byte offset to Vector3)");
 
-                {
-                    float boxW = et.BoxWidth;
-                    ImGui.SetNextItemWidth(90);
-                    ImGui.InputFloat($"Box W##etbw{i}", ref boxW, 1f);
-                    ImGui.SameLine(0, 8);
-                    float boxH = et.BoxHeight;
-                    ImGui.SetNextItemWidth(90);
-                    ImGui.InputFloat($"Box H##etbh{i}", ref boxH, 1f);
-                    if (boxW != et.BoxWidth) et.BoxWidth = boxW;
-                    if (boxH != et.BoxHeight) et.BoxHeight = boxH;
-                }
+                float etBoxW = et.BoxWidth;
+                ImGui.SetNextItemWidth(90);
+                if (ImGui.InputFloat($"Box W##etbw{i}", ref etBoxW, 1f))
+                    et.BoxWidth = etBoxW;
+                ImGui.SameLine(0, 8);
+                float etBoxH = et.BoxHeight;
+                ImGui.SetNextItemWidth(90);
+                if (ImGui.InputFloat($"Box H##etbh{i}", ref etBoxH, 1f))
+                    et.BoxHeight = etBoxH;
 
                 Vector4 col4 = et.Color;
                 if (ImGui.ColorEdit4($"Color##etc{i}", ref col4,
@@ -771,8 +764,8 @@ public class VisualsTab : ITab
         ImGui.Spacing();
         var dl2 = ImGui.GetWindowDrawList();
         float sy2 = ImGui.GetCursorScreenPos().Y;
-        dl2.AddLine(new Vector2(ImGui.GetWindowPos().X + 4, sy2),
-                    new Vector2(ImGui.GetWindowPos().X + w - 4, sy2),
+        dl2.AddLine(new Vector2(ImGui.GetWindowPos().X + 4, sepY),
+                    new Vector2(ImGui.GetWindowPos().X + w - 4, sepY),
                     ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColBorder));
         ImGui.Spacing();
 

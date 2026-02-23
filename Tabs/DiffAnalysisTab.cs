@@ -50,6 +50,20 @@ public class DiffAnalysisTab : ITab
         _slots.Add(new DiffSlot { Label = "Capture C" });
     }
 
+    // ── Public API — called from CaptureTab right-click menu ─────────────
+
+    /// <summary>Sets slot 0 (Diff A) hex from an external packet.</summary>
+    public void SetSlotA(string hexString)
+    {
+        if (_slots.Count > 0) { _slots[0].Hex = hexString; _multiResult = null; }
+    }
+    /// <summary>Sets slot 1 (Diff B) hex from an external packet.</summary>
+    public void SetSlotB(string hexString)
+    {
+        while (_slots.Count < 2) _slots.Add(new DiffSlot { Label = $"Capture {(char)('A' + _slots.Count)}" });
+        _slots[1].Hex = hexString; _multiResult = null;
+    }
+
     public void Render()
     {
         float w = ImGui.GetContentRegionAvail().X;

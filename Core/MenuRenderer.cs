@@ -24,6 +24,7 @@ public class MenuRenderer
     private readonly LogTab               _logTab;
     private readonly MemoryTab            _memoryTab;
     private readonly VisualsTab           _visualsTab;
+    private readonly SmartDetectionEngine _smartDetect;
 
     private int _selectedSection = 0;
 
@@ -63,6 +64,9 @@ public class MenuRenderer
     public static readonly Vector4 ColBorder       = new(0.18f, 0.95f, 0.45f, 0.22f);
     public static readonly Vector4 ColBorderBright = new(0.18f, 0.95f, 0.45f, 0.55f);
 
+    /// <summary>Exposed so CaptureTab can send packets directly to diff slots.</summary>
+    public DiffAnalysisTab DiffAnalysis => _diffAnalysisTab;
+
     public MenuRenderer()
     {
         _log     = new TestLog();
@@ -82,13 +86,16 @@ public class MenuRenderer
         _packetTab           = new PacketTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config);
         _dupingTab           = new DupingTab(_log, _captureTab.UdpProxy, _captureTab.Capture, _store, _config);
         _privilegeTab        = new PrivilegeTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config, _store);
-        _itemInspectorTab    = new ItemInspectorTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _store, _config);
+        _smartDetect         = new SmartDetectionEngine(_captureTab.Capture, _store, _log, _config);
+        _itemInspectorTab    = new ItemInspectorTab(_log, _captureTab.Capture, _captureTab.UdpProxy,
+                                   _store, _config, _smartDetect);
         _packetBookTab       = new PacketBookTab(_log, _store, _captureTab.UdpProxy, _captureTab.Capture, _config);
         _responseAnalyserTab = new ResponseAnalyserTab(_log, _tracker, _captureTab.Capture,
                                    _captureTab.UdpProxy, _store, _config);
         _diffAnalysisTab     = new DiffAnalysisTab(_log, _store, _captureTab.Capture);
+        _captureTab.SetDiffTab(_diffAnalysisTab);
         _logTab              = new LogTab(_log, _pktLog);
-        _memoryTab           = new MemoryTab(_log, _store);
+        _memoryTab           = new MemoryTab(_log, _store, _config);
         _visualsTab          = new VisualsTab(_log, _config);
     }
 
@@ -377,7 +384,6 @@ public class MenuRenderer
         c[(int)ImGuiCol.ResizeGripActive]     = ColAccent;
         c[(int)ImGuiCol.Tab]                  = ColBg2;
         c[(int)ImGuiCol.TabHovered]           = new Vector4(0.18f, 0.95f, 0.45f, 0.18f);
-        // use TabActive for selected tab color (this build exposes TabActive, not TabSelected)
         c[(int)ImGuiCol.TabActive]            = new Vector4(0.18f, 0.95f, 0.45f, 0.28f);
         c[(int)ImGuiCol.TabUnfocused]         = ColBg1;
         c[(int)ImGuiCol.TabUnfocusedActive]   = ColBg2;

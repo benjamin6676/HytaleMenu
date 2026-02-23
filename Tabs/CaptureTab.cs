@@ -30,13 +30,22 @@ public class CaptureTab : ITab
     private CancellationTokenSource? _tlsCts;
 
     private UdpProxy _udpProxy;
+    private DiffAnalysisTab? _diffTab; // injected after construction
 
     private int    _selectedIndex    = -1;
     private string _filterText       = "";
     private bool   _showClientServer = true;
     private bool   _showServerClient = true;
     private bool   _autoScroll       = true;
+    private bool   _hideSmallPkts    = false;   // hide packets < 15 bytes
     private bool   _decompressView   = false;   // show decompressed payload in hex view
+    private int    _commentingIdx    = -1;       // index of packet being commented
+    private string _commentBuf       = "";       // edit buffer for inline comment
+
+    // Right-click context state
+    private int  _ctxIdx  = -1;
+
+    public void SetDiffTab(DiffAnalysisTab diff) => _diffTab = diff;
 
     public CaptureTab(TestLog log, PacketLog pktLog, ServerConfig config)
     {
@@ -101,14 +110,14 @@ public class CaptureTab : ITab
             ImGui.SetNextItemWidth(190);
             ImGui.InputText("Server IP##csr",  ref dispIp,   64);
             ImGui.SameLine();
-            ImGui.SetNextItemWidth(130);
+            ImGui.SetNextItemWidth(90);
             ImGui.InputInt("Port##csrp", ref dispPort);
             ImGui.EndDisabled();
 
             ImGui.Spacing();
 
             ImGui.BeginDisabled(running);
-            ImGui.SetNextItemWidth(130);
+            ImGui.SetNextItemWidth(90);
             if (ImGui.InputInt("Proxy Port##plp", ref _listenPort))
                 _listenPort = Math.Clamp(_listenPort, 1, 65535);
             ImGui.SameLine();
@@ -255,107 +264,202 @@ public class CaptureTab : ITab
         var   packets = _capture.GetPackets();
         float w       = ImGui.GetContentRegionAvail().X;
 
-        // Filter toolbar
+        // ── Filter toolbar ─────────────────────────────────────────────────
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
-        ImGui.BeginChild("##fbar", new Vector2(w, 30), ImGuiChildFlags.Border);
+        ImGui.BeginChild("##fbar", new Vector2(w, 56), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
-        ImGui.SetCursorPos(new Vector2(8, 4));
-        ImGui.SetNextItemWidth(180);
-        ImGui.InputText("##flt", ref _filterText, 128);
-        ImGui.SameLine(0, 12);
-        ImGui.Checkbox("C→S##cs", ref _showClientServer);
-        ImGui.SameLine(0, 10);
-        ImGui.Checkbox("S→C##sc", ref _showServerClient);
-        ImGui.SameLine(0, 10);
-        ImGui.Checkbox("Auto-scroll##as", ref _autoScroll);
-        ImGui.SameLine(0, 16);
-        UiHelper.MutedLabel($"{packets.Count} packets  |  filter:");
-        ImGui.EndChild();
 
+        ImGui.SetCursorPos(new Vector2(8, 5));
+        ImGui.SetNextItemWidth(200);
+        ImGui.InputText("##flt", ref _filterText, 128);
+        ImGui.SameLine(0, 10);
+        ImGui.Checkbox("C→S##cs", ref _showClientServer);
+        ImGui.SameLine(0, 8);
+        ImGui.Checkbox("S→C##sc", ref _showServerClient);
+        ImGui.SameLine(0, 8);
+        ImGui.Checkbox("Auto-scroll##as", ref _autoScroll);
+        ImGui.SameLine(0, 10);
+        ImGui.Checkbox("Hide <15b##hsm", ref _hideSmallPkts);
+
+        // Row 2: counts
+        ImGui.SetCursorPosX(8);
+        UiHelper.MutedLabel($"{packets.Count} captured  |  dbl-click row to comment");
+
+        ImGui.EndChild();
         ImGui.Spacing();
 
         if (packets.Count == 0)
         {
-            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + 40);
             float tw = ImGui.CalcTextSize("Start proxy above and connect your game client.").X;
             ImGui.SetCursorPosX((w - tw) * 0.5f);
+            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + 40);
             UiHelper.MutedLabel("Start proxy above and connect your game client.");
             return;
         }
 
-        var filtered = packets.Where(p =>
+        // ── Build filtered list (cheap, avoids LINQ allocation on hot path) ──
+        var filtered = new List<(int globalIdx, CapturedPacket pkt)>(packets.Count);
+        string filterUp = _filterText.ToUpperInvariant();
+        foreach (var (idx, pkt) in packets.Select((p, i) => (i, p)))
         {
-            if (!_showClientServer && p.Direction == PacketDirection.ClientToServer)
-                return false;
-            if (!_showServerClient && p.Direction == PacketDirection.ServerToClient)
-                return false;
-            if (!string.IsNullOrWhiteSpace(_filterText))
+            if (!_showClientServer && pkt.Direction == PacketDirection.ClientToServer) continue;
+            if (!_showServerClient && pkt.Direction == PacketDirection.ServerToClient) continue;
+            if (_hideSmallPkts && pkt.RawBytes.Length < 15) continue;
+            if (filterUp.Length > 0)
             {
-                string f = _filterText.ToUpper();
-                if (!p.HexString.Contains(f) && !p.AsciiPreview.ToUpper().Contains(f))
-                    return false;
+                if (!pkt.HexString.Contains(filterUp) &&
+                    !pkt.AsciiPreview.ToUpperInvariant().Contains(filterUp))
+                    continue;
             }
-            return true;
-        }).ToList();
+            filtered.Add((idx, pkt));
+        }
 
+        // ── Layout ─────────────────────────────────────────────────────────
         float dw = 390f;
         float lw = ImGui.GetContentRegionAvail().X - dw - 8;
         float h  = ImGui.GetContentRegionAvail().Y;
 
-        // Packet list pane
+        const float RowH = 20f;
+
+        // ── Left pane: packet list with clipper ────────────────────────────
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
         ImGui.BeginChild("##pl", new Vector2(lw, h), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
 
-        ImGui.SetCursorPos(new Vector2(8, 6));
-        UiHelper.MutedLabel("   #      Time           Dir            Bytes  Preview");
+        ImGui.SetCursorPos(new Vector2(8, 5));
+        UiHelper.MutedLabel("   #      Time           Dir            Bytes  Comment/Preview");
 
-        var dl = ImGui.GetWindowDrawList();
-        var lp = ImGui.GetWindowPos();
-        float ly = ImGui.GetCursorScreenPos().Y - 2;
-        dl.AddLine(new Vector2(lp.X, ly), new Vector2(lp.X + lw, ly),
+        var dlL   = ImGui.GetWindowDrawList();
+        var lpPos = ImGui.GetWindowPos();
+        float hly = ImGui.GetCursorScreenPos().Y - 2;
+        dlL.AddLine(new Vector2(lpPos.X, hly), new Vector2(lpPos.X + lw, hly),
             ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColBorder));
 
-        for (int i = 0; i < filtered.Count; i++)
+        // Subtle row background colors by direction
+        var csBg = new Vector4(0.08f, 0.10f, 0.18f, 1f); // dark blue tint = C→S
+        var scBg = new Vector4(0.07f, 0.14f, 0.09f, 1f); // dark green tint = S→C
+
+        // ImGuiListClipper — only renders visible rows
+        ImGui.SetNextWindowScroll(ImGui.GetScrollY() >= ImGui.GetScrollMaxY() - 30 && _autoScroll
+            ? new Vector2(-1, float.MaxValue) : new Vector2(-1, -1));
+
+        var clipper = new ImGuiListClipper();
+        clipper.Begin(filtered.Count, RowH);
+        while (clipper.Step())
         {
-            var  p   = filtered[i];
-            bool cs  = p.Direction == PacketDirection.ClientToServer;
-            var  col = cs ? MenuRenderer.ColBlue : MenuRenderer.ColWarn;
-
-            string dir = cs ? "C → S" : "S → C";
-            string prv = p.AsciiPreview.Length > 18
-                ? p.AsciiPreview[..18] + "…" : p.AsciiPreview;
-
-            if (_selectedIndex == i)
+            for (int vi = clipper.DisplayStart; vi < clipper.DisplayEnd; vi++)
             {
+                var (globalIdx, p) = filtered[vi];
+                bool cs  = p.Direction == PacketDirection.ClientToServer;
+                var  rowBg = cs ? csBg : scBg;
+                string dir = cs ? "C → S" : "S → C";
+
+                // Draw direction-tinted background
                 var sp = ImGui.GetCursorScreenPos();
-                dl.AddRectFilled(sp, sp + new Vector2(lw, 20),
-                    ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColAccentDim));
+                dlL.AddRectFilled(sp, sp + new Vector2(lw, RowH),
+                    ImGui.ColorConvertFloat4ToU32(rowBg));
+
+                // Selected row overlay
+                if (_selectedIndex == globalIdx)
+                    dlL.AddRectFilled(sp, sp + new Vector2(lw, RowH),
+                        ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColAccentDim));
+
+                // Comment or preview
+                string annotation = p.Comment.Length > 0
+                    ? $"[{p.Comment}]"
+                    : (p.AsciiPreview.Length > 18 ? p.AsciiPreview[..18] + "…" : p.AsciiPreview);
+
+                ImGui.PushStyleColor(ImGuiCol.Text,
+                    p.Comment.Length > 0 ? MenuRenderer.ColWarn
+                    : cs ? MenuRenderer.ColBlue : MenuRenderer.ColAccent);
+
+                bool clicked = ImGui.Selectable(
+                    $"   {globalIdx + 1,-5} {p.TimestampLabel}  {dir,-14} {p.RawBytes.Length,-7} {annotation}##pk{globalIdx}",
+                    _selectedIndex == globalIdx, ImGuiSelectableFlags.None, new Vector2(0, RowH));
+                ImGui.PopStyleColor();
+
+                if (clicked) _selectedIndex = globalIdx;
+
+                // Double-click → enter comment mode
+                if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                {
+                    _commentingIdx = globalIdx;
+                    _commentBuf    = p.Comment;
+                    ImGui.OpenPopup($"##cmt{globalIdx}");
+                }
+
+                // Comment popup
+                if (_commentingIdx == globalIdx && ImGui.BeginPopup($"##cmt{globalIdx}"))
+                {
+                    ImGui.TextUnformatted("Add comment:");
+                    ImGui.SetNextItemWidth(220);
+                    if (ImGui.InputText("##cmtinput", ref _commentBuf, 128,
+                            ImGuiInputTextFlags.EnterReturnsTrue))
+                    {
+                        p.Comment      = _commentBuf;
+                        _commentingIdx = -1;
+                        ImGui.CloseCurrentPopup();
+                    }
+                    ImGui.SameLine(0, 8);
+                    if (ImGui.Button("OK##cmtok")) { p.Comment = _commentBuf; _commentingIdx = -1; ImGui.CloseCurrentPopup(); }
+                    ImGui.SameLine(0, 4);
+                    if (ImGui.Button("Clear##cmtcl")) { p.Comment = ""; _commentingIdx = -1; ImGui.CloseCurrentPopup(); }
+                    ImGui.EndPopup();
+                }
+
+                // ── Right-click context menu ────────────────────────────
+                if (ImGui.BeginPopupContextItem($"##ctx{globalIdx}"))
+                {
+                    _selectedIndex = globalIdx;
+                    _ctxIdx        = globalIdx;
+                    if (ImGui.MenuItem("Copy Hex"))
+                    {
+                        ImGui.SetClipboardText(p.HexString);
+                        _log.Info($"[Capture] Pkt #{globalIdx + 1} hex copied.");
+                    }
+                    ImGui.Separator();
+                    if (ImGui.MenuItem("Send to Diff A") && _diffTab != null)
+                    {
+                        _diffTab.SetSlotA(p.HexString);
+                        _log.Info($"[Capture] Pkt #{globalIdx + 1} → Diff A.");
+                    }
+                    if (ImGui.MenuItem("Send to Diff B") && _diffTab != null)
+                    {
+                        _diffTab.SetSlotB(p.HexString);
+                        _log.Info($"[Capture] Pkt #{globalIdx + 1} → Diff B.");
+                    }
+                    ImGui.Separator();
+                    if (ImGui.MenuItem("Add Comment…"))
+                    {
+                        _commentingIdx = globalIdx;
+                        _commentBuf    = p.Comment;
+                        ImGui.CloseCurrentPopup();
+                        ImGui.OpenPopup($"##cmt{globalIdx}");
+                    }
+                    ImGui.EndPopup();
+                }
             }
-
-            ImGui.PushStyleColor(ImGuiCol.Text, col);
-            if (ImGui.Selectable(
-                $"   {i + 1,-5} {p.TimestampLabel}  {dir,-14} {p.RawBytes.Length,-7} {prv}##pk{i}",
-                _selectedIndex == i, ImGuiSelectableFlags.None, new Vector2(0, 20)))
-                _selectedIndex = i;
-            ImGui.PopStyleColor();
         }
+        // ImGuiListClipper in this ImGui.NET build does not expose End(); no explicit cleanup required here.
 
-        if (_autoScroll && ImGui.GetScrollY() >= ImGui.GetScrollMaxY() - 20)
+        if (_autoScroll && ImGui.GetScrollY() >= ImGui.GetScrollMaxY() - 30)
             ImGui.SetScrollHereY(1.0f);
 
         ImGui.EndChild();
         ImGui.SameLine(0, 8);
 
-        // Detail pane
+        // ── Right pane: detail ─────────────────────────────────────────────
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
         ImGui.BeginChild("##pd", new Vector2(dw, h), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
 
-        if (_selectedIndex >= 0 && _selectedIndex < filtered.Count)
+        // Find selected packet in full (unfiltered) list
+        CapturedPacket? sel = (_selectedIndex >= 0 && _selectedIndex < packets.Count)
+            ? packets[_selectedIndex] : null;
+
+        if (sel != null)
         {
-            var  p  = filtered[_selectedIndex];
-            bool cs = p.Direction == PacketDirection.ClientToServer;
+            bool cs = sel.Direction == PacketDirection.ClientToServer;
 
             ImGui.SetCursorPos(new Vector2(12, 10));
             ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccentMid);
@@ -365,22 +469,27 @@ public class CaptureTab : ITab
             var ddl = ImGui.GetWindowDrawList();
             var dp  = ImGui.GetWindowPos();
             float dly = ImGui.GetCursorScreenPos().Y - 2;
-            ddl.AddLine(new Vector2(dp.X + 12, dly),
-                        new Vector2(dp.X + dw  - 12, dly),
-                        ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColBorder));
+            ddl.AddLine(new Vector2(dp.X + 12, dly), new Vector2(dp.X + dw - 12, dly),
+                ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColBorder));
             ImGui.Spacing();
 
-            UiHelper.StatusRow("Time",      p.TimestampLabel, true, 80);
-            UiHelper.StatusRow("Direction",
-                cs ? "Client → Server" : "Server → Client", cs, 80);
-            UiHelper.StatusRow("Size",      $"{p.RawBytes.Length} bytes", true, 80);
+            UiHelper.StatusRow("Time",      sel.TimestampLabel, true, 80);
+            UiHelper.StatusRow("Direction", cs ? "Client → Server" : "Server → Client", cs, 80);
+            UiHelper.StatusRow("Size",      $"{sel.RawBytes.Length} bytes", true, 80);
 
-            if (p.RawBytes.Length > 0)
+            if (sel.Comment.Length > 0)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
+                ImGui.TextUnformatted($"  ★ {sel.Comment}");
+                ImGui.PopStyleColor();
+            }
+
+            if (sel.RawBytes.Length > 0)
             {
                 ImGui.Spacing();
                 UiHelper.MutedLabel("Packet ID (first byte):");
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccent);
-                ImGui.Text($"  0x{p.RawBytes[0]:X2}   ({p.RawBytes[0]})");
+                ImGui.TextUnformatted($"  0x{sel.RawBytes[0]:X2}   ({sel.RawBytes[0]})");
                 ImGui.PopStyleColor();
             }
 
@@ -391,29 +500,23 @@ public class CaptureTab : ITab
                 ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColBorder));
             ImGui.Spacing();
 
+            // Decompression toggle + hex dump
             UiHelper.MutedLabel("Hex dump:");
-            // Decompression toggle
             ImGui.SameLine(0, 16);
             ImGui.Checkbox("Auto-decompress##dcv", ref _decompressView);
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Attempt zlib/gzip/LZ4/deflate decompression before display");
 
-            byte[] displayBytes = p.RawBytes;
+            byte[] displayBytes = sel.RawBytes;
             string decompLabel  = "";
-            if (_decompressView && p.RawBytes.Length > 4)
+            if (_decompressView && sel.RawBytes.Length > 4)
             {
-                var decompressed = PacketAnalyser.TryDecompress(p.RawBytes, out string method);
+                var decompressed = PacketAnalyser.TryDecompress(sel.RawBytes, out string method);
                 if (decompressed != null)
                 {
                     displayBytes = decompressed;
-                    decompLabel  = $"  ← decompressed ({method}) {decompressed.Length}b";
+                    decompLabel  = $"  ← {method} {decompressed.Length}b";
                 }
-                else
-                {
-                    decompLabel = "  (not compressed)";
-                }
+                else decompLabel = "  (not compressed)";
             }
-
             if (decompLabel.Length > 0)
             {
                 ImGui.SameLine(0, 8);
@@ -426,29 +529,41 @@ public class CaptureTab : ITab
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 1.0f, 0.7f, 1f));
             for (int row = 0; row < displayBytes.Length; row += 16)
             {
-                int    len = Math.Min(16, displayBytes.Length - row);
-                string hex = string.Join(" ", displayBytes.Skip(row).Take(len)
-                    .Select(b => $"{b:X2}"));
+                int len = Math.Min(16, displayBytes.Length - row);
+                string hex = string.Join(" ", displayBytes.Skip(row).Take(len).Select(b => $"{b:X2}"));
                 string asc = new string(displayBytes.Skip(row).Take(len)
                     .Select(b => b >= 32 && b < 127 ? (char)b : '.').ToArray());
-                ImGui.Text($"{row:X4}  {hex,-47}  {asc}");
+                ImGui.TextUnformatted($"{row:X4}  {hex,-47}  {asc}");
             }
             ImGui.PopStyleColor();
 
             ImGui.Spacing();
             UiHelper.MutedLabel("ASCII:");
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.6f, 1f));
-            ImGui.TextWrapped(p.AsciiPreview);
+            ImGui.TextWrapped(sel.AsciiPreview);
             ImGui.PopStyleColor();
 
             ImGui.Spacing();
             UiHelper.SecondaryButton("Copy Hex##cph", -1, 26, () =>
             {
-                ImGui.SetClipboardText(p.HexString);
+                ImGui.SetClipboardText(sel.HexString);
                 _log.Info($"[Capture] Pkt #{_selectedIndex + 1} copied.");
             });
+            if (_diffTab != null)
+            {
+                UiHelper.SecondaryButton("→ Diff A##da", -1, 26, () =>
+                {
+                    _diffTab.SetSlotA(sel.HexString);
+                    _log.Info($"[Capture] Pkt #{_selectedIndex + 1} → Diff A.");
+                });
+                UiHelper.SecondaryButton("→ Diff B##db", -1, 26, () =>
+                {
+                    _diffTab.SetSlotB(sel.HexString);
+                    _log.Info($"[Capture] Pkt #{_selectedIndex + 1} → Diff B.");
+                });
+            }
             UiHelper.SecondaryButton("Send to Log##stl", -1, 26, () =>
-                _log.Info($"[Capture] Pkt #{_selectedIndex + 1}:\n{p.HexString}"));
+                _log.Info($"[Capture] Pkt #{_selectedIndex + 1}:\n{sel.HexString}"));
         }
         else
         {
@@ -461,7 +576,7 @@ public class CaptureTab : ITab
         ImGui.EndChild();
     }
 
-    // ── Start / Stop ──────────────────────────────────────────────────────
+        // ── Start / Stop ──────────────────────────────────────────────────────
 
     private void StartCapture(string localIp)
     {

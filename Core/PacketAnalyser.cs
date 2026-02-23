@@ -525,13 +525,23 @@ public class DiscoveredId
     public string          TypeTag         { get; set; } = "";
     public FieldConfidence Confidence      { get; set; }
     public int             OccurrenceCount { get; set; }
+    /// Set by ItemInspectorTab when this ID appears in ≥2 packets within a 5-second window
+    public bool            BoostedToHigh   { get; set; }
+    /// Name linked from a String field found in the same packet as this ID
+    public string?         LinkedName      { get; set; }
 
-    public string ConfidenceLabel => Confidence switch
+    public string ConfidenceLabel
     {
-        FieldConfidence.High   => "HIGH",
-        FieldConfidence.Medium => "MED",
-        _                      => "LOW",
-    };
+        get
+        {
+            if (BoostedToHigh || Confidence == FieldConfidence.High) return "HIGH★";
+            return Confidence switch
+            {
+                FieldConfidence.Medium => "MED",
+                _                      => "LOW",
+            };
+        }
+    }
 }
 
 public enum FieldType       { Id, Length, Int32, Float, String, Unknown }

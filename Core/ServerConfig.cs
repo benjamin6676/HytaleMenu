@@ -18,8 +18,23 @@ public class ServerConfig
     /// True when TargetItemId has been set at least once
     public bool   HasTargetItem    => TargetItemId > 0;
 
+    // ── Local Player EntityID — set from MemoryTab LocalPlayer scanner ────
+    /// The EntityID of the local player found via memory scanning.
+    /// SmartDetectionEngine uses this to label the matching entity "LocalPlayer".
+    public uint   LocalPlayerEntityId     { get; private set; } = 0;
+    public string LocalPlayerName         { get; private set; } = "";
+    public bool   HasLocalPlayer          => LocalPlayerEntityId > 0;
+
     public event Action? OnChanged;
     public event Action? OnTargetItemChanged;
+    public event Action? OnLocalPlayerChanged;
+
+    public void SetLocalPlayerEntityId(uint entityId, string playerName = "")
+    {
+        LocalPlayerEntityId = entityId;
+        LocalPlayerName     = playerName;
+        OnLocalPlayerChanged?.Invoke();
+    }
 
     public void Set(string ip, int port)
     {

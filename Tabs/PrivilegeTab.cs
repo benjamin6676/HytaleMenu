@@ -142,17 +142,13 @@ public class PrivilegeTab : ITab
         RenderAutoFillBar(fullW);
         ImGui.Spacing();
 
-        // ── Sub-tab bar (full width) ──────────────────────────────────────
-        for (int i = 0; i < SubTabs.Length; i++)
+        // ── Sub-tab bar — scrollable, handles overflow automatically ─────
+        if (ImGui.BeginTabBar("##priv_subtabs", ImGuiTabBarFlags.FittingPolicyScroll))
         {
-            bool sel = _subTab == i;
-            ImGui.PushStyleColor(ImGuiCol.Button,
-                sel ? new Vector4(0.18f, 0.95f, 0.45f, 0.22f) : MenuRenderer.ColBg3);
-            ImGui.PushStyleColor(ImGuiCol.Text,
-                sel ? MenuRenderer.ColAccent : MenuRenderer.ColTextMuted);
-            if (ImGui.Button(SubTabs[i] + $"##st{i}", new Vector2(148, 28))) _subTab = i;
-            ImGui.PopStyleColor(2);
-            if (i < SubTabs.Length - 1) ImGui.SameLine(0, 4);
+            for (int i = 0; i < SubTabs.Length; i++)
+                if (ImGui.TabItemButton(SubTabs[i] + $"##st{i}", ImGuiTabItemFlags.None))
+                    _subTab = i;
+            ImGui.EndTabBar();
         }
 
         ImGui.Spacing(); ImGui.Spacing();
@@ -1358,6 +1354,12 @@ public class PrivilegeTab : ITab
     private string _crtNewCmd        = "";
     private string _crtNewDenyKw     = "permission";
 
+    // Inline edit buffers to avoid passing properties as ref (CS0206)
+    private string _crtEditNode     = "";
+    private string _crtEditCmdBuf   = "";
+    private string _crtEditDenyBuf  = "";
+    private int    _crtEditLoadedIdx = -1;
+
     private void RenderResponseTable(float w)
     {
         // ── Config bar ────────────────────────────────────────────────────
@@ -1381,7 +1383,7 @@ public class PrivilegeTab : ITab
             if (_targetPlayerId > 0)
             {
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-                ImGui.TextUnformatted($"Target: {(_targetPlayerName.Length > 0 ? _targetPlayerName : _targetPlayerId.ToString())}");
+                ImGui.TextUnformatted($"Target: {(_targetPlayerName.Length > 0 ? _targetPlayerName : _targetPlayerId > 0 ? _targetPlayerId.ToString() : "none")}");
                 ImGui.PopStyleColor();
             }
         });
@@ -1510,20 +1512,29 @@ public class PrivilegeTab : ITab
                 ImGui.PopStyleColor();
                 ImGui.SetCursorPos(new Vector2(6, 6));
 
+                // Initialize edit buffers once when this row is opened for editing
+                if (_crtEditLoadedIdx != i)
+                {
+                    _crtEditNode    = p.Node;
+                    _crtEditCmdBuf  = p.Command;
+                    _crtEditDenyBuf = p.DenyKeyword;
+                    _crtEditLoadedIdx = i;
+                }
+
                 ImGui.SetNextItemWidth(180);
-                string nodeTmp = p.Node;
-                ImGui.InputText($"Node##crten{i}", ref nodeTmp, 48);
-                if (nodeTmp != p.Node) p.Node = nodeTmp;
+                if (ImGui.InputText($"Node##crten{i}", ref _crtEditNode, 48))
+                    p.Node = _crtEditNode;
+
                 ImGui.SameLine(0, 8);
                 ImGui.SetNextItemWidth(300);
-                string cmdTmp = p.Command;
-                ImGui.InputText($"Command##crtec{i}", ref cmdTmp, 128);
-                if (cmdTmp != p.Command) p.Command = cmdTmp;
+                if (ImGui.InputText($"Command##crtec{i}", ref _crtEditCmdBuf, 128))
+                    p.Command = _crtEditCmdBuf;
+
                 ImGui.SameLine(0, 8);
                 ImGui.SetNextItemWidth(160);
-                string denyTmp = p.DenyKeyword;
-                ImGui.InputText($"Deny kw##crtdk{i}", ref denyTmp, 48);
-                if (denyTmp != p.DenyKeyword) p.DenyKeyword = denyTmp;
+                if (ImGui.InputText($"Deny kw##crtdk{i}", ref _crtEditDenyBuf, 48))
+                    p.DenyKeyword = _crtEditDenyBuf;
+
                 ImGui.SetCursorPosX(6);
                 UiHelper.MutedLabel("Use {target} — replaced with the admin name/ID from the sidebar.");
                 if (p.RawResponse.Length > 0)
@@ -1534,6 +1545,9 @@ public class PrivilegeTab : ITab
                     ImGui.PopStyleColor();
                 }
                 ImGui.EndChild();
+
+                // If editing closed on a different row, reset loaded index
+                if (_crtEditIdx != i) _crtEditLoadedIdx = -1;
             }
         }
 
@@ -1795,7 +1809,7 @@ public class PrivilegeTab : ITab
     }
 }
 
-// ── Probe types ───────────────────────────────────────────────────────────────
+// ── Probe types ─────────────────────────────────────────────────────────────
 
 public enum ProbeResult { Pending, Probing, Allow, Deny, Silence, Kick, Error }
 
