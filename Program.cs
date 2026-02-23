@@ -6,7 +6,50 @@ internal class Program
 {
     static void Main(string[] args)
     {
-        using var app = new Application();
-        app.Run();
+        // Install global handlers to capture startup/runtime exceptions and log them
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            try { ReportFatal(e.ExceptionObject as Exception ?? new Exception("Unhandled exception")); }
+            catch { }
+        };
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            try { ReportFatal(e.Exception); }
+            catch { }
+        };
+
+        try
+        {
+            using var app = new Application();
+            app.Run();
+        }
+        catch (Exception ex)
+        {
+            ReportFatal(ex);
+        }
+    }
+
+    private static void ReportFatal(Exception ex)
+    {
+        try
+        {
+            string msg = $"Fatal exception: {ex.GetType()}: {ex.Message}\n\n{ex.StackTrace}";
+            // write to crash log
+            try { System.IO.File.WriteAllText("crash.log", msg); } catch { }
+
+            // attempt to show a native message box so the user sees the error even without WinForms
+            try
+            {
+                NativeMethods.MessageBoxW(IntPtr.Zero, msg, "HytaleSecurityTester - Crash", 0);
+            }
+            catch { }
+        }
+        catch { }
+    }
+
+    private static class NativeMethods
+    {
+        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        public static extern int MessageBoxW(IntPtr hWnd, string text, string caption, uint type);
     }
 }
