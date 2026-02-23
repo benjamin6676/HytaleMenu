@@ -10,13 +10,33 @@ public class ServerConfig
     public int    ServerPort { get; set; } = 5520;
     public bool   IsSet      => !string.IsNullOrWhiteSpace(ServerIp) && ServerPort > 0;
 
-    // Fired whenever IP or port changes so all tabs can react
+    // ── Target item — set from Item Inspector, consumed by Dupe Methods ───
+    /// The item ID currently targeted for dupe testing.
+    public int    TargetItemId     { get; private set; } = 0;
+    /// Where the current TargetItemId came from (e.g. "Item Inspector", "Manual")
+    public string TargetItemSource { get; private set; } = "";
+    /// True when TargetItemId has been set at least once
+    public bool   HasTargetItem    => TargetItemId > 0;
+
     public event Action? OnChanged;
+    public event Action? OnTargetItemChanged;
 
     public void Set(string ip, int port)
     {
         ServerIp   = ip;
         ServerPort = port;
         OnChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// Set the global target item ID. Called from Item Inspector when user
+    /// clicks "Set as Target". DupingTab subscribes to OnTargetItemChanged
+    /// to auto-populate its item ID field.
+    /// </summary>
+    public void SetTargetItemId(int itemId, string source = "Item Inspector")
+    {
+        TargetItemId     = itemId;
+        TargetItemSource = source;
+        OnTargetItemChanged?.Invoke();
     }
 }

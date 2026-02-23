@@ -24,6 +24,7 @@ public class MenuRenderer
     private readonly ResponseAnalyserTab  _responseAnalyserTab;
     private readonly LogTab               _logTab;
     private readonly MemoryTab            _memoryTab;
+    private readonly VisualsTab           _visualsTab;
 
     // Which sidebar section is active (0-based)
     private int _selectedSection = 0;
@@ -44,7 +45,8 @@ public class MenuRenderer
         "Packet\nBook",
         "Connection",
         "Log",
-        "Memory\nReader"
+        "Memory\nReader",
+        "Visuals\n/ ESP"
     };
 
     private static readonly string[] SectionLabels = {
@@ -59,7 +61,8 @@ public class MenuRenderer
         "Packet Book",
         "Connection",
         "Log",
-        "Memory Reader"
+        "Memory Reader",
+        "Visuals / ESP"
     };
 
     // ── Palette — one place to change every color in the app ──────────────
@@ -103,7 +106,7 @@ public class MenuRenderer
         _packetTab           = new PacketTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config);
         _dupingTab           = new DupingTab(_log, _captureTab.UdpProxy, _captureTab.Capture, _store, _config);
         _connectionTab       = new ConnectionTab(_log, _config);
-        _privilegeTab        = new PrivilegeTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config);
+        _privilegeTab        = new PrivilegeTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config, _store);
         _itemInspectorTab    = new ItemInspectorTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _store, _config);
         _packetBookTab       = new PacketBookTab(_log, _store, _captureTab.UdpProxy, _captureTab.Capture, _config);
         _diffAnalysisTab     = new DiffAnalysisTab(_log, _store, _captureTab.Capture);
@@ -111,6 +114,7 @@ public class MenuRenderer
                                    _captureTab.UdpProxy, _store, _config);
         _logTab              = new LogTab(_log, _pktLog);
         _memoryTab           = new MemoryTab(_log);
+        _visualsTab          = new VisualsTab(_log);
     }
 
     public void Render()
@@ -338,6 +342,7 @@ public class MenuRenderer
             case 9:  _connectionTab.Render();       break;
             case 10: _logTab.Render();              break;
             case 11: _memoryTab.Render();           break;
+            case 12: _visualsTab.Render();          break;
         }
     }
 
