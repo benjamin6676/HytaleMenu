@@ -113,8 +113,8 @@ public class MenuRenderer
         _responseAnalyserTab = new ResponseAnalyserTab(_log, _tracker, _captureTab.Capture,
                                    _captureTab.UdpProxy, _store, _config);
         _logTab              = new LogTab(_log, _pktLog);
-        _memoryTab           = new MemoryTab(_log);
-        _visualsTab          = new VisualsTab(_log);
+        _memoryTab           = new MemoryTab(_log, _store);
+        _visualsTab          = new VisualsTab(_log, _config);
     }
 
     public void Render()

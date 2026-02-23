@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text;
 
 namespace HytaleSecurityTester.Core;
@@ -7,6 +8,7 @@ namespace HytaleSecurityTester.Core;
 ///
 /// Key methods:
 ///   Analyse()                — full structural parse of one packet
+///   TryDecompress()          — auto-detects and strips zlib/gzip/raw-deflate/LZ4 compression
 ///   ScanUint32Identifiers()  — Schema Discovery: score every 4-byte window
 ///   AggregateAcrossPackets() — combine discoveries across many packets
 /// </summary>
@@ -253,6 +255,170 @@ public static class PacketAnalyser
             .OrderByDescending(c => c.OccurrenceCount)
             .ThenByDescending(c => c.Score)
             .ToList();
+    }
+
+    // ── Decompression Layer ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Auto-detects and decompresses a packet payload.
+    /// Supported formats (detected by magic bytes):
+    ///   · Zlib   — 78 01 / 78 9C / 78 DA / 78 5E
+    ///   · Gzip   — 1F 8B
+    ///   · LZ4 frame — 04 22 4D 18
+    ///   · Raw deflate — fallback attempt when no magic matches
+    ///
+    /// Returns the decompressed bytes on success, or null if the payload
+    /// is not recognised as compressed or decompression fails.
+    /// <paramref name="method"/> is set to the detected format name.
+    /// </summary>
+    public static byte[]? TryDecompress(byte[] data, out string method)
+    {
+        method = "none";
+        if (data.Length < 4) return null;
+
+        // ── Gzip (1F 8B) ──────────────────────────────────────────────────
+        if (data[0] == 0x1F && data[1] == 0x8B)
+        {
+            method = "gzip";
+            try
+            {
+                using var ms  = new MemoryStream(data);
+                using var gz  = new GZipStream(ms, CompressionMode.Decompress);
+                using var out_ = new MemoryStream();
+                gz.CopyTo(out_);
+                return out_.ToArray();
+            }
+            catch { return null; }
+        }
+
+        // ── Zlib (78 xx) ──────────────────────────────────────────────────
+        if (data[0] == 0x78 &&
+            (data[1] == 0x01 || data[1] == 0x9C ||
+             data[1] == 0xDA || data[1] == 0x5E))
+        {
+            method = "zlib";
+            try
+            {
+                // Skip 2-byte zlib header before DeflateStream
+                using var ms   = new MemoryStream(data, 2, data.Length - 2);
+                using var df   = new DeflateStream(ms, CompressionMode.Decompress);
+                using var out_ = new MemoryStream();
+                df.CopyTo(out_);
+                return out_.ToArray();
+            }
+            catch { return null; }
+        }
+
+        // ── LZ4 frame magic (04 22 4D 18) ────────────────────────────────
+        if (data[0] == 0x04 && data[1] == 0x22 &&
+            data[2] == 0x4D && data[3] == 0x18)
+        {
+            method = "lz4";
+            // Pure-managed LZ4 block decompressor (no native dependency).
+            // Reads the LZ4 frame format: FLG, BD, [content size], then blocks.
+            try { return DecompressLz4Frame(data); }
+            catch { return null; }
+        }
+
+        // ── Raw deflate fallback ──────────────────────────────────────────
+        method = "deflate(try)";
+        try
+        {
+            using var ms   = new MemoryStream(data);
+            using var df   = new DeflateStream(ms, CompressionMode.Decompress);
+            using var out_ = new MemoryStream();
+            df.CopyTo(out_);
+            var result = out_.ToArray();
+            if (result.Length > 0) { method = "deflate"; return result; }
+        }
+        catch { }
+
+        method = "none";
+        return null;
+    }
+
+    /// <summary>
+    /// Minimal managed LZ4 frame decompressor.
+    /// Handles the common subset: FLG byte, optional content-size field,
+    /// and sequential data blocks. Does not handle block independence or
+    /// partial block checksums — sufficient for typical game protocol payloads.
+    /// </summary>
+    private static byte[] DecompressLz4Frame(byte[] src)
+    {
+        int pos = 4; // skip magic
+        byte flg = src[pos++];
+        byte bd  = src[pos++];
+
+        bool hasContentSize = (flg & 0x08) != 0;
+        bool hasBlockChecksum = (flg & 0x10) != 0;
+
+        if (hasContentSize) pos += 8; // skip 8-byte content size field
+        pos++; // skip header checksum
+
+        var output = new MemoryStream();
+
+        while (pos + 4 <= src.Length)
+        {
+            uint blockSize = BitConverter.ToUInt32(src, pos); pos += 4;
+            if (blockSize == 0) break; // end mark
+
+            bool isUncompressed = (blockSize & 0x80000000u) != 0;
+            int  dataSize       = (int)(blockSize & 0x7FFFFFFF);
+
+            if (pos + dataSize > src.Length) break;
+
+            if (isUncompressed)
+            {
+                output.Write(src, pos, dataSize);
+            }
+            else
+            {
+                // LZ4 block decompression
+                byte[] block = DecompressLz4Block(src, pos, dataSize);
+                output.Write(block, 0, block.Length);
+            }
+
+            pos += dataSize;
+            if (hasBlockChecksum) pos += 4;
+        }
+
+        return output.ToArray();
+    }
+
+    private static byte[] DecompressLz4Block(byte[] src, int srcOff, int srcLen)
+    {
+        var dst = new List<byte>(srcLen * 4);
+        int i   = srcOff;
+        int end = srcOff + srcLen;
+
+        while (i < end)
+        {
+            byte token    = src[i++];
+            int  litLen   = (token >> 4) & 0xF;
+            int  matchLen = token & 0xF;
+
+            // Extended literal length
+            if (litLen == 15)
+            { byte x; do { x = src[i++]; litLen += x; } while (x == 255); }
+
+            // Literals
+            for (int k = 0; k < litLen && i < end; k++) dst.Add(src[i++]);
+            if (i >= end) break;
+
+            // Match offset (little-endian 16-bit)
+            int offset = src[i] | (src[i + 1] << 8); i += 2;
+
+            // Extended match length
+            if (matchLen == 15)
+            { byte x; do { x = src[i++]; matchLen += x; } while (x == 255 && i < end); }
+            matchLen += 4; // minimum match length is 4
+
+            int matchStart = dst.Count - offset;
+            for (int k = 0; k < matchLen; k++)
+                dst.Add(dst[matchStart + (k % offset)]);
+        }
+
+        return dst.ToArray();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────

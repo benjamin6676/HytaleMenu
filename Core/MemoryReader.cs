@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Xml.Linq;
 
 namespace HytaleSecurityTester.Core;
 
@@ -676,6 +677,350 @@ public class MemoryReader : IDisposable
         }
         return results;
     }
+
+    // ── String-to-Pointer Scanner ─────────────────────────────────────────
+
+    /// <summary>
+    /// Scans all readable memory regions for UTF-8 and UTF-16LE strings.
+    /// Returns every occurrence with its address, encoding, and the string value.
+    /// Useful for finding custom-named items / entity names stored in the heap.
+    /// </summary>
+    public List<StringMatch> ScanStrings(int minLen = 4, int maxLen = 128,
+                                          int maxResults = 2000,
+                                          IProgress<int>? progress = null)
+    {
+        var results = new List<StringMatch>();
+        if (!IsAttached) return results;
+
+        var regions = GetReadableRegions(maxSizeMb: 64);
+        int done    = 0;
+
+        foreach (var region in regions)
+        {
+            if (results.Count >= maxResults) break;
+            int size = (int)Math.Min(region.Size, 32 * 1024 * 1024);
+            if (size < minLen) { done++; continue; }
+
+            var buf = new byte[size];
+            if (!ReadBytes(region.BaseAddress, buf)) { done++; continue; }
+
+            // ── UTF-8 scan ────────────────────────────────────────────────
+            int i = 0;
+            while (i < buf.Length && results.Count < maxResults)
+            {
+                if (buf[i] >= 0x20 && buf[i] < 0x7F)
+                {
+                    int start = i;
+                    while (i < buf.Length && buf[i] >= 0x20 && buf[i] < 0x7F) i++;
+                    int len = i - start;
+                    if (len >= minLen && len <= maxLen)
+                    {
+                        results.Add(new StringMatch
+                        {
+                            Address  = IntPtr.Add(region.BaseAddress, start),
+                            Value    = Encoding.ASCII.GetString(buf, start, len),
+                            Encoding = "UTF-8",
+                            Length   = len,
+                        });
+                    }
+                }
+                else i++;
+            }
+
+            // ── UTF-16LE scan ─────────────────────────────────────────────
+            for (int j = 0; j + 2 <= buf.Length && results.Count < maxResults; j += 2)
+            {
+                char c = (char)BitConverter.ToUInt16(buf, j);
+                if (c >= 0x20 && c < 0x7F)
+                {
+                    int start = j;
+                    var sb    = new StringBuilder();
+                    while (j + 2 <= buf.Length)
+                    {
+                        char ch = (char)BitConverter.ToUInt16(buf, j);
+                        if (ch < 0x20 || ch >= 0x7F) break;
+                        sb.Append(ch); j += 2;
+                    }
+                    int len = sb.Length;
+                    if (len >= minLen && len <= maxLen)
+                    {
+                        results.Add(new StringMatch
+                        {
+                            Address  = IntPtr.Add(region.BaseAddress, start),
+                            Value    = sb.ToString(),
+                            Encoding = "UTF-16",
+                            Length   = len * 2,
+                        });
+                    }
+                }
+            }
+
+            done++;
+            progress?.Report(done * 100 / Math.Max(1, regions.Count));
+        }
+
+        return results;
+    }
+
+    // ── VTable Resolver ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Reads the vtable pointer at <paramref name="objectAddress"/>,
+    /// then reads up to <paramref name="maxMethods"/> 8-byte function pointers
+    /// from that vtable and resolves each to [module + offset].
+    /// </summary>
+    public VTableInfo ResolveVTable(IntPtr objectAddress, int maxMethods = 32)
+    {
+        var info = new VTableInfo { ObjectAddress = objectAddress };
+        if (!IsAttached) { info.Error = "Not attached."; return info; }
+
+        // Read vtable pointer (first 8 bytes of object = ptr to vtable)
+        if (!ReadInt64(objectAddress, out long vtPtr))
+        { info.Error = $"Cannot read vtable ptr at {objectAddress.ToInt64():X16}"; return info; }
+
+        info.VTableAddress = new IntPtr(vtPtr);
+
+        var mods = GetModules();
+        for (int i = 0; i < maxMethods; i++)
+        {
+            IntPtr slotAddr = IntPtr.Add(info.VTableAddress, i * 8);
+            if (!ReadInt64(slotAddr, out long fnPtr) || fnPtr == 0) break;
+
+            // Resolve function pointer to module
+            var mod = mods.FirstOrDefault(m =>
+            {
+                long b = m.Base.ToInt64(), e = b + m.Size;
+                return fnPtr >= b && fnPtr < e;
+            });
+
+            info.Methods.Add(new VTableMethod
+            {
+                Index      = i,
+                Address    = new IntPtr(fnPtr),
+                Module     = mod?.Name ?? "?",
+                Offset     = mod != null ? fnPtr - mod.Base.ToInt64() : fnPtr,
+            });
+        }
+
+        return info;
+    }
+
+    // ── Hardware Breakpoint Monitor ───────────────────────────────────────
+
+    // Thread-context P/Invokes
+    [DllImport("kernel32.dll")] private static extern IntPtr OpenThread(uint access, bool inherit, uint threadId);
+    [DllImport("kernel32.dll")] private static extern bool   GetThreadContext(IntPtr hThread, ref CONTEXT64 ctx);
+    [DllImport("kernel32.dll")] private static extern bool   SetThreadContext(IntPtr hThread, ref CONTEXT64 ctx);
+
+    private const uint THREAD_GET_CONTEXT = 0x0008;
+    private const uint THREAD_SET_CONTEXT = 0x0010;
+    private const uint THREAD_SUSPEND_RESUME = 0x0002;
+    private const uint CONTEXT_DEBUG_REGISTERS = 0x00010010;
+
+    [StructLayout(LayoutKind.Sequential, Pack = 16)]
+    private struct CONTEXT64
+    {
+        public ulong P1Home, P2Home, P3Home, P4Home, P5Home, P6Home;
+        public uint  ContextFlags;
+        public uint  MxCsr;
+        public ushort SegCs, SegDs, SegEs, SegFs, SegGs, SegSs;
+        public uint  EFlags;
+        public ulong Dr0, Dr1, Dr2, Dr3, Dr6, Dr7;
+        // Remaining fields — we only need debug registers, but struct size must be exact
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 128)]
+        public byte[] _padding;
+    }
+
+    /// <summary>
+    /// Sets hardware breakpoint slot 0 on all threads of the attached process
+    /// to watch <paramref name="watchAddress"/> for write accesses (DR7 condition 01).
+    /// Call ClearHardwareBreakpoints() to remove.
+    /// </summary>
+    public string SetHardwareBreakpoint(IntPtr watchAddress, int slot = 0)
+    {
+        if (!IsAttached) return "Not attached.";
+        if (slot < 0 || slot > 3) return "Slot must be 0–3.";
+
+        int set = 0, fail = 0;
+        foreach (ProcessThread thread in Process.GetProcessById(_pid).Threads)
+        {
+            IntPtr hThread = OpenThread(
+                THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_SUSPEND_RESUME,
+                false, (uint)thread.Id);
+            if (hThread == IntPtr.Zero) { fail++; continue; }
+
+            try
+            {
+                var ctx = new CONTEXT64 { ContextFlags = CONTEXT_DEBUG_REGISTERS };
+                ctx._padding = new byte[128];
+                if (!GetThreadContext(hThread, ref ctx)) { fail++; continue; }
+
+                // Set the DR slot to our watch address
+                ulong addr = (ulong)watchAddress.ToInt64();
+                switch (slot)
+                {
+                    case 0: ctx.Dr0 = addr; break;
+                    case 1: ctx.Dr1 = addr; break;
+                    case 2: ctx.Dr2 = addr; break;
+                    case 3: ctx.Dr3 = addr; break;
+                }
+
+                // DR7: enable local breakpoint for slot (bits 0,2,4,6) + write condition (bits 16+)
+                // Condition 01 = write, size 00 = 1-byte, enabled in bits 2*slot (local enable)
+                uint enable = (uint)(1 << (slot * 2));         // L0–L3
+                uint cond   = (uint)(0b01 << (16 + slot * 4)); // write access
+                uint size   = 0;                                // 1-byte width
+                ctx.Dr7 = (ctx.Dr7 & ~(ulong)((0xF << (16 + slot * 4)) | (0x3 << (slot * 2))))
+                         | enable | cond | size;
+                ctx.Dr6 = 0;
+
+                if (SetThreadContext(hThread, ref ctx)) set++;
+                else fail++;
+            }
+            finally { CloseHandle(hThread); }
+        }
+
+        return $"Breakpoint set on {set} thread(s) — {fail} failed. Watch: 0x{watchAddress.ToInt64():X16}";
+    }
+
+    /// <summary>Clears all hardware breakpoint slots on all threads.</summary>
+    public string ClearHardwareBreakpoints()
+    {
+        if (!IsAttached) return "Not attached.";
+        int cleared = 0;
+        foreach (ProcessThread thread in Process.GetProcessById(_pid).Threads)
+        {
+            IntPtr hThread = OpenThread(
+                THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_SUSPEND_RESUME,
+                false, (uint)thread.Id);
+            if (hThread == IntPtr.Zero) continue;
+            try
+            {
+                var ctx = new CONTEXT64 { ContextFlags = CONTEXT_DEBUG_REGISTERS };
+                ctx._padding = new byte[128];
+                if (!GetThreadContext(hThread, ref ctx)) continue;
+                ctx.Dr0 = ctx.Dr1 = ctx.Dr2 = ctx.Dr3 = ctx.Dr6 = ctx.Dr7 = 0;
+                if (SetThreadContext(hThread, ref ctx)) cleared++;
+            }
+            finally { CloseHandle(hThread); }
+        }
+        return $"Cleared breakpoints on {cleared} thread(s).";
+    }
+
+    /// <summary>
+    /// Polls all threads for DR6 hit status. Returns a list of (threadId, slot) hits.
+    /// Call this on a timer to detect breakpoint fires.
+    /// </summary>
+    public List<BreakpointHit> PollBreakpointHits()
+    {
+        var hits = new List<BreakpointHit>();
+        if (!IsAttached) return hits;
+        try
+        {
+            foreach (ProcessThread thread in Process.GetProcessById(_pid).Threads)
+            {
+                IntPtr hThread = OpenThread(THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_SUSPEND_RESUME,
+                    false, (uint)thread.Id);
+                if (hThread == IntPtr.Zero) continue;
+                try
+                {
+                    var ctx = new CONTEXT64 { ContextFlags = CONTEXT_DEBUG_REGISTERS };
+                    ctx._padding = new byte[128];
+                    if (!GetThreadContext(hThread, ref ctx)) continue;
+
+                    ulong dr6 = ctx.Dr6;
+                    for (int s = 0; s < 4; s++)
+                    {
+                        if ((dr6 & (ulong)(1 << s)) != 0)
+                        {
+                            hits.Add(new BreakpointHit
+                            {
+                                ThreadId  = thread.Id,
+                                Slot      = s,
+                                Timestamp = DateTime.Now,
+                            });
+                        }
+                    }
+                    // Clear DR6
+                    if (hits.Count > 0)
+                    {
+                        ctx.Dr6 = 0;
+                        SetThreadContext(hThread, ref ctx);
+                    }
+                }
+                finally { CloseHandle(hThread); }
+            }
+        }
+        catch { /* process may have exited */ }
+        return hits;
+    }
+
+    // ── Cheat Engine .CT schema loader ────────────────────────────────────
+
+    /// <summary>
+    /// Parses a Cheat Engine .CT file (XML) and extracts all CheatEntry records.
+    /// Supports Address + Offsets pointer chains and VariableType mapping.
+    /// </summary>
+    public static List<CtEntry> LoadCheatTable(string xmlPath)
+    {
+        var entries = new List<CtEntry>();
+        try
+        {
+            var doc  = XDocument.Load(xmlPath);
+            var root = doc.Root;
+            if (root == null) return entries;
+
+            // Handle both flat and nested CheatEntries
+            foreach (var el in root.Descendants("CheatEntry"))
+            {
+                var entry = new CtEntry
+                {
+                    Description = el.Element("Description")?.Value ?? "",
+                    VariableType = el.Element("VariableType")?.Value ?? "4 Bytes",
+                    AddressText  = el.Element("Address")?.Value ?? "",
+                };
+
+                // Parse offsets
+                var offsetsEl = el.Element("Offsets");
+                if (offsetsEl != null)
+                {
+                    foreach (var offEl in offsetsEl.Elements("Offset"))
+                    {
+                        string txt = offEl.Value.Trim().Replace("0x","").Replace("0X","");
+                        if (int.TryParse(txt, System.Globalization.NumberStyles.HexNumber,
+                            null, out int off))
+                            entry.Offsets.Add(off);
+                    }
+                }
+
+                // Try parse base address
+                string addrTxt = entry.AddressText.Trim()
+                    .Replace("0x","").Replace("0X","");
+                if (addrTxt.Contains("+"))
+                {
+                    entry.IsModuleRelative = true;
+                    var parts = addrTxt.Split('+');
+                    entry.ModuleName = parts[0].Trim().Trim('"');
+                    if (parts.Length > 1 &&
+                        long.TryParse(parts[1].Trim(),
+                            System.Globalization.NumberStyles.HexNumber, null, out long off))
+                        entry.BaseOffset = off;
+                }
+                else if (long.TryParse(addrTxt,
+                    System.Globalization.NumberStyles.HexNumber, null, out long abs))
+                {
+                    entry.AbsoluteAddress = new IntPtr(abs);
+                }
+
+                entries.Add(entry);
+            }
+        }
+        catch (Exception ex)
+        {
+            entries.Add(new CtEntry { Description = $"[Parse error: {ex.Message}]" });
+        }
+        return entries;
+    }
 }
 
 // ── Supporting types ──────────────────────────────────────────────────────────
@@ -749,4 +1094,52 @@ public class MemoryMapEntry
                             : Size >= 1024        ? $"{Size / 1024}KB"
                             :                       $"{Size}B";
     public bool   Readable => (RawProtect & 0xFE) != 0 && (RawProtect & 0x100) == 0;
+}
+
+public class StringMatch
+{
+    public IntPtr Address  { get; set; }
+    public string Value    { get; set; } = "";
+    public string Encoding { get; set; } = "UTF-8";
+    public int    Length   { get; set; }
+    public string AddressHex => $"0x{Address.ToInt64():X16}";
+}
+
+public class VTableInfo
+{
+    public IntPtr            ObjectAddress { get; set; }
+    public IntPtr            VTableAddress { get; set; }
+    public List<VTableMethod> Methods      { get; set; } = new();
+    public string            Error         { get; set; } = "";
+}
+
+public class VTableMethod
+{
+    public int    Index   { get; set; }
+    public IntPtr Address { get; set; }
+    public string Module  { get; set; } = "";
+    public long   Offset  { get; set; }
+    public string AddressHex => $"0x{Address.ToInt64():X16}";
+    public string OffsetHex  => $"+0x{Offset:X}";
+}
+
+public class BreakpointHit
+{
+    public int      ThreadId  { get; set; }
+    public int      Slot      { get; set; }
+    public DateTime Timestamp { get; set; }
+}
+
+public class CtEntry
+{
+    public string      Description     { get; set; } = "";
+    public string      VariableType    { get; set; } = "4 Bytes";
+    public string      AddressText     { get; set; } = "";
+    public bool        IsModuleRelative { get; set; }
+    public string      ModuleName      { get; set; } = "";
+    public long        BaseOffset      { get; set; }
+    public IntPtr      AbsoluteAddress { get; set; }
+    public List<int>   Offsets         { get; set; } = new();
+    public bool        Enabled         { get; set; } = true;
+    public string      LiveValue       { get; set; } = "";
 }
