@@ -105,7 +105,98 @@ public sealed class Application : IDisposable
         _gl!.ClearColor(0.07f, 0.08f, 0.08f, 1f);
         _gl.Clear(ClearBufferMask.ColorBufferBit);
         _menu!.Render();
+
+        // Draw entity bounding boxes on background draw list BEFORE ImGui render
+        DrawEntityOverlays();
+
         _imgui!.Render();
+    }
+
+    // ── Entity Visualizer ─────────────────────────────────────────────────
+    //
+    // Feed world-space Vector3 coordinates (from memory reader or packet data)
+    // to this list at any time. The overlay will project them to screen and
+    // draw bounding boxes using the ImGui background draw list.
+    //
+    // Usage from MemoryTab / ItemInspectorTab:
+    //   Application.EntityPositions.Add(new Vector3(x, y, z));
+
+    public static readonly List<EntityOverlayEntry> EntityPositions = new();
+
+    // Set this from MenuRenderer / MemoryTab when you have a real view matrix
+    public static Matrix4x4 ViewProjectionMatrix = Matrix4x4.Identity;
+
+    /// <summary>
+    /// Projects a world-space position to 2D screen coordinates using the
+    /// 4×4 view-projection matrix. Returns false if the point is behind
+    /// the camera (clip-space W ≤ 0).
+    /// </summary>
+    public static bool WorldToScreen(Vector3 worldPos, Vector2 screenSize,
+                                     out Vector2 screenPos)
+    {
+        screenPos = Vector2.Zero;
+        var m   = ViewProjectionMatrix;
+
+        float clipX = worldPos.X * m.M11 + worldPos.Y * m.M21 + worldPos.Z * m.M31 + m.M41;
+        float clipY = worldPos.X * m.M12 + worldPos.Y * m.M22 + worldPos.Z * m.M32 + m.M42;
+        float clipW = worldPos.X * m.M14 + worldPos.Y * m.M24 + worldPos.Z * m.M34 + m.M44;
+
+        if (clipW <= 0f) return false; // behind camera
+
+        float ndcX = clipX / clipW;
+        float ndcY = clipY / clipW;
+
+        screenPos = new Vector2(
+            (ndcX + 1f) * 0.5f * screenSize.X,
+            (1f - ndcY) * 0.5f * screenSize.Y   // Y flipped for screen coords
+        );
+        return true;
+    }
+
+    private void DrawEntityOverlays()
+    {
+        if (EntityPositions.Count == 0) return;
+
+        var io         = ImGui.GetIO();
+        var screenSize = io.DisplaySize;
+        var drawList   = ImGui.GetBackgroundDrawList();
+
+        lock (EntityPositions)
+        {
+            foreach (var entry in EntityPositions)
+            {
+                if (!WorldToScreen(entry.Position, screenSize, out Vector2 center))
+                    continue;
+
+                // Draw bounding box (default 40×80 pixels; scale with entry.Height)
+                float hw = entry.Width  * 0.5f;
+                float hh = entry.Height * 0.5f;
+
+                var tl = new Vector2(center.X - hw, center.Y - hh);
+                var br = new Vector2(center.X + hw, center.Y + hh);
+
+                uint boxColor  = ImGui.ColorConvertFloat4ToU32(entry.Color);
+                uint textColor = ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.9f));
+
+                drawList.AddRect(tl, br, boxColor, 0f, ImDrawFlags.None, 1.5f);
+
+                // Corner ticks for cleaner ESP look
+                float cs = Math.Min(hw, hh) * 0.3f;
+                uint tc = boxColor;
+                drawList.AddLine(tl,                  tl + new Vector2(cs, 0),    tc, 2f);
+                drawList.AddLine(tl,                  tl + new Vector2(0,  cs),   tc, 2f);
+                drawList.AddLine(br,                  br - new Vector2(cs, 0),    tc, 2f);
+                drawList.AddLine(br,                  br - new Vector2(0,  cs),   tc, 2f);
+                drawList.AddLine(new Vector2(br.X, tl.Y), new Vector2(br.X - cs, tl.Y), tc, 2f);
+                drawList.AddLine(new Vector2(br.X, tl.Y), new Vector2(br.X, tl.Y + cs), tc, 2f);
+                drawList.AddLine(new Vector2(tl.X, br.Y), new Vector2(tl.X + cs, br.Y), tc, 2f);
+                drawList.AddLine(new Vector2(tl.X, br.Y), new Vector2(tl.X, br.Y - cs), tc, 2f);
+
+                // Label
+                if (!string.IsNullOrEmpty(entry.Label))
+                    drawList.AddText(new Vector2(center.X - 20, tl.Y - 14), textColor, entry.Label);
+            }
+        }
     }
 
     private void OnResize(Vector2D<int> size) => _gl?.Viewport(size);
@@ -118,6 +209,17 @@ public sealed class Application : IDisposable
     }
 
     public void Dispose() => _window?.Dispose();
+}
+
+// ── Entity Overlay Entry ──────────────────────────────────────────────────────
+
+public class EntityOverlayEntry
+{
+    public Vector3 Position { get; set; }
+    public string  Label    { get; set; } = "";
+    public float   Width    { get; set; } = 40f;
+    public float   Height   { get; set; } = 80f;
+    public Vector4 Color    { get; set; } = new(0.18f, 0.95f, 0.45f, 0.9f); // green default
 }
 
 // ── Windows clipboard P/Invoke (no extra NuGet needed) ────────────────────

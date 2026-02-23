@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text;
 
 namespace HytaleSecurityTester.Core;
@@ -5,76 +6,46 @@ namespace HytaleSecurityTester.Core;
 /// <summary>
 /// Heuristic packet analyser.
 ///
-/// Since Hytale's packet format is not publicly documented, this class uses
-/// pattern-matching and structural analysis to make educated guesses about
-/// what a captured packet contains.  Every field is labelled as a "hint"
-/// rather than a definitive parse — you confirm by watching in-game behaviour.
-///
-/// How to use:
-///   var result = PacketAnalyser.Analyse(packet);
-///   // result.Summary    — one-line human-readable description
-///   // result.Fields     — list of detected fields with names + values
-///   // result.Guesses    — list of named fields the parser thinks it found
-///   // result.ActionHint — best guess at what the packet does
+/// Key methods:
+///   Analyse()                — full structural parse of one packet
+///   TryDecompress()          — auto-detects and strips zlib/gzip/raw-deflate/LZ4 compression
+///   ScanUint32Identifiers()  — Schema Discovery: score every 4-byte window
+///   AggregateAcrossPackets() — combine discoveries across many packets
 /// </summary>
 public static class PacketAnalyser
 {
-    // ── Known/guessed packet ID ranges (update as you discover real IDs) ──
-
-    // Client → Server guesses
     private static readonly Dictionary<int, string> KnownCsIds = new()
     {
-        { 0x01, "Chat / Command" },
-        { 0x02, "Player Move" },
-        { 0x03, "Player Look" },
-        { 0x04, "Player Action" },
-        { 0x05, "Dig / Break Block" },
-        { 0x06, "Use Item" },
-        { 0x07, "Drop Item" },
-        { 0x08, "Pick Up Item" },
-        { 0x09, "Inventory Click" },
-        { 0x0A, "Inventory Close" },
-        { 0x0B, "Trade Accept" },
-        { 0x0C, "Trade Cancel" },
-        { 0x0D, "Container Open" },
-        { 0x0E, "Container Move Item" },
-        { 0x0F, "Container Close" },
-        { 0x10, "Handshake / Login" },
-        { 0x11, "Keep Alive Response" },
-        { 0x12, "Respawn Request" },
-        { 0x20, "Entity Interact" },
-        { 0x21, "Entity Attack" },
-        { 0x22, "Entity Use" },
-        { 0x2A, "Give Item (suspected)" },
-        { 0x30, "Transaction Start" },
-        { 0x31, "Transaction Commit" },
+        { 0x01, "Chat / Command" },     { 0x02, "Player Move" },
+        { 0x03, "Player Look" },        { 0x04, "Player Action" },
+        { 0x05, "Dig / Break Block" },  { 0x06, "Use Item" },
+        { 0x07, "Drop Item" },          { 0x08, "Pick Up Item" },
+        { 0x09, "Inventory Click" },    { 0x0A, "Inventory Close" },
+        { 0x0B, "Trade Accept" },       { 0x0C, "Trade Cancel" },
+        { 0x0D, "Container Open" },     { 0x0E, "Container Move Item" },
+        { 0x0F, "Container Close" },    { 0x10, "Handshake / Login" },
+        { 0x11, "Keep Alive Response" },{ 0x12, "Respawn Request" },
+        { 0x20, "Entity Interact" },    { 0x21, "Entity Attack" },
+        { 0x22, "Entity Use" },         { 0x2A, "Give Item (suspected)" },
+        { 0x30, "Transaction Start" },  { 0x31, "Transaction Commit" },
         { 0x32, "Transaction Rollback" },
     };
 
-    // Server → Client guesses
     private static readonly Dictionary<int, string> KnownScIds = new()
     {
-        { 0x01, "Chat Message" },
-        { 0x02, "Player Spawn" },
-        { 0x03, "Entity Update" },
-        { 0x04, "Inventory Update" },
-        { 0x05, "Item Pickup Confirm" },
-        { 0x06, "Block Update" },
-        { 0x07, "Sound Effect" },
-        { 0x08, "Particle Effect" },
-        { 0x09, "World State" },
-        { 0x0A, "Time Update" },
-        { 0x10, "Login Success" },
-        { 0x11, "Login Failure" },
-        { 0x12, "Keep Alive" },
-        { 0x20, "Item Spawn (world)" },
-        { 0x21, "Item Despawn" },
-        { 0x22, "Inventory Slot Update" },
-        { 0x23, "Health Update" },
-        { 0x24, "XP Update" },
-        { 0x30, "Transaction Ack" },
-        { 0x31, "Transaction Denied" },
+        { 0x01, "Chat Message" },       { 0x02, "Player Spawn" },
+        { 0x03, "Entity Update" },      { 0x04, "Inventory Update" },
+        { 0x05, "Item Pickup Confirm" },{ 0x06, "Block Update" },
+        { 0x07, "Sound Effect" },       { 0x08, "Particle Effect" },
+        { 0x09, "World State" },        { 0x0A, "Time Update" },
+        { 0x10, "Login Success" },      { 0x11, "Login Failure" },
+        { 0x12, "Keep Alive" },         { 0x20, "Item Spawn (world)" },
+        { 0x21, "Item Despawn" },       { 0x22, "Inventory Slot Update" },
+        { 0x23, "Health Update" },      { 0x24, "XP Update" },
+        { 0x30, "Transaction Ack" },    { 0x31, "Transaction Denied" },
     };
+
+    // ── Full structural analysis ──────────────────────────────────────────
 
     public static AnalysisResult Analyse(CapturedPacket pkt)
     {
@@ -91,7 +62,6 @@ public static class PacketAnalyser
         result.PacketId = data[0];
         bool cs = pkt.Direction == PacketDirection.ClientToServer;
 
-        // ── Packet ID lookup ──────────────────────────────────────────────
         var lookup = cs ? KnownCsIds : KnownScIds;
         if (lookup.TryGetValue(data[0], out string? idName))
         {
@@ -104,12 +74,10 @@ public static class PacketAnalyser
             result.ActionHint = PacketActionHint.Unknown;
         }
 
-        // ── Structural analysis ───────────────────────────────────────────
         result.Fields.Add(new PacketField("Packet ID", $"0x{data[0]:X2}", 0, 1, FieldType.Id));
 
         if (data.Length >= 3)
         {
-            // Bytes 1-2: often a length or sequence number
             ushort val16 = BitConverter.ToUInt16(data, 1);
             if (val16 == data.Length - 3)
                 result.Fields.Add(new PacketField("Length (guessed)", val16.ToString(), 1, 2, FieldType.Length));
@@ -117,24 +85,19 @@ public static class PacketAnalyser
                 result.Fields.Add(new PacketField("Seq / Type (guessed)", $"0x{val16:X4}", 1, 2, FieldType.Unknown));
         }
 
-        // ── Int32 scan — look for values that look like item IDs / entity IDs
-        for (int i = 1; i + 4 <= data.Length; i += 1)
+        for (int i = 1; i + 4 <= data.Length; i++)
         {
             int v = BitConverter.ToInt32(data, i);
             if (v > 0 && v < 10000)
             {
-                string fieldName = GuessInt32FieldName(v, i, data);
-                result.Fields.Add(new PacketField(fieldName, v.ToString(), i, 4, FieldType.Int32));
-
-                // Special tracking for item-like values
+                string fn = GuessInt32FieldName(v, i, data);
+                result.Fields.Add(new PacketField(fn, v.ToString(), i, 4, FieldType.Int32));
                 if (v >= 100 && v <= 9999 && i <= 8)
-                    result.Guesses.Add(new FieldGuess(fieldName, v, i, FieldConfidence.Medium));
+                    result.Guesses.Add(new FieldGuess(fn, v, i, FieldConfidence.Medium));
             }
         }
 
-        // ── String scan — look for readable ASCII sequences ───────────────
-        var strings = FindStrings(data, 3);
-        foreach (var (offset, str) in strings)
+        foreach (var (offset, str) in FindStrings(data, 3))
         {
             result.Fields.Add(new PacketField($"String @ {offset}", $"\"{str}\"", offset, str.Length, FieldType.String));
             if (IsLikelyCommand(str))
@@ -146,7 +109,6 @@ public static class PacketAnalyser
                 result.Guesses.Add(new FieldGuess("Player Name", 0, offset, FieldConfidence.Medium, str));
         }
 
-        // ── Float scan — coordinates, angles ─────────────────────────────
         int floatCount = 0;
         for (int i = 1; i + 4 <= data.Length && floatCount < 6; i += 4)
         {
@@ -159,11 +121,304 @@ public static class PacketAnalyser
             }
         }
 
-        // ── Summary ───────────────────────────────────────────────────────
-        string dir = cs ? "C→S" : "S→C";
-        result.Summary = $"[{dir}] 0x{data[0]:X2} · {result.IdGuess} · {data.Length}b";
-
+        result.Summary = $"[{(cs ? "C\u2192S" : "S\u2192C")}] 0x{data[0]:X2} \u00b7 {result.IdGuess} \u00b7 {data.Length}b";
         return result;
+    }
+
+    // ── Schema Discovery ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Scan every 4-byte window in <paramref name="data"/> and score each
+    /// uint32 value as a potential identifier (Item ID, Entity ID, etc.).
+    ///
+    /// Scoring factors:
+    ///   · Value range matching known ID bands (item 100–9999, entity 1000–999999)
+    ///   · Byte offset proximity to packet start
+    ///   · Adjacent byte context (stack count / slot index neighbours)
+    ///   · Recurrence across packets (applied by AggregateAcrossPackets)
+    /// </summary>
+    public static List<DiscoveredId> ScanUint32Identifiers(byte[] data)
+    {
+        var candidates = new Dictionary<uint, DiscoveredId>();
+        if (data.Length < 4) return new List<DiscoveredId>();
+
+        for (int i = 0; i + 4 <= data.Length; i++)
+        {
+            uint v = BitConverter.ToUInt32(data, i);
+
+            if (v == 0 || v == 0xFFFFFFFF || v == 0xDEADBEEF) continue;
+            if (v == (uint)data.Length || v == (uint)(data.Length - 1)) continue;
+
+            int             score   = 0;
+            string          typeTag = "Unknown";
+            FieldConfidence conf    = FieldConfidence.Low;
+
+            if (v >= 100 && v <= 9_999)
+            {
+                score  += 60;
+                typeTag = "Item ID";
+                conf    = FieldConfidence.Medium;
+                // Bonus: followed by plausible stack count byte
+                if (i + 4 < data.Length && data[i + 4] >= 1 && data[i + 4] <= 255)
+                    score += 15;
+                // Bonus: preceded by plausible slot index byte
+                if (i >= 1 && data[i - 1] <= 64)
+                    score += 10;
+                // Bonus: early in packet
+                if (i <= 4)      { score += 20; conf = FieldConfidence.High; }
+                else if (i <= 8)   score += 10;
+            }
+            else if (v >= 1_000 && v <= 999_999)
+            {
+                score  += 50;
+                typeTag = "Entity/Player ID";
+                conf    = FieldConfidence.Medium;
+                if (i <= 6) { score += 15; conf = FieldConfidence.High; }
+            }
+            else if (v >= 1 && v <= 99)
+            {
+                score  += 20;
+                typeTag = v <= 64 ? "Slot/Count" : "Small Int";
+                conf    = FieldConfidence.Low;
+            }
+            else if (v >= 1_000_000 && v <= 0x7FFF_FFFF)
+            {
+                score  += 25;
+                typeTag = "Large ID / Token";
+                conf    = FieldConfidence.Low;
+            }
+            else continue;
+
+            if (score < 20) continue;
+
+            if (candidates.TryGetValue(v, out var existing))
+            {
+                if (score > existing.Score)
+                {
+                    existing.Score      = score;
+                    existing.Offset     = i;
+                    existing.Confidence = conf;
+                    existing.TypeTag    = typeTag;
+                }
+                existing.OccurrenceCount++;
+            }
+            else
+            {
+                candidates[v] = new DiscoveredId
+                {
+                    Value = v, Offset = i, Score = score,
+                    TypeTag = typeTag, Confidence = conf, OccurrenceCount = 1,
+                };
+            }
+        }
+
+        return candidates.Values
+            .OrderByDescending(c => c.Score)
+            .ThenBy(c => c.Offset)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Aggregate ScanUint32Identifiers results across many packets.
+    /// IDs that appear in multiple packets receive a frequency bonus so
+    /// stable item/entity IDs rise above ephemeral noise values.
+    /// </summary>
+    public static List<DiscoveredId> AggregateAcrossPackets(
+        IEnumerable<CapturedPacket> packets, int maxPackets = 200)
+    {
+        var agg  = new Dictionary<uint, DiscoveredId>();
+        int seen = 0;
+
+        foreach (var pkt in packets)
+        {
+            if (seen++ >= maxPackets) break;
+            foreach (var id in ScanUint32Identifiers(pkt.RawBytes))
+            {
+                if (agg.TryGetValue(id.Value, out var ex))
+                {
+                    ex.OccurrenceCount++;
+                    ex.Score = Math.Max(ex.Score, id.Score) + ex.OccurrenceCount * 5;
+                    if (id.Confidence > ex.Confidence) ex.Confidence = id.Confidence;
+                }
+                else
+                {
+                    agg[id.Value] = new DiscoveredId
+                    {
+                        Value = id.Value, Offset = id.Offset, Score = id.Score,
+                        TypeTag = id.TypeTag, Confidence = id.Confidence, OccurrenceCount = 1,
+                    };
+                }
+            }
+        }
+
+        return agg.Values
+            .OrderByDescending(c => c.OccurrenceCount)
+            .ThenByDescending(c => c.Score)
+            .ToList();
+    }
+
+    // ── Decompression Layer ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Auto-detects and decompresses a packet payload.
+    /// Supported formats (detected by magic bytes):
+    ///   · Zlib   — 78 01 / 78 9C / 78 DA / 78 5E
+    ///   · Gzip   — 1F 8B
+    ///   · LZ4 frame — 04 22 4D 18
+    ///   · Raw deflate — fallback attempt when no magic matches
+    ///
+    /// Returns the decompressed bytes on success, or null if the payload
+    /// is not recognised as compressed or decompression fails.
+    /// <paramref name="method"/> is set to the detected format name.
+    /// </summary>
+    public static byte[]? TryDecompress(byte[] data, out string method)
+    {
+        method = "none";
+        if (data.Length < 4) return null;
+
+        // ── Gzip (1F 8B) ──────────────────────────────────────────────────
+        if (data[0] == 0x1F && data[1] == 0x8B)
+        {
+            method = "gzip";
+            try
+            {
+                using var ms  = new MemoryStream(data);
+                using var gz  = new GZipStream(ms, CompressionMode.Decompress);
+                using var out_ = new MemoryStream();
+                gz.CopyTo(out_);
+                return out_.ToArray();
+            }
+            catch { return null; }
+        }
+
+        // ── Zlib (78 xx) ──────────────────────────────────────────────────
+        if (data[0] == 0x78 &&
+            (data[1] == 0x01 || data[1] == 0x9C ||
+             data[1] == 0xDA || data[1] == 0x5E))
+        {
+            method = "zlib";
+            try
+            {
+                // Skip 2-byte zlib header before DeflateStream
+                using var ms   = new MemoryStream(data, 2, data.Length - 2);
+                using var df   = new DeflateStream(ms, CompressionMode.Decompress);
+                using var out_ = new MemoryStream();
+                df.CopyTo(out_);
+                return out_.ToArray();
+            }
+            catch { return null; }
+        }
+
+        // ── LZ4 frame magic (04 22 4D 18) ────────────────────────────────
+        if (data[0] == 0x04 && data[1] == 0x22 &&
+            data[2] == 0x4D && data[3] == 0x18)
+        {
+            method = "lz4";
+            // Pure-managed LZ4 block decompressor (no native dependency).
+            // Reads the LZ4 frame format: FLG, BD, [content size], then blocks.
+            try { return DecompressLz4Frame(data); }
+            catch { return null; }
+        }
+
+        // ── Raw deflate fallback ──────────────────────────────────────────
+        method = "deflate(try)";
+        try
+        {
+            using var ms   = new MemoryStream(data);
+            using var df   = new DeflateStream(ms, CompressionMode.Decompress);
+            using var out_ = new MemoryStream();
+            df.CopyTo(out_);
+            var result = out_.ToArray();
+            if (result.Length > 0) { method = "deflate"; return result; }
+        }
+        catch { }
+
+        method = "none";
+        return null;
+    }
+
+    /// <summary>
+    /// Minimal managed LZ4 frame decompressor.
+    /// Handles the common subset: FLG byte, optional content-size field,
+    /// and sequential data blocks. Does not handle block independence or
+    /// partial block checksums — sufficient for typical game protocol payloads.
+    /// </summary>
+    private static byte[] DecompressLz4Frame(byte[] src)
+    {
+        int pos = 4; // skip magic
+        byte flg = src[pos++];
+        byte bd  = src[pos++];
+
+        bool hasContentSize = (flg & 0x08) != 0;
+        bool hasBlockChecksum = (flg & 0x10) != 0;
+
+        if (hasContentSize) pos += 8; // skip 8-byte content size field
+        pos++; // skip header checksum
+
+        var output = new MemoryStream();
+
+        while (pos + 4 <= src.Length)
+        {
+            uint blockSize = BitConverter.ToUInt32(src, pos); pos += 4;
+            if (blockSize == 0) break; // end mark
+
+            bool isUncompressed = (blockSize & 0x80000000u) != 0;
+            int  dataSize       = (int)(blockSize & 0x7FFFFFFF);
+
+            if (pos + dataSize > src.Length) break;
+
+            if (isUncompressed)
+            {
+                output.Write(src, pos, dataSize);
+            }
+            else
+            {
+                // LZ4 block decompression
+                byte[] block = DecompressLz4Block(src, pos, dataSize);
+                output.Write(block, 0, block.Length);
+            }
+
+            pos += dataSize;
+            if (hasBlockChecksum) pos += 4;
+        }
+
+        return output.ToArray();
+    }
+
+    private static byte[] DecompressLz4Block(byte[] src, int srcOff, int srcLen)
+    {
+        var dst = new List<byte>(srcLen * 4);
+        int i   = srcOff;
+        int end = srcOff + srcLen;
+
+        while (i < end)
+        {
+            byte token    = src[i++];
+            int  litLen   = (token >> 4) & 0xF;
+            int  matchLen = token & 0xF;
+
+            // Extended literal length
+            if (litLen == 15)
+            { byte x; do { x = src[i++]; litLen += x; } while (x == 255); }
+
+            // Literals
+            for (int k = 0; k < litLen && i < end; k++) dst.Add(src[i++]);
+            if (i >= end) break;
+
+            // Match offset (little-endian 16-bit)
+            int offset = src[i] | (src[i + 1] << 8); i += 2;
+
+            // Extended match length
+            if (matchLen == 15)
+            { byte x; do { x = src[i++]; matchLen += x; } while (x == 255 && i < end); }
+            matchLen += 4; // minimum match length is 4
+
+            int matchStart = dst.Count - offset;
+            for (int k = 0; k < matchLen; k++)
+                dst.Add(dst[matchStart + (k % offset)]);
+        }
+
+        return dst.ToArray();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────
@@ -207,56 +462,43 @@ public static class PacketAnalyser
                 int start = i;
                 var sb = new StringBuilder();
                 while (i < data.Length && data[i] >= 32 && data[i] < 127)
-                {
-                    sb.Append((char)data[i]);
-                    i++;
-                }
-                if (sb.Length >= minLen)
-                    results.Add((start, sb.ToString()));
+                { sb.Append((char)data[i]); i++; }
+                if (sb.Length >= minLen) results.Add((start, sb.ToString()));
             }
             else i++;
         }
         return results;
     }
 
-    private static bool IsLikelyCommand(string s) =>
-        s.StartsWith("/") && s.Length > 1;
-
-    private static bool IsLikelyPlayerName(string s) =>
-        s.Length >= 3 && s.Length <= 16 &&
-        s.All(c => char.IsLetterOrDigit(c) || c == '_');
-
-    private static bool IsReasonableCoord(float f) =>
-        !float.IsNaN(f) && !float.IsInfinity(f) &&
-        f >= -100000f && f <= 100000f &&
-        MathF.Abs(f) > 0.001f;
+    private static bool IsLikelyCommand(string s)    => s.StartsWith("/") && s.Length > 1;
+    private static bool IsLikelyPlayerName(string s) => s.Length is >= 3 and <= 16
+                                                      && s.All(c => char.IsLetterOrDigit(c) || c == '_');
+    private static bool IsReasonableCoord(float f)   => !float.IsNaN(f) && !float.IsInfinity(f)
+                                                      && f >= -100_000f && f <= 100_000f
+                                                      && MathF.Abs(f) > 0.001f;
 }
 
 // ── Result types ──────────────────────────────────────────────────────────────
 
 public class AnalysisResult
 {
-    public int                 PacketId   { get; set; }
-    public string              IdGuess    { get; set; } = "";
-    public string              Summary    { get; set; } = "";
-    public PacketActionHint    ActionHint { get; set; } = PacketActionHint.Unknown;
-    public List<PacketField>   Fields     { get; set; } = new();
-    public List<FieldGuess>    Guesses    { get; set; } = new();
+    public int               PacketId   { get; set; }
+    public string            IdGuess    { get; set; } = "";
+    public string            Summary    { get; set; } = "";
+    public PacketActionHint  ActionHint { get; set; } = PacketActionHint.Unknown;
+    public List<PacketField> Fields     { get; set; } = new();
+    public List<FieldGuess>  Guesses    { get; set; } = new();
 }
 
 public class PacketField
 {
-    public string    Name      { get; }
-    public string    Value     { get; }
-    public int       Offset    { get; }
-    public int       Length    { get; }
-    public FieldType Type      { get; }
-
+    public string    Name   { get; }
+    public string    Value  { get; }
+    public int       Offset { get; }
+    public int       Length { get; }
+    public FieldType Type   { get; }
     public PacketField(string name, string value, int offset, int length, FieldType type)
-    {
-        Name = name; Value = value; Offset = offset;
-        Length = length; Type = type;
-    }
+    { Name = name; Value = value; Offset = offset; Length = length; Type = type; }
 }
 
 public class FieldGuess
@@ -266,16 +508,33 @@ public class FieldGuess
     public int             Offset     { get; }
     public FieldConfidence Confidence { get; }
     public string?         StrValue   { get; }
-
     public FieldGuess(string name, int intValue, int offset,
                       FieldConfidence confidence, string? strValue = null)
-    {
-        Name = name; IntValue = intValue; Offset = offset;
-        Confidence = confidence; StrValue = strValue;
-    }
+    { Name = name; IntValue = intValue; Offset = offset; Confidence = confidence; StrValue = strValue; }
 }
 
-public enum FieldType    { Id, Length, Int32, Float, String, Unknown }
+/// <summary>
+/// A uint32 candidate produced by ScanUint32Identifiers / AggregateAcrossPackets.
+/// Properties are mutable so OccurrenceCount and Score can be updated during aggregation.
+/// </summary>
+public class DiscoveredId
+{
+    public uint            Value           { get; set; }
+    public int             Offset          { get; set; }
+    public int             Score           { get; set; }
+    public string          TypeTag         { get; set; } = "";
+    public FieldConfidence Confidence      { get; set; }
+    public int             OccurrenceCount { get; set; }
+
+    public string ConfidenceLabel => Confidence switch
+    {
+        FieldConfidence.High   => "HIGH",
+        FieldConfidence.Medium => "MED",
+        _                      => "LOW",
+    };
+}
+
+public enum FieldType       { Id, Length, Int32, Float, String, Unknown }
 public enum FieldConfidence { Low, Medium, High }
 public enum PacketActionHint
 {

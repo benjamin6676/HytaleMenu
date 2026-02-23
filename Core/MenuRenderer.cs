@@ -24,13 +24,15 @@ public class MenuRenderer
     private readonly ResponseAnalyserTab  _responseAnalyserTab;
     private readonly LogTab               _logTab;
     private readonly MemoryTab            _memoryTab;
+    private readonly VisualsTab           _visualsTab;
 
     // Which sidebar section is active (0-based)
     private int _selectedSection = 0;
 
     private static readonly string[] SectionIcons = {
-        "⌂", "⚡", "◈", "◎", "▲", "⊙", "⊗", "☰", "≋", "◫", "≡", "⬡"
+        "⌂", "⚡", "◈", "◎", "▲", "⊙", "⊗", "☰", "≋", "◫", "≡", "⬡", "👁"
     };
+
 
     private static readonly string[] SectionNames = {
         "Dashboard",
@@ -44,7 +46,8 @@ public class MenuRenderer
         "Packet\nBook",
         "Connection",
         "Log",
-        "Memory\nReader"
+        "Memory\nReader",
+        "Visuals\n/ ESP"
     };
 
     private static readonly string[] SectionLabels = {
@@ -59,7 +62,8 @@ public class MenuRenderer
         "Packet Book",
         "Connection",
         "Log",
-        "Memory Reader"
+        "Memory Reader",
+        "Visuals / ESP"
     };
 
     // ── Palette — one place to change every color in the app ──────────────
@@ -94,21 +98,24 @@ public class MenuRenderer
         _captureTab = new CaptureTab(_log, _pktLog, _config);
 
         // Wire up packet feeds — stats + tracker both observe every proxied packet
-        _captureTab.UdpProxy.OnPacket += _stats.OnPacket;
-        _captureTab.UdpProxy.OnPacket += _tracker.Feed;
+        _captureTab.UdpProxy.OnPacket   += _stats.OnPacket;
+        _captureTab.UdpProxy.OnPacket   += _tracker.Feed;
+        _captureTab.Capture.OnPacket    += _tracker.Feed;
+        _captureTab.Capture.OnPacket    += _stats.OnPacket;
 
         _dashboardTab        = new DashboardTab(_log, _config, _stats);
         _packetTab           = new PacketTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config);
         _dupingTab           = new DupingTab(_log, _captureTab.UdpProxy, _captureTab.Capture, _store, _config);
         _connectionTab       = new ConnectionTab(_log, _config);
-        _privilegeTab        = new PrivilegeTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config);
+        _privilegeTab        = new PrivilegeTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config, _store);
         _itemInspectorTab    = new ItemInspectorTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _store, _config);
         _packetBookTab       = new PacketBookTab(_log, _store, _captureTab.UdpProxy, _captureTab.Capture, _config);
         _diffAnalysisTab     = new DiffAnalysisTab(_log, _store, _captureTab.Capture);
         _responseAnalyserTab = new ResponseAnalyserTab(_log, _tracker, _captureTab.Capture,
                                    _captureTab.UdpProxy, _store, _config);
         _logTab              = new LogTab(_log, _pktLog);
-        _memoryTab           = new MemoryTab(_log);
+        _memoryTab           = new MemoryTab(_log, _store);
+        _visualsTab          = new VisualsTab(_log, _config);
     }
 
     public void Render()
@@ -336,6 +343,7 @@ public class MenuRenderer
             case 9:  _connectionTab.Render();       break;
             case 10: _logTab.Render();              break;
             case 11: _memoryTab.Render();           break;
+            case 12: _visualsTab.Render();          break;
         }
     }
 
