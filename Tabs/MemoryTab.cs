@@ -59,6 +59,8 @@ public class MemoryTab : ITab
     private List<ProcessEntry> _processes     = new();
     private string             _procFilter    = "";
     private bool               _refreshing    = false;
+    // synchronization for background tasks updating UI-visible state
+    private readonly object    _sync          = new();
 
     // ── Read ──────────────────────────────────────────────────────────────
     private string _readAddrHex  = "0x0000000000000000";
@@ -302,6 +304,25 @@ public class MemoryTab : ITab
                 else
                     _log.Error($"[Memory] Attach failed: {err}");
             });
+        });
+    }
+
+    private void RefreshProcessList()
+    {
+        _refreshing = true;
+        Task.Run(() =>
+        {
+            try
+            {
+                var procs = _reader.GetProcesses();
+                lock (_sync)
+                {
+                    _processes = procs;
+                }
+                _log.Info($"[Memory] Process list refreshed — {procs.Count} processes.");
+            }
+            catch (Exception ex) { _log.Error($"[Memory] Refresh failed: {ex.Message}"); }
+            finally { _refreshing = false; }
         });
     }
 
@@ -1182,6 +1203,7 @@ public class MemoryTab : ITab
             _ppResult = $"Error: {ex.Message}";
         }
     }
+
     // ══════════════════════════════════════════════════════════════════════
     // SUB-TAB 8: STRING-TO-POINTER SCANNER
     // ══════════════════════════════════════════════════════════════════════
@@ -1771,149 +1793,21 @@ public class MemoryTab : ITab
         _log.Info($"[CT] Values refreshed for {_ctEntries.Count(e => e.Enabled)} entries.");
     }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // SUB-TAB 13: LIVE MEMORY CORRELATOR
-    // ══════════════════════════════════════════════════════════════════════
-
-    private string   _corrWatchAddr  = "";
-    private string   _corrWatchLabel = "";
-    private WatchSize _corrWatchSize = WatchSize.Int32;
-    private int      _corrPollMs    = 150;
-    private int      _corrWindowMs  = 800;
-
     private void RenderCorrelator(float w)
     {
-        float half = (w - 12) * 0.5f;
-
-        UiHelper.SectionBox("LIVE MEMORY CORRELATOR", w, 80, () =>
+        UiHelper.SectionBox("CORRELATOR", w, 100, () =>
         {
-            UiHelper.MutedLabel("Monitors PacketStore for new entries and cross-references memory value");
-            UiHelper.MutedLabel("changes in the target process to find dynamic offsets for player attributes.");
-            ImGui.Spacing();
-            ImGui.SetNextItemWidth(90); ImGui.InputInt("Poll ms##corrpl", ref _corrPollMs);
-            _corrPollMs = Math.Clamp(_corrPollMs, 50, 5000);
-            if (_correlator != null) _correlator.PollIntervalMs = _corrPollMs;
-            ImGui.SameLine(0, 8);
-            ImGui.SetNextItemWidth(90); ImGui.InputInt("Window ms##corrwm", ref _corrWindowMs);
-            _corrWindowMs = Math.Clamp(_corrWindowMs, 50, 5000);
-            if (_correlator != null) _correlator.WindowMs = _corrWindowMs;
-        });
-
-        // Watch address adder
-        UiHelper.SectionBox("WATCH LIST", half, 120, () =>
-        {
-            ImGui.SetNextItemWidth(-1);
-            ImGui.InputText("Address##corrwa", ref _corrWatchAddr, 32);
-            ImGui.SetNextItemWidth(-1);
-            ImGui.InputText("Label##corrwl", ref _corrWatchLabel, 64);
-
-            var sizeNames = Enum.GetNames<WatchSize>();
-            int sizeIdx   = (int)_corrWatchSize;
-            ImGui.SetNextItemWidth(100);
-            if (ImGui.BeginCombo("Size##corrws", sizeNames[sizeIdx]))
+            UiHelper.MutedLabel("Live memory correlator is not available or not implemented.");
+            if (_correlator == null)
             {
-                for (int i = 0; i < sizeNames.Length; i++)
-                    if (ImGui.Selectable(sizeNames[i], i == sizeIdx))
-                        _corrWatchSize = (WatchSize)i;
-                ImGui.EndCombo();
-            }
-            ImGui.SameLine(0, 8);
-            UiHelper.PrimaryButton("Add Watch##corradd", 100, 24, () =>
-            {
-                try
-                {
-                    string clean = _corrWatchAddr.Replace("0x","").Replace("0X","").Trim();
-                    long addr    = Convert.ToInt64(clean, 16);
-                    _correlator?.AddWatch(new IntPtr(addr),
-                        _corrWatchLabel.Length > 0 ? _corrWatchLabel : $"0x{addr:X}",
-                        _corrWatchSize);
-                    _log.Info($"[Corr] Watch added: {_corrWatchLabel} @ 0x{addr:X}");
-                    _corrWatchAddr = _corrWatchLabel = "";
-                }
-                catch (Exception ex) { _log.Error($"[Corr] {ex.Message}"); }
-            });
-
-            ImGui.Spacing();
-            var watches = _correlator?.GetWatches() ?? new();
-            foreach (var ww in watches)
-            {
-                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
-                ImGui.TextUnformatted($"  {ww.Label}  ({ww.Size})  {ww.AddressHex}");
-                ImGui.PopStyleColor();
-                ImGui.SameLine(w * 0.42f);
-                ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBg3);
-                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColDanger);
-                if (ImGui.Button($"✕##cwrem{ww.AddressHex}", new Vector2(22, 18)))
-                    _correlator?.RemoveWatch(ww.Address);
-                ImGui.PopStyleColor(2);
-            }
-        });
-
-        ImGui.SameLine(0, 12);
-
-        // Controls
-        UiHelper.SectionBox("CONTROLS", half, 120, () =>
-        {
-            bool running = _correlator?.IsRunning == true;
-            if (running)
-            {
-                UiHelper.DangerButton("Stop Correlator##corrstop", -1, 28, () =>
-                {
-                    _correlator?.Stop();
-                });
-                ImGui.Spacing();
-                UiHelper.WarnText("● Correlating — perform actions in-game...");
+                UiHelper.MutedLabel("No correlator instance created.");
             }
             else
             {
-                ImGui.BeginDisabled(!_reader.IsAttached);
-                UiHelper.WarnButton("Start Correlator##corrstart", -1, 28, () =>
-                {
-                    _correlator?.Start();
-                });
-                ImGui.EndDisabled();
-                if (!_reader.IsAttached)
-                    UiHelper.MutedLabel("Attach to process first (Attach tab).");
+                UiHelper.MutedLabel("Correlator is present — use the correlator UI from its implementation.");
             }
-
-            ImGui.Spacing();
-            UiHelper.SecondaryButton("Clear Results##corrclear", -1, 24, () =>
-                _correlator?.ClearResults());
         });
-
-        // Results table
-        ImGui.Spacing();
-        var results = _correlator?.GetResults() ?? new();
-        if (results.Count > 0)
-        {
-            float tblH = ImGui.GetContentRegionAvail().Y;
-            ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
-            ImGui.BeginChild("##corrres", new Vector2(w, tblH), ImGuiChildFlags.Border);
-            ImGui.PopStyleColor();
-
-            UiHelper.MutedLabel($"  {"Time",-12} {"Label",-24} {"Before",-14} {"After",-14} {"Δ",-10} Triggered by");
-            ImGui.Separator();
-
-            foreach (var r in results.TakeLast(200).Reverse())
-            {
-                ImGui.PushStyleColor(ImGuiCol.Text,
-                    r.Delta > 0 ? MenuRenderer.ColAccent : MenuRenderer.ColWarn);
-                ImGui.TextUnformatted(
-                    $"  {r.Timestamp:HH:mm:ss}  {r.Label,-24} {r.ValueBefore,-14} {r.ValueAfter,-14}" +
-                    $" {r.DeltaStr,-10} {r.PacketLabel}");
-                ImGui.PopStyleColor();
-            }
-
-            ImGui.EndChild();
-        }
-        else
-        {
-            ImGui.Spacing();
-            UiHelper.MutedLabel("No correlations yet — add watches, start the correlator,");
-            UiHelper.MutedLabel("then save packets to the PacketStore to trigger observations.");
-        }
     }
-
 }
 
 // ── Pointer tree node ─────────────────────────────────────────────────────────
