@@ -12,8 +12,21 @@ public static class ImGuiListClipperCompatibility
     {
         clipper.ItemsCount = itemsCount;
         clipper.ItemsHeight = itemsHeight;
-        clipper.DisplayStart = 0;
-        clipper.DisplayEnd = itemsCount;
+        try
+        {
+            float scrollY = ImGuiNET.ImGui.GetScrollY();
+            float winH = ImGuiNET.ImGui.GetWindowHeight();
+            int start = Math.Max(0, (int)(scrollY / itemsHeight) - 1);
+            int visible = Math.Max(1, (int)(winH / itemsHeight) + 3);
+            int end = Math.Min(itemsCount, start + visible);
+            clipper.DisplayStart = start;
+            clipper.DisplayEnd = end;
+        }
+        catch
+        {
+            clipper.DisplayStart = 0;
+            clipper.DisplayEnd = itemsCount;
+        }
         var id = Interlocked.Increment(ref _nextId2);
         clipper.Ctx = (nint)id;
         _state2[(long)id] = 0;

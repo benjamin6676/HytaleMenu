@@ -107,6 +107,17 @@ public static class PacketAnalyser
             }
             if (IsLikelyPlayerName(str))
                 result.Guesses.Add(new FieldGuess("Player Name", 0, offset, FieldConfidence.Medium, str));
+
+            // Heuristic: some servers or mods use string tokens like "mk_4" or "item_123".
+            // If we detect a token with a numeric suffix, assume that suffix may be the
+            // numeric ItemID and map it for convenience.
+            var parts = str.Split('_');
+            if (parts.Length >= 2 && int.TryParse(parts[^1], out int parsedId))
+            {
+                uint pid = (uint)parsedId;
+                if (!result.Fields.Any(f => f.Name == $"Item ID? ({pid})"))
+                    result.Fields.Add(new PacketField($"Item ID? ({pid})", pid.ToString(), offset, 4, FieldType.Int32));
+            }
         }
 
         int floatCount = 0;

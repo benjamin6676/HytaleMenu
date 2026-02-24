@@ -16,8 +16,26 @@ namespace ImGuiNET
         {
             clipper.ItemsCount = itemsCount;
             clipper.ItemsHeight = itemsHeight;
-            clipper.DisplayStart = 0;
-            clipper.DisplayEnd = itemsCount;
+
+            // Compute visible range based on current scroll and window height so we avoid
+            // rendering all rows when there are many items. This simple calculation
+            // approximates ImGui's ListClipper behavior and helps UI performance.
+            try
+            {
+                float scrollY = ImGui.GetScrollY();
+                float winH = ImGui.GetWindowHeight();
+                int start = Math.Max(0, (int)(scrollY / itemsHeight) - 1);
+                int visible = Math.Max(1, (int)(winH / itemsHeight) + 3);
+                int end = Math.Min(itemsCount, start + visible);
+                clipper.DisplayStart = start;
+                clipper.DisplayEnd = end;
+            }
+            catch
+            {
+                clipper.DisplayStart = 0;
+                clipper.DisplayEnd = itemsCount;
+            }
+
             var id = Interlocked.Increment(ref _nextId);
             clipper.Ctx = (nint)id;
             _state[(long)id] = 0;

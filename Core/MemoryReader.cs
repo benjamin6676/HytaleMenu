@@ -218,14 +218,131 @@ public class MemoryReader : IDisposable
 
     // ── Pattern scanner ───────────────────────────────────────────────────
 
-    // Minimal LocalPlayer scanner stub. Real implementation should scan readable
-    // regions for player-name strings and read nearby int32 values to guess entity IDs.
+    // Scans readable memory regions for occurrences of `playerName` (if provided)
+    // or for plausible player-name-like ASCII strings, then looks in the nearby
+    // bytes for a 4-byte integer that falls within a plausible EntityID range.
+    // Returns a list of LocalPlayerCandidate with address/context information.
     public List<LocalPlayerCandidate> ScanLocalPlayerEntityId(string? playerName, IProgress<int>? progress)
     {
-        // Return empty list for now — placeholder to satisfy UI.
+        var results = new List<LocalPlayerCandidate>();
+        if (!IsAttached) { progress?.Report(100); return results; }
+
+        var regions = GetReadableRegions(64);
+        long totalBytes = regions.Sum(r => r.Size);
+        long processed = 0;
+
+        byte[]? nameBytes = null;
+        if (!string.IsNullOrWhiteSpace(playerName))
+            nameBytes = Encoding.UTF8.GetBytes(playerName!);
+
+        foreach (var region in regions)
+        {
+            // read region in manageable chunks (max 4MB)
+            const int Chunk = 4 * 1024 * 1024;
+            long offset = 0;
+            while (offset < region.Size)
+            {
+                int readSize = (int)Math.Min(Chunk, region.Size - offset);
+                var buf = new byte[readSize];
+                if (!ReadBytes(IntPtr.Add(region.BaseAddress, (int)offset), buf))
+                {
+                    offset += readSize;
+                    processed += readSize;
+                    continue;
+                }
+
+                // Search for either the exact name bytes or plausible ASCII name tokens
+                var nameMatches = new List<(int idx, string name)>();
+                if (nameBytes != null)
+                {
+                    for (int i = 0; ; i++)
+                    {
+                        int found = IndexOf(buf, nameBytes, i);
+                        if (found < 0) break;
+                        nameMatches.Add((found, playerName!));
+                        i = found;
+                    }
+                }
+                else
+                {
+                    // detect ASCII tokens: letters/digits/underscore, length 3..32
+                    int i = 0;
+                    while (i < buf.Length)
+                    {
+                        if (IsNameChar(buf[i]))
+                        {
+                            int s = i;
+                            while (i < buf.Length && IsNameChar(buf[i])) i++;
+                            int len = i - s;
+                            if (len >= 3 && len <= 32)
+                            {
+                                string name = Encoding.ASCII.GetString(buf, s, len);
+                                if (!name.All(char.IsDigit))
+                                    nameMatches.Add((s, name));
+                            }
+                        }
+                        else i++;
+                    }
+                }
+
+                // For every name occurrence, scan ±64 bytes for plausible int32 entity id
+                foreach (var (idx, foundName) in nameMatches)
+                {
+                    int winStart = Math.Max(0, idx - 64);
+                    int winEnd   = Math.Min(buf.Length, idx + 64 + 4);
+                    for (int j = winStart; j + 4 <= winEnd; j++)
+                    {
+                        int val = BitConverter.ToInt32(buf, j);
+                        if (val >= 1000 && val <= 4_000_000)
+                        {
+                            var cand = new LocalPlayerCandidate()
+                            {
+                                FoundName = foundName,
+                                NameAddrHex = $"0x{(region.BaseAddress.ToInt64() + offset + idx):X16}",
+                                EntityIdAddrHex = $"0x{(region.BaseAddress.ToInt64() + offset + j):X16}",
+                                Offset = j - idx,
+                                EntityId = val,
+                                Score = nameBytes != null ? 100 : 60,
+                                NameAddress = IntPtr.Add(region.BaseAddress, (int)(offset + idx)),
+                                EntityIdAddress = IntPtr.Add(region.BaseAddress, (int)(offset + j)),
+                            };
+                            // dedupe by entity address
+                            if (!results.Any(r => r.EntityIdAddress == cand.EntityIdAddress))
+                                results.Add(cand);
+                        }
+                    }
+                }
+
+                offset += readSize;
+                processed += readSize;
+                if (totalBytes > 0)
+                    progress?.Report((int)(processed * 100 / totalBytes));
+            }
+        }
+
         progress?.Report(100);
-        return new List<LocalPlayerCandidate>();
+        return results;
     }
+
+    private static int IndexOf(byte[] haystack, byte[] needle, int start)
+    {
+        for (int i = start; i + needle.Length <= haystack.Length; i++)
+        {
+            bool ok = true;
+            for (int j = 0; j < needle.Length; j++)
+            {
+                if (haystack[i + j] != needle[j]) { ok = false; break; }
+            }
+            if (ok) return i;
+        }
+        return -1;
+    }
+
+    private static bool IsNameChar(byte b) =>
+        (b >= (byte)'0' && b <= (byte)'9') ||
+        (b >= (byte)'A' && b <= (byte)'Z') ||
+        (b >= (byte)'a' && b <= (byte)'z') ||
+        b == (byte)'_';
 
 
     /// <summary>
