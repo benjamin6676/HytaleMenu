@@ -53,13 +53,14 @@ public class ItemInspectorTab : ITab
     private List<ItemScanResult> _scanResults  = new();
     private int                  _lastPktCount = 0;
     private DateTime             _lastScanTime = DateTime.MinValue;
-    private const double         ScanMs        = 800;
+    private const double ScanMs  = 3000;   // was 800 — run item scan every 3s not every 0.8s
 
     // Schema discovery cache
     private List<DiscoveredId>   _discovered      = new();
     private int                  _discPktCount    = 0;
     private DateTime             _discScanTime    = DateTime.MinValue;
-    private const double         DiscMs           = 1200;
+    private const double         DiscMs           = 5000;  // was 1200 — discovery scan every 5s
+    private bool                 _discScanRunning = false; // prevent overlapping background scans
     private bool                 _discShowAll     = false;
     private int                  _discSelected    = -1;
 
@@ -77,6 +78,13 @@ public class ItemInspectorTab : ITab
     private int  _sdEntitySelected = -1;
     private bool _sdShowDynamic    = true;
     private bool _sdShowStatic     = true;
+
+    // Keyword filter
+    private string _keywordFilter     = "";
+    private bool   _keywordCaseSens   = false;
+
+    // Force-scan progress display
+    private string _forceScanMsg = "";
 
     public DetectedItem? PinnedItem => _pinnedItem;
 
@@ -105,30 +113,44 @@ public class ItemInspectorTab : ITab
         ImGui.Spacing(); ImGui.Spacing();
 
         // Throttled auto-scan
+        // Cache packet list ONCE per frame — GetPackets() copies 348k items each call
         var packets = _capture.GetPackets();
 
         if (_autoScan && packets.Count != _lastPktCount &&
             (DateTime.Now - _lastScanTime).TotalMilliseconds > ScanMs)
         {
-            _scanResults  = ScanPackets(packets);
             _lastPktCount = packets.Count;
             _lastScanTime = DateTime.Now;
+            // Run on background thread — don't block UI
+            var snap = packets;
+            Task.Run(() =>
+            {
+                var r = ScanPackets(snap);
+                _scanResults = r;
+            });
         }
 
-        if (_autoScan && packets.Count != _discPktCount &&
+        if (_autoScan && packets.Count != _discPktCount && !_discScanRunning &&
             (DateTime.Now - _discScanTime).TotalMilliseconds > DiscMs)
         {
-            _discovered   = PacketAnalyser.AggregateAcrossPackets(packets);
-            BoostConfidenceByTimeWindow(packets);
-            _discPktCount = packets.Count;
-            _discScanTime = DateTime.Now;
-            _filterDirty  = true;
+            _discPktCount    = packets.Count;
+            _discScanTime    = DateTime.Now;
+            _discScanRunning = true;
+            var snap = packets;
+            Task.Run(() =>
+            {
+                var d = PacketAnalyser.AggregateAcrossPackets(snap, 300);
+                BoostConfidenceByTimeWindow(snap);
+                _discovered      = d;
+                _filterDirty     = true;
+                _discScanRunning = false;
+            });
         }
 
         // ── Top control row ───────────────────────────────────────────────
         float half = (mainW - 12) * 0.5f;
 
-        UiHelper.SectionBox("SCAN CONTROLS", half, 90, () =>
+        UiHelper.SectionBox("SCAN CONTROLS", half, 98, () =>
         {
             ImGui.Checkbox("Auto-scan##asc", ref _autoScan);
             ImGui.Spacing();
@@ -488,14 +510,35 @@ public class ItemInspectorTab : ITab
             .ToList();
 
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
-        ImGui.BeginChild("##cithdr", new Vector2(w, 44), ImGuiChildFlags.Border);
+        ImGui.BeginChild("##cithdr", new Vector2(w, 62), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
         ImGui.SetCursorPos(new Vector2(8, 4));
         ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccentMid);
-        ImGui.TextUnformatted("CONFIRMED ITEMS  —  Sequence Correlation: uint32 immediately followed by byte 1–64");
+        ImGui.TextUnformatted("CONFIRMED ITEMS  —  Sequence Correlation: uint32 followed by byte 1–64  (LE + BE + VarInt)");
         ImGui.PopStyleColor();
         ImGui.SetCursorPosX(8);
         UiHelper.MutedLabel($"{items.Count} confirmed items  ·  Items seen ≥3 times are auto-pinned to Book");
+        ImGui.SetCursorPosX(8);
+
+        // Force scan button
+        if (_smart.ForceScanRunning)
+        {
+            UiHelper.WarnText($"● Scanning... {_smart.ForceScanProgress}%  {_smart.ForceScanStatus}");
+        }
+        else
+        {
+            UiHelper.WarnButton("Scan History for Sequence##fsseq", 200, 22, () =>
+            {
+                _smart.ForceSequenceScan(_capture.GetPackets());
+                _log.Info("[Inspector] Force sequence scan started.");
+            });
+            ImGui.SameLine(0, 8);
+            UiHelper.SecondaryButton("Arm Loot-Drop Listener##loot", 170, 22, () =>
+            {
+                _smart.ArmLootDropListener();
+                _log.Info("[Inspector] Loot-drop listener armed — drop an item now.");
+            });
+        }
         ImGui.EndChild();
 
         ImGui.Spacing();
@@ -526,22 +569,35 @@ public class ItemInspectorTab : ITab
                         ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColAccentDim));
 
                 string nameStr = string.IsNullOrEmpty(it.NameHint) ? "—" : it.NameHint;
+                string badge   = "[I]";  // Confirmed Items are always items
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.95f, 0.75f, 0.10f, 1f));
+                ImGui.TextUnformatted(badge);
+                ImGui.PopStyleColor();
+                ImGui.SameLine(0, 4);
                 ImGui.PushStyleColor(ImGuiCol.Text,
                     hi ? MenuRenderer.ColAccent : MenuRenderer.ColText);
                 ImGui.Selectable(
                     $"  {it.ItemId,-10} {it.StackSize,-6} {it.SlotIndex,-6}" +
                     $"{nameStr,-24} {it.PacketCount,-9} {it.FirstSeen:HH:mm:ss}##ci{ci}",
-                    false, ImGuiSelectableFlags.None, new Vector2(w - 200, RowH));
+                    false, ImGuiSelectableFlags.None, new Vector2(w - 280, RowH));
                 ImGui.PopStyleColor();
 
+                if (ImGui.IsItemHovered()) RenderIdTooltip((uint)it.ItemId);
+
                 ImGui.SameLine(0, 8);
-                UiHelper.WarnButton($"Set Target##ciset{ci}", 90, 20, () =>
+                UiHelper.WarnButton($"Set Target##ciset{ci}", 80, 20, () =>
                 {
                     _config.SetTargetItemId((int)it.ItemId, "Confirmed Items");
                     _log.Success($"[Inspector] Confirmed item {it.ItemId} → Target.");
                 });
                 ImGui.SameLine(0, 4);
-                UiHelper.SecondaryButton($"Pin##cipin{ci}", 50, 20, () =>
+                UiHelper.SecondaryButton($"→ ESP##ciesp{ci}", 52, 20, () =>
+                {
+                    PushIdToEsp((uint)it.ItemId, it.NameHint, EntityClass.Item);
+                    _log.Info($"[Inspector] Item {it.ItemId} pushed to ESP.");
+                });
+                ImGui.SameLine(0, 4);
+                UiHelper.SecondaryButton($"Pin##cipin{ci}", 44, 20, () =>
                 {
                     _pinnedItem = new DetectedItem
                     {
@@ -573,14 +629,34 @@ public class ItemInspectorTab : ITab
             .ToList();
 
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
-        ImGui.BeginChild("##4Ahdr", new Vector2(w, 44), ImGuiChildFlags.Border);
+        ImGui.BeginChild("##4Ahdr", new Vector2(w, 62), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
         ImGui.SetCursorPos(new Vector2(8, 4));
         ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccentMid);
-        ImGui.TextUnformatted("0x4A DEDICATED PARSER  —  bytes 1–4 extracted as Entity / Player ID");
+        ImGui.TextUnformatted("0x4A DEDICATED PARSER  —  LE + BE endianness, size 7–174 bytes  ·  Proxy Sync: auto");
         ImGui.PopStyleColor();
         ImGui.SetCursorPosX(8);
         UiHelper.MutedLabel($"{entries.Count} entities extracted from 0x4A packets");
+        ImGui.SetCursorPosX(8);
+
+        if (_smart.ForceScanRunning)
+        {
+            UiHelper.WarnText($"● Scanning... {_smart.ForceScanProgress}%  {_smart.ForceScanStatus}");
+        }
+        else
+        {
+            UiHelper.WarnButton("Force Scan 0x4A##fs4a", 160, 22, () =>
+            {
+                _smart.Force0x4AScan(_capture.GetPackets());
+                _log.Info("[Inspector] Force 0x4A scan started.");
+            });
+            ImGui.SameLine(0, 8);
+            UiHelper.WarnButton("Force Scan ALL##fsall", 150, 22, () =>
+            {
+                _smart.ForceScan(_capture.GetPackets());
+                _log.Info("[Inspector] Full force scan started.");
+            });
+        }
         ImGui.EndChild();
 
         ImGui.Spacing();
@@ -596,17 +672,47 @@ public class ItemInspectorTab : ITab
             for (int qi = clip.DisplayStart; qi < clip.DisplayEnd; qi++)
             {
                 var e = entries[qi];
+                bool isLP = _config.HasLocalPlayer && _config.LocalPlayerEntityId == e.EntityId;
+
+                // Classification badge
+                _smart.EntityClassifications.TryGetValue(e.EntityId, out var cls);
+                string badge = isLP ? "[★]"
+                             : cls == EntityClass.Player ? "[P]"
+                             : cls == EntityClass.Mob    ? "[M]"
+                             : cls == EntityClass.Item   ? "[I]" : "[?]";
+                var badgeColor = isLP ? new Vector4(0.18f, 0.65f, 0.95f, 1f)
+                               : cls == EntityClass.Player ? new Vector4(0.18f, 0.95f, 0.45f, 1f)
+                               : cls == EntityClass.Mob    ? new Vector4(0.95f, 0.28f, 0.22f, 1f)
+                               : cls == EntityClass.Item   ? new Vector4(0.95f, 0.75f, 0.10f, 1f)
+                               : MenuRenderer.ColBlue;
+
+                ImGui.PushStyleColor(ImGuiCol.Text, badgeColor);
+                ImGui.TextUnformatted(badge);
+                ImGui.PopStyleColor();
+                ImGui.SameLine(0, 4);
+
+                string nameHint = !string.IsNullOrEmpty(e.NameHint) ? $"  [{e.NameHint}]" : "";
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColBlue);
                 ImGui.Selectable(
-                    $"  {e.EntityId,-14} {e.PacketCount,-9}" +
+                    $"  {e.EntityId,-14}{nameHint,-14} {e.PacketCount,-9}" +
                     $"{e.FirstSeen:HH:mm:ss}    {e.LastSeen:HH:mm:ss}##4a{qi}",
-                    false, ImGuiSelectableFlags.None, new Vector2(w - 108, RowH4));
+                    false, ImGuiSelectableFlags.None, new Vector2(w - 190, RowH4));
                 ImGui.PopStyleColor();
-                ImGui.SameLine(0, 6);
-                UiHelper.WarnButton($"Set Target##4aset{qi}", 90, 20, () =>
+
+                if (ImGui.IsItemHovered()) RenderIdTooltip(e.EntityId);
+
+                ImGui.SameLine(0, 4);
+                UiHelper.WarnButton($"Target##4aset{qi}", 56, 20, () =>
                 {
                     _config.SetTargetItemId((int)e.EntityId, "0x4A Parser");
                     _log.Success($"[Inspector] 0x4A entity {e.EntityId} → Target.");
+                });
+                ImGui.SameLine(0, 4);
+                UiHelper.SecondaryButton($"→ ESP##4aesp{qi}", 52, 20, () =>
+                {
+                    PushIdToEsp(e.EntityId, e.NameHint,
+                        cls == EntityClass.Unknown ? EntityClass.Player : cls);
+                    _log.Info($"[Inspector] Entity {e.EntityId} → ESP.");
                 });
             }
         }
@@ -788,15 +894,43 @@ public class ItemInspectorTab : ITab
                 bool itemLike = d.TypeTag == "Item ID";
                 bool canTgt   = itemLike || d.TypeTag == "Entity/Player ID";
 
-                if (sel || isTarget)
+                // Keyword match highlight
+                bool kwMatch = !string.IsNullOrEmpty(_keywordFilter) && (
+                    d.Value.ToString().Contains(_keywordFilter,
+                        _keywordCaseSens ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase) ||
+                    (!string.IsNullOrEmpty(d.LinkedName) && d.LinkedName.Contains(_keywordFilter,
+                        _keywordCaseSens ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase)));
+
+                if (sel || isTarget || kwMatch)
                 {
                     var sp = ImGui.GetCursorScreenPos();
                     dl.AddRectFilled(sp, sp + new Vector2(w, 22),
                         ImGui.ColorConvertFloat4ToU32(isTarget
-                            ? MenuRenderer.ColWarnDim : MenuRenderer.ColAccentDim));
+                            ? MenuRenderer.ColWarnDim
+                            : kwMatch
+                                ? new Vector4(0.20f, 0.18f, 0.02f, 1f)  // yellow tint for keyword
+                                : MenuRenderer.ColAccentDim));
                 }
 
-                var rowCol = (d.BoostedToHigh || d.Confidence == FieldConfidence.High)
+                // [P]/[I] badge
+                _smart.EntityClassifications.TryGetValue(d.Value, out var dCls);
+                bool isPlayer = d.TypeTag == "Entity/Player ID" || dCls == EntityClass.Player;
+                string typeBadge = dCls == EntityClass.Player ? "[P]"
+                                 : dCls == EntityClass.Mob    ? "[M]"
+                                 : dCls == EntityClass.Item || itemLike ? "[I]" : "   ";
+                var badgeCol = dCls == EntityClass.Player ? new Vector4(0.18f, 0.95f, 0.45f, 1f)
+                             : dCls == EntityClass.Mob    ? new Vector4(0.95f, 0.28f, 0.22f, 1f)
+                             : dCls == EntityClass.Item   ? new Vector4(0.95f, 0.75f, 0.10f, 1f)
+                             : MenuRenderer.ColTextMuted;
+
+                ImGui.PushStyleColor(ImGuiCol.Text, badgeCol);
+                ImGui.TextUnformatted(typeBadge);
+                ImGui.PopStyleColor();
+                ImGui.SameLine(0, 4);
+
+                var rowCol = (kwMatch)
+                           ? new Vector4(0.95f, 0.85f, 0.10f, 1f) // bold yellow for keyword match
+                           : (d.BoostedToHigh || d.Confidence == FieldConfidence.High)
                            ? MenuRenderer.ColAccent
                            : d.Confidence == FieldConfidence.Medium
                            ? MenuRenderer.ColBlue
@@ -805,9 +939,21 @@ public class ItemInspectorTab : ITab
                 ImGui.PushStyleColor(ImGuiCol.Text, rowCol);
                 if (ImGui.Selectable(
                     $"  {d.Value,-12} {d.TypeTag,-20} {d.ConfidenceLabel,-8} ×{d.OccurrenceCount,-5} {d.Score,-7}##dsel{i}",
-                    sel, ImGuiSelectableFlags.None, new Vector2(w - btnW - pinW - 28f, 22)))
+                    sel, ImGuiSelectableFlags.None, new Vector2(w - btnW - pinW - 80f, 22)))
                     _discSelected = i;
                 ImGui.PopStyleColor();
+
+                if (ImGui.IsItemHovered()) RenderIdTooltip(d.Value);
+
+                ImGui.SameLine(0, 4);
+                UiHelper.SecondaryButton($"→ ESP##desp{i}", 48, 20, () =>
+                {
+                    PushIdToEsp(d.Value, d.LinkedName ?? "",
+                        dCls == EntityClass.Unknown
+                            ? (itemLike ? EntityClass.Item : EntityClass.Player)
+                            : dCls);
+                    _log.Info($"[Inspector] {d.Value} → ESP.");
+                });
 
                 ImGui.SameLine(0, 6);
                 ImGui.BeginDisabled(!canTgt);
@@ -1110,18 +1256,130 @@ public class ItemInspectorTab : ITab
     {
         bool proxy = _udpProxy.IsRunning || _capture.IsRunning;
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
-        ImGui.BeginChild("##instsb", new Vector2(w, 30), ImGuiChildFlags.Border);
+        ImGui.BeginChild("##instsb", new Vector2(w, 52), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
         ImGui.SetCursorPos(new Vector2(12, 6));
         ImGui.PushStyleColor(ImGuiCol.Text, proxy ? MenuRenderer.ColAccent : MenuRenderer.ColDanger);
         ImGui.TextUnformatted(proxy ? "● Proxy active" : "● No proxy — start Capture tab first");
         ImGui.PopStyleColor();
         ImGui.SameLine(0, 24);
-        int total = _capture.GetPackets().Count;
-        UiHelper.MutedLabel($"{total} pkts  |  {_scanResults.Count} item  |  {_discovered.Count} IDs  |  " +
+        UiHelper.MutedLabel($"{_lastPktCount} pkts  |  {_scanResults.Count} item  |  {_discovered.Count} IDs  |  " +
                             $"{_smart.ConfirmedItems.Count} confirmed  |  " +
                             $"{_smart.ActiveEntities.Count} entities  |  SmartDetect ●");
+
+        // ── Keyword filter row ────────────────────────────────────────────
+        ImGui.SetCursorPos(new Vector2(12, 30));
+        ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccentMid);
+        ImGui.TextUnformatted("Filter:");
+        ImGui.PopStyleColor();
+        ImGui.SameLine(0, 6);
+        ImGui.SetNextItemWidth(260);
+        if (ImGui.InputText("##kwfilter", ref _keywordFilter, 64))
+            _filterDirty = true;
+        ImGui.SameLine(0, 8);
+        ImGui.Checkbox("Case##kwcs", ref _keywordCaseSens);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Case-sensitive keyword matching");
+        ImGui.SameLine(0, 8);
+        if (ImGui.SmallButton("Clear##kwclr")) { _keywordFilter = ""; _filterDirty = true; }
+        ImGui.SameLine(0, 16);
+        if (!string.IsNullOrEmpty(_keywordFilter))
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.95f, 0.85f, 0.10f, 1f)); // bold yellow
+            ImGui.TextUnformatted($"  ★ Filtering for '{_keywordFilter}'");
+            ImGui.PopStyleColor();
+        }
         ImGui.EndChild();
+    }
+
+    // ── Tooltip: hex preview + associated strings ─────────────────────────
+
+    private void RenderIdTooltip(uint id)
+    {
+        ImGui.BeginTooltip();
+        ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccentMid);
+        ImGui.TextUnformatted($"ID: {id}  (0x{id:X8})");
+        ImGui.PopStyleColor();
+
+        // Name from IdNameMap
+        if (_smart.IdNameMap.TryGetValue(id, out var name))
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccent);
+            ImGui.TextUnformatted($"  Name: {name}");
+            ImGui.PopStyleColor();
+        }
+
+        // Classification
+        if (_smart.EntityClassifications.TryGetValue(id, out var cls))
+        {
+            string clsLabel = cls switch
+            {
+                EntityClass.Player => "PLAYER",
+                EntityClass.Mob    => "MOB",
+                EntityClass.Item   => "ITEM",
+                _                  => "Unknown",
+            };
+            ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
+            ImGui.TextUnformatted($"  Class: {clsLabel}");
+            ImGui.PopStyleColor();
+        }
+
+        // Entity position if tracked
+        if (_smart.ActiveEntities.TryGetValue(id, out var ent))
+        {
+            UiHelper.MutedLabel($"  Pos: ({ent.X:F1}, {ent.Y:F1}, {ent.Z:F1})");
+            UiHelper.MutedLabel($"  Updates: {ent.UpdateCount}  Δmax: {ent.MaxDelta:F2}m");
+        }
+
+        // Hex preview: find last packet containing this ID (limit search to recent 200 packets)
+        var pkts = _capture.GetPackets();
+        int searchFrom = Math.Max(0, pkts.Count - 200);
+        for (int pi = pkts.Count - 1; pi >= searchFrom; pi--)
+        {
+            var data = pkts[pi].RawBytes;
+            for (int bi = 1; bi + 4 <= data.Length; bi++)
+            {
+                if (BitConverter.ToUInt32(data, bi) != id) continue;
+                ImGui.Separator();
+                UiHelper.MutedLabel("  Hex preview (last packet):");
+                int previewStart = Math.Max(0, bi - 4);
+                int previewLen   = Math.Min(24, data.Length - previewStart);
+                string hex = string.Join(" ",
+                    data.Skip(previewStart).Take(previewLen).Select(b => $"{b:X2}"));
+                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColText);
+                ImGui.TextUnformatted($"  {hex}");
+                ImGui.PopStyleColor();
+                goto doneHex;
+            }
+        }
+        doneHex:
+        ImGui.EndTooltip();
+    }
+
+    // ── Push an ID to the ESP overlay ─────────────────────────────────────
+
+    private static void PushIdToEsp(uint id, string nameHint, EntityClass cls)
+    {
+        string label = $"[{cls.ToString()[0]}] {(string.IsNullOrEmpty(nameHint) ? id.ToString() : nameHint)}";
+        var color = cls switch
+        {
+            EntityClass.Player => new System.Numerics.Vector4(0.18f, 0.95f, 0.45f, 0.9f),
+            EntityClass.Mob    => new System.Numerics.Vector4(0.95f, 0.28f, 0.22f, 0.9f),
+            EntityClass.Item   => new System.Numerics.Vector4(0.95f, 0.75f, 0.10f, 0.9f),
+            _                  => new System.Numerics.Vector4(0.28f, 0.72f, 1.00f, 0.9f),
+        };
+
+        lock (Application.EntityPositions)
+        {
+            var existing = Application.EntityPositions.FirstOrDefault(e => e.Label == label);
+            if (existing == null)
+                Application.EntityPositions.Add(new EntityOverlayEntry
+                {
+                    Position = System.Numerics.Vector3.Zero,
+                    Label    = label,
+                    Color    = color,
+                });
+        }
     }
 
     // ── Confidence time-window boost ──────────────────────────────────────

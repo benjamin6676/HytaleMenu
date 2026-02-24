@@ -30,7 +30,8 @@ public sealed class Application : IDisposable
         _window.Update  += OnUpdate;
         _window.Render  += OnRender;
         _window.Resize  += OnResize;
-        _window.Closing += OnClosing;
+        // NOTE: Do NOT hook Closing — Silk.NET fires it from inside the render loop
+        // and disposing there crashes with "Cannot call Reset inside the render loop".
     }
 
     public void Run() => _window!.Run();
@@ -127,6 +128,12 @@ public sealed class Application : IDisposable
     public static Matrix4x4 ViewProjectionMatrix = Matrix4x4.Identity;
 
     /// <summary>
+    /// When true, entity positions are treated as screen pixels (X,Y) instead
+    /// of world-space. Useful for testing the rendering engine without a VP matrix.
+    /// </summary>
+    public static bool ScreenSpaceMode = false;
+
+    /// <summary>
     /// Projects a world-space position to 2D screen coordinates using the
     /// 4×4 view-projection matrix. Returns false if the point is behind
     /// the camera (clip-space W ≤ 0).
@@ -165,10 +172,20 @@ public sealed class Application : IDisposable
         {
             foreach (var entry in EntityPositions)
             {
-                if (!WorldToScreen(entry.Position, screenSize, out Vector2 center))
-                    continue;
+                Vector2 center;
 
-                // Draw bounding box (default 40×80 pixels; scale with entry.Height)
+                if (ScreenSpaceMode)
+                {
+                    // Screen-space: X,Y are direct pixel coordinates
+                    center = new Vector2(entry.Position.X, entry.Position.Y);
+                }
+                else
+                {
+                    if (!WorldToScreen(entry.Position, screenSize, out center))
+                        continue;
+                }
+
+                // Draw bounding box
                 float hw = entry.Width  * 0.5f;
                 float hh = entry.Height * 0.5f;
 
@@ -180,7 +197,7 @@ public sealed class Application : IDisposable
 
                 drawList.AddRect(tl, br, boxColor, 0f, ImDrawFlags.None, 1.5f);
 
-                // Corner ticks for cleaner ESP look
+                // Corner ticks
                 float cs = Math.Min(hw, hh) * 0.3f;
                 uint tc = boxColor;
                 drawList.AddLine(tl,                  tl + new Vector2(cs, 0),    tc, 2f);
@@ -201,14 +218,19 @@ public sealed class Application : IDisposable
 
     private void OnResize(Vector2D<int> size) => _gl?.Viewport(size);
 
-    private void OnClosing()
+    public void Dispose()
     {
-        _imgui?.Dispose();
-        _input?.Dispose();
-        _gl?.Dispose();
+        // Intentionally empty.
+        // Silk.NET's IWindow.Run() fully owns the lifecycle of the window, GL context,
+        // input, and ImGui controller. Calling Dispose on any of them after Run() returns
+        // (or worse, from the Closing callback which fires inside the render loop) triggers
+        // "Cannot call Reset inside the render loop" (InvalidOperationException).
+        // The OS reclaims all GPU/handle resources when the process exits anyway.
+        _imgui = null;
+        _input = null;
+        _gl    = null;
+        _menu  = null;
     }
-
-    public void Dispose() => _window?.Dispose();
 }
 
 // ── Entity Overlay Entry ──────────────────────────────────────────────────────

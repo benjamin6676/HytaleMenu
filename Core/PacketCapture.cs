@@ -34,6 +34,12 @@ public class PacketCapture
         lock (_packetsLock) return new List<CapturedPacket>(_packets);
     }
 
+    /// <summary>Returns packet count without copying the list — cheap to call every frame.</summary>
+    public int GetPacketCount()
+    {
+        lock (_packetsLock) return _packets.Count;
+    }
+
     public void ClearPackets()
     {
         lock (_packetsLock) _packets.Clear();

@@ -96,7 +96,7 @@ public class MenuRenderer
         _captureTab.SetDiffTab(_diffAnalysisTab);
         _logTab              = new LogTab(_log, _pktLog);
         _memoryTab           = new MemoryTab(_log, _store, _config);
-        _visualsTab          = new VisualsTab(_log, _config);
+        _visualsTab          = new VisualsTab(_log, _config, _smartDetect);
     }
 
     public void Render()

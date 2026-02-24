@@ -20,8 +20,13 @@ internal class Program
 
         try
         {
-            using var app = new Application();
+            // Do NOT use `using` — Silk.NET's Run() owns the full window/GL/ImGui lifecycle.
+            // Calling Dispose() after Run() returns triggers "Cannot call Reset inside the
+            // render loop" because ImGuiController.Dispose() calls back into the window
+            // which Silk.NET has already started tearing down internally.
+            var app = new Application();
             app.Run();
+            // app.Dispose() intentionally NOT called — OS cleans up on exit.
         }
         catch (Exception ex)
         {

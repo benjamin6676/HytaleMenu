@@ -1262,6 +1262,70 @@ public class MemoryReader : IDisposable
         }
         return entries;
     }
+
+    // ── Auto-offset finder: scan for float triplet matching known coords ──
+
+    /// <summary>
+    /// Scan all readable memory regions for a float triplet (x, y, z) within
+    /// the given tolerance. Returns addresses where the triplet was found.
+    /// Use this when the game gives you coords from F7 menu — find the address,
+    /// then walk pointer chains back to a stable base.
+    /// </summary>
+    public List<IntPtr> ScanForFloatTriplet(float x, float y, float z, float tolerance = 0.5f)
+    {
+        var results = new List<IntPtr>();
+        if (!IsAttached) return results;
+
+        try
+        {
+            var regions = GetReadableRegions()
+                .Where(r => r.Size > 12 && r.Size < 200_000_000)
+                .ToList();
+
+            foreach (var region in regions)
+            {
+                try
+                {
+                    var buf = new byte[(int)region.Size];
+                    if (!ReadBytes(region.BaseAddress, buf)) continue;
+
+                    for (int i = 0; i + 12 <= buf.Length; i += 4)
+                    {
+                        float fx = BitConverter.ToSingle(buf, i);
+                        if (MathF.Abs(fx - x) > tolerance) continue;
+                        float fy = BitConverter.ToSingle(buf, i + 4);
+                        if (MathF.Abs(fy - y) > tolerance) continue;
+                        float fz = BitConverter.ToSingle(buf, i + 8);
+                        if (MathF.Abs(fz - z) > tolerance) continue;
+
+                        results.Add(region.BaseAddress + i);
+                        if (results.Count >= 20) return results;
+                    }
+                }
+                catch { }
+            }
+        }
+        catch { }
+        return results;
+    }
+
+    /// <summary>Returns the module name that contains the given address, or "unknown".</summary>
+    public string GetModuleAtAddress(IntPtr address)
+    {
+        try
+        {
+            long addr = address.ToInt64();
+            foreach (var m in GetModules())
+            {
+                long mBase = m.Base.ToInt64();
+                if (addr >= mBase && addr < mBase + m.Size)
+                    return m.Name;
+            }
+        }
+        catch { }
+        return "unknown";
+    }
+
 }
 
 // ── Supporting types ──────────────────────────────────────────────────────────

@@ -29,13 +29,24 @@ public class VisualsTab : ITab
     // ── Overlay master state ──────────────────────────────────────────────
     private bool _overlayEnabled  = true;
     private bool _showLabels      = true;
-    private float _boxAlpha       = 0.9f;
+    private float _boxAlpha       = 1.0f;
 
     // ── VP matrix source ──────────────────────────────────────────────────
     private string _vpModuleName   = "";
     private string _vpAobPattern   = "48 8B 05 ?? ?? ?? ?? 48 85 C0"; // placeholder
     private int    _vpStructOffset  = 0x1A0;   // byte offset from AOB hit to float[16]
     private bool   _vpAutoRefresh   = false;
+    private DateTime _vpLastRefresh  = DateTime.MinValue;
+
+    // SmartDetection reference (injected from MenuRenderer)
+    private SmartDetectionEngine? _smartDetect;
+
+    // Screen-space fallback mode (bypass VP matrix entirely)
+    private bool   _screenSpaceMode = false;
+
+    // Auto-offset finder
+    private string _aoKnownX = "", _aoKnownY = "", _aoKnownZ = "";
+    private string _aoFinderResult = "";
     private bool   _vpScanning      = false;
     private string _vpStatus        = "Not configured";
 
@@ -77,7 +88,8 @@ public class VisualsTab : ITab
     private List<System.Diagnostics.Process> _procs = new();
     private int                              _manualPid = 0;
 
-    public VisualsTab(TestLog log, ServerConfig config) { _log = log; _config = config; }
+    public VisualsTab(TestLog log, ServerConfig config, SmartDetectionEngine? smart = null)
+    { _log = log; _config = config; _smartDetect = smart; }
 
     // ── Render ────────────────────────────────────────────────────────────
 
@@ -104,6 +116,10 @@ public class VisualsTab : ITab
         RenderDCF(leftW);
         ImGui.Spacing();
         RenderManualEditor(leftW);
+        ImGui.Spacing();
+        RenderAutoOffsetFinder(leftW);
+        ImGui.Spacing();
+        RenderOpCodeMonitor(leftW);
 
         ImGui.EndChild();
         ImGui.SameLine(0, 8);
@@ -162,6 +178,50 @@ public class VisualsTab : ITab
                 _log.Info("[Visuals] Overlay cleared.");
             });
 
+            // Screen-space fallback mode
+            ImGui.PushStyleColor(ImGuiCol.Text, _screenSpaceMode ? MenuRenderer.ColWarn : MenuRenderer.ColTextMuted);
+            ImGui.Checkbox("Screen-space mode (bypass VP matrix — test drawing engine)##sspacemode", ref _screenSpaceMode);
+            Application.ScreenSpaceMode = _screenSpaceMode;
+            ImGui.PopStyleColor();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("In screen-space mode, X/Y are treated as screen pixels.\n" +
+                                 "Use Manual Overlay Entry with X=400,Y=300 to test the renderer.\n" +
+                                 "No VP matrix needed.");
+
+            // SmartDetect sync button
+            if (_smartDetect != null)
+            {
+                ImGui.SameLine(0, 12);
+                UiHelper.WarnButton("Sync from SmartDetect##sdSync", 180, 22, () =>
+                {
+                    int added = 0;
+                    lock (Application.EntityPositions)
+                    {
+                        foreach (var ent in _smartDetect.ActiveEntities.Values)
+                        {
+                            string label = ent.IsLocalPlayer ? $"[★] LocalPlayer"
+                                : ent.EntityClass == EntityClass.Player ? $"[P] {(string.IsNullOrEmpty(ent.NameHint) ? ent.EntityId.ToString() : ent.NameHint)}"
+                                : ent.EntityClass == EntityClass.Mob    ? $"[M] {(string.IsNullOrEmpty(ent.NameHint) ? ent.EntityId.ToString() : ent.NameHint)}"
+                                : ent.EntityClass == EntityClass.Item   ? $"[I] {(string.IsNullOrEmpty(ent.NameHint) ? ent.EntityId.ToString() : ent.NameHint)}"
+                                : $"[?] {ent.EntityId}";
+
+                            bool exists = Application.EntityPositions.Any(e => e.Label == label);
+                            if (!exists)
+                            {
+                                Application.EntityPositions.Add(new EntityOverlayEntry
+                                {
+                                    Position = new System.Numerics.Vector3(ent.X, ent.Y, ent.Z),
+                                    Label    = label,
+                                    Color    = ent.BadgeColor,
+                                });
+                                added++;
+                            }
+                        }
+                    }
+                    _log.Success($"[Visuals] Synced {added} entities from SmartDetect.");
+                });
+            }
+
             ImGui.SetNextItemWidth(200);
             ImGui.SliderFloat("Box opacity##ovalf", ref _boxAlpha, 0.1f, 1f);
             ImGui.Spacing();
@@ -204,8 +264,12 @@ public class VisualsTab : ITab
         });
 
         // VP auto-refresh: every frame if enabled
-        if (_vpAutoRefresh && _reader.IsAttached && !_vpScanning)
-            Task.Run(ApplyVpMatrix); // fire-and-forget; IsAttached guard prevents spam
+        if (_vpAutoRefresh && _reader.IsAttached && !_vpScanning &&
+            (DateTime.Now - _vpLastRefresh).TotalMilliseconds >= 500)
+        {
+            _vpLastRefresh = DateTime.Now;
+            Task.Run(ApplyVpMatrix);
+        }
     }
 
     private void ApplyVpMatrix()
@@ -837,7 +901,114 @@ public class VisualsTab : ITab
             });
         });
     }
+    // ══════════════════════════════════════════════════════════════════════
+    // AUTO-OFFSET FINDER
+    // ══════════════════════════════════════════════════════════════════════
+
+    private void RenderAutoOffsetFinder(float w)
+    {
+        UiHelper.SectionBox("AUTO-OFFSET FINDER", w, 130, () =>
+        {
+            UiHelper.MutedLabel("Enter your current X, Y, Z from the F7 menu. Scans process memory");
+            UiHelper.MutedLabel("for matching floats and returns base pointer + offsets automatically.");
+            ImGui.Spacing();
+
+            ImGui.SetNextItemWidth(90); ImGui.InputText("X##aofx", ref _aoKnownX, 20);
+            ImGui.SameLine(0, 6);
+            ImGui.SetNextItemWidth(90); ImGui.InputText("Y##aofy", ref _aoKnownY, 20);
+            ImGui.SameLine(0, 6);
+            ImGui.SetNextItemWidth(90); ImGui.InputText("Z##aofz", ref _aoKnownZ, 20);
+            ImGui.SameLine(0, 8);
+
+            ImGui.BeginDisabled(!_reader.IsAttached);
+            UiHelper.WarnButton("Find Offsets##aofrun", 120, 22, () =>
+            {
+                if (!float.TryParse(_aoKnownX, out float kx) ||
+                    !float.TryParse(_aoKnownY, out float ky) ||
+                    !float.TryParse(_aoKnownZ, out float kz))
+                {
+                    _aoFinderResult = "Parse error — enter numbers like 123.4";
+                    return;
+                }
+                _aoFinderResult = "Scanning...";
+                Task.Run(() =>
+                {
+                    try
+                    {
+                        var hits = _reader.ScanForFloatTriplet(kx, ky, kz, 0.1f);
+                        _aoFinderResult = hits.Count == 0
+                            ? "No matches found. Try standing still and re-entering coords."
+                            : string.Join("\n", hits.Take(5).Select(h =>
+                                $"0x{h.ToInt64():X16}  (module: {_reader.GetModuleAtAddress(h)})"));
+                    }
+                    catch (Exception ex) { _aoFinderResult = $"Error: {ex.Message}"; }
+                });
+            });
+            ImGui.EndDisabled();
+
+            if (!string.IsNullOrEmpty(_aoFinderResult))
+            {
+                ImGui.Spacing();
+                ImGui.PushStyleColor(ImGuiCol.Text,
+                    _aoFinderResult.StartsWith("Error") ? MenuRenderer.ColDanger : MenuRenderer.ColAccent);
+                ImGui.TextWrapped(_aoFinderResult);
+                ImGui.PopStyleColor();
+            }
+        });
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // OP-CODE MONITOR & PERMISSION BIT SNIFFER
+    // ══════════════════════════════════════════════════════════════════════
+
+    private void RenderOpCodeMonitor(float w)
+    {
+        if (_smartDetect == null) return;
+
+        UiHelper.SectionBox("OP-CODE MONITOR / PERMISSION SNIFFER", w, 160, () =>
+        {
+            UiHelper.MutedLabel("Monitors packets for admin-only op-codes (0x50–0x71).");
+            UiHelper.MutedLabel("Permission Sniffer: flag bytes that differ between you and known admins.");
+            ImGui.Spacing();
+
+            // Show recent admin op-code events (from log — SmartDetect fires event)
+            var perms = _smartDetect.PermissionBits.ToArray()
+                .OrderByDescending(kv => kv.Value.adminBits)
+                .Take(8).ToList();
+
+            if (perms.Count == 0)
+            {
+                UiHelper.MutedLabel("  No permission data yet — interact with an admin player.");
+            }
+            else
+            {
+                UiHelper.MutedLabel("  Entity ID      My Flags   Admin Flags   Diff (flip these)");
+                float tblH = Math.Min(perms.Count * 20f + 4f, 120f);
+                ImGui.BeginChild("##permtbl", new Vector2(w - 8, tblH), ImGuiChildFlags.None);
+                foreach (var kv in perms)
+                {
+                    byte diff = (byte)(kv.Value.adminBits & ~kv.Value.myBits);
+                    ImGui.PushStyleColor(ImGuiCol.Text, diff > 0 ? MenuRenderer.ColWarn : MenuRenderer.ColTextMuted);
+                    ImGui.TextUnformatted(
+                        $"  {kv.Key,-14} 0x{kv.Value.myBits:X2}       0x{kv.Value.adminBits:X2}" +
+                        $"          {(diff > 0 ? $"★ 0x{diff:X2} → try setting these bits" : "no diff")}");
+                    ImGui.PopStyleColor();
+                }
+                ImGui.EndChild();
+            }
+
+            ImGui.Spacing();
+            UiHelper.SecondaryButton("Clear Perm Data##permclr", 150, 22, () =>
+            {
+                _smartDetect.PermissionBits.Clear();
+                _log.Info("[Visuals] Permission data cleared.");
+            });
+        });
+    }
 }
+
+
+
 
 // ── Entity type definition (mutable for inline editing) ───────────────────────
 
