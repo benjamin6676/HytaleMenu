@@ -239,7 +239,10 @@ public class CapturedPacket
     /// True when this packet was manually injected by the tool (not organic traffic)
     public bool            Injected     { get; set; } = false;
     /// User-supplied comment (set via double-click in CaptureTab)
-    public string          Comment      { get; set; } = "";
+    public string Comment { get; set; } = "";
+    public bool IsMarker { get; set; } = false;
+    public string MarkerLabel { get; set; } = "";
+    public uint MarkerColor { get; set; } = 0xFF800080;
 
     public string DirectionLabel =>
         Direction == PacketDirection.ClientToServer ? "C→S" : "S→C";

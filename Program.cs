@@ -6,30 +6,31 @@ internal class Program
 {
     static void Main(string[] args)
     {
-        // Install global handlers to capture startup/runtime exceptions and log them
-        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
-        {
-            try { ReportFatal(e.ExceptionObject as Exception ?? new Exception("Unhandled exception")); }
-            catch { }
+        // Behold de globale handlerne dine øverst
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => {
+            try { ReportFatal(e.ExceptionObject as Exception ?? new Exception("Unhandled exception")); } catch { }
         };
-        TaskScheduler.UnobservedTaskException += (_, e) =>
-        {
-            try { ReportFatal(e.Exception); }
-            catch { }
+
+        TaskScheduler.UnobservedTaskException += (_, e) => {
+            try { ReportFatal(e.Exception); } catch { }
         };
 
         try
         {
-            // Do NOT use `using` — Silk.NET's Run() owns the full window/GL/ImGui lifecycle.
-            // Calling Dispose() after Run() returns triggers "Cannot call Reset inside the
-            // render loop" because ImGuiController.Dispose() calls back into the window
-            // which Silk.NET has already started tearing down internally.
             var app = new Application();
             app.Run();
-            // app.Dispose() intentionally NOT called — OS cleans up on exit.
         }
         catch (Exception ex)
         {
+            // HER ER FIKSEN: Sjekk om krasjen skyldes Silk.NET sin tastatur-feil
+            if (ex is NotImplementedException && ex.StackTrace != null && ex.StackTrace.Contains("TranslateInputKeyToImGuiKey"))
+            {
+                // Vi ignorerer denne spesifikke feilen og starter på nytt
+                Main(args);
+                return;
+            }
+
+            // For alle andre ekte feil, vis den vanlige krasj-meldingen
             ReportFatal(ex);
         }
     }

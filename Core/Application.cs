@@ -38,13 +38,13 @@ public sealed class Application : IDisposable
 
     private void OnLoad()
     {
-        _gl    = _window!.CreateOpenGL();
+        _gl = _window!.CreateOpenGL();
         _input = _window.CreateInput();
-        _imgui = new ImGuiController(_gl, _window, _input);
+        _imgui = new ImGuiController(_gl, _window, _input); // Bruk _input her
 
         var io = ImGui.GetIO();
-        io.ConfigFlags    |= ImGuiConfigFlags.NavEnableKeyboard;
-        io.FontGlobalScale = 1.15f;   // bump all text up ~15%
+        io.ConfigFlags |= ImGuiConfigFlags.NavEnableKeyboard;
+        io.FontGlobalScale = 1.15f;
 
         foreach (var keyboard in _input.Keyboards)
             keyboard.KeyDown += OnKeyDown;
@@ -52,6 +52,7 @@ public sealed class Application : IDisposable
         MenuRenderer.ApplyTheme();
         _menu = new MenuRenderer();
     }
+
 
     private void OnKeyDown(IKeyboard keyboard, Key key, int scancode)
     {
@@ -99,7 +100,18 @@ public sealed class Application : IDisposable
         catch { return ""; }
     }
 
-    private void OnUpdate(double dt) => _imgui!.Update((float)dt);
+    private void OnUpdate(double dt)
+    {
+        try
+        {
+            _imgui!.Update((float)dt);
+        }
+        catch (System.NotImplementedException ex) when (ex.Message.Contains("TranslateInputKeyToImGuiKey"))
+        {
+            // Vi fanger Silk.NET sin krasj for ukjente taster her.
+            // Programmet fortsetter å kjøre som om ingenting skjedde.
+        }
+    }
 
     private void OnRender(double dt)
     {

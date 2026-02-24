@@ -207,12 +207,13 @@ public class MacroEngineTab : ITab
         // ── Macro header + run controls ────────────────────────────────────
         UiHelper.SectionBox("MACRO: " + m.Name.ToUpper(), w, 90, () =>
         {
+            int tempLoopCount = m.LoopCount;
             if (m.Description.Length > 0) UiHelper.MutedLabel(m.Description);
             ImGui.Spacing();
             ImGui.SetNextItemWidth(80);
-            if (ImGui.InputInt("Loop count##me_loops", ref m.LoopCount))
+            if (ImGui.InputInt("Loop count##me_loops", ref tempLoopCount))
             {
-                m.LoopCount = Math.Clamp(m.LoopCount, 1, 1000);
+                m.LoopCount = Math.Clamp(tempLoopCount, 1, 1000);
                 _lib.ScheduleSave();
             }
             ImGui.SameLine(0, 16);
@@ -248,13 +249,35 @@ public class MacroEngineTab : ITab
             ImGui.Spacing();
             foreach (var v in m.Variables)
             {
-                ImGui.SetNextItemWidth(80); ImGui.InputText($"##vn_{v.Name}", ref v.Name, 24);
+                // Vi må bruke temporære variabler fordi ImGui.InputText krever 'ref' til et felt, ikke en property.
+                string tempName = v.Name;
+                string tempValue = v.Value;
+
+                ImGui.SetNextItemWidth(80);
+                if (ImGui.InputText($"##vn_{v.Name}", ref tempName, 24))
+                {
+                    v.Name = tempName;
+                    _lib.ScheduleSave();
+                }
+
                 ImGui.SameLine(0, 4);
-                ImGui.SetNextItemWidth(120); ImGui.InputText($"##vv_{v.Name}", ref v.Value, 128);
+
+                ImGui.SetNextItemWidth(120);
+                if (ImGui.InputText($"##vv_{v.Name}", ref tempValue, 128))
+                {
+                    v.Value = tempValue;
+                    _lib.ScheduleSave();
+                }
+
                 ImGui.SameLine(0, 4);
-                if (ImGui.Button($"✕##vdel_{v.Name}", new Vector2(22, 20)))
-                { m.Variables.Remove(v); _lib.ScheduleSave(); break; }
+                if (ImGui.Button($"X##vdel_{v.Name}", new Vector2(22, 20)))
+                {
+                    m.Variables.Remove(v);
+                    _lib.ScheduleSave();
+                    break;
+                }
             }
+
             ImGui.Spacing();
             ImGui.SetNextItemWidth(80); ImGui.InputText("##me_vname", ref _varName, 24);
             ImGui.SameLine(0, 4);
@@ -379,8 +402,12 @@ public class MacroEngineTab : ITab
 
             // Enable checkbox
             ImGui.SetCursorPosX(4);
-            if (ImGui.Checkbox($"##meen{si}", ref step.Enabled))
+            bool tempEnabled = step.Enabled;
+            if (ImGui.Checkbox($"##mcan[{si}]", ref tempEnabled))
+            {
+                step.Enabled = tempEnabled;
                 _lib.ScheduleSave();
+            }
             ImGui.SameLine(0, 4);
 
             // Result indicator
