@@ -42,6 +42,17 @@ public class CaptureTab : ITab
     private int    _commentingIdx    = -1;       // index of packet being commented
     private string _commentBuf       = "";       // edit buffer for inline comment
 
+    // ── PCAP export ───────────────────────────────────────────────────────
+    private bool   _pcapExporting   = false;
+    private string _pcapLastPath    = "";
+
+    // ── Entropy sub-view ──────────────────────────────────────────────────
+    private bool   _showEntropy     = false;
+    private int    _entropyOpcode   = -1;      // -1 = all opcodes
+    private int    _entropyDir      = 0;       // 0=both 1=CS 2=SC
+    private List<float> _entropyCache = new();
+    private int    _entropyCacheForPktCount = 0;
+
     // Right-click context state
     private int  _ctxIdx  = -1;
 
@@ -281,9 +292,23 @@ public class CaptureTab : ITab
         ImGui.SameLine(0, 10);
         ImGui.Checkbox("Hide <15b##hsm", ref _hideSmallPkts);
 
-        // Row 2: counts
+        // Row 2: counts + export controls
         ImGui.SetCursorPosX(8);
         UiHelper.MutedLabel($"{packets.Count} captured  |  dbl-click row to comment");
+        ImGui.SameLine(0, 20);
+        ImGui.BeginDisabled(packets.Count == 0 || _pcapExporting);
+        UiHelper.SecondaryButton(
+            _pcapExporting ? "Exporting…" : "⬇ Export PCAP##pcapexp",
+            140, 20, ExportPcap);
+        ImGui.EndDisabled();
+        if (_pcapLastPath.Length > 0)
+        {
+            ImGui.SameLine(0, 8);
+            UiHelper.MutedLabel(_pcapLastPath);
+        }
+        ImGui.SameLine(0, 16);
+        if (ImGui.Checkbox("Entropy view##ent", ref _showEntropy) && _showEntropy)
+            RebuildEntropyCache(packets);
 
         ImGui.EndChild();
         ImGui.Spacing();
@@ -296,6 +321,9 @@ public class CaptureTab : ITab
             UiHelper.MutedLabel("Start proxy above and connect your game client.");
             return;
         }
+
+        // ── Entropy view (shown above packet list if enabled) ──────────────
+        if (_showEntropy) RenderEntropyPanel(packets, w);
 
         // ── Build filtered list (cheap, avoids LINQ allocation on hot path) ──
         var filtered = new List<(int globalIdx, CapturedPacket pkt)>(packets.Count);
@@ -792,4 +820,152 @@ public class CaptureTab : ITab
         }
         catch { return "127.0.0.1"; }
     }
+
+    // ── PCAP Export ───────────────────────────────────────────────────────
+
+    private void ExportPcap()
+    {
+        _pcapExporting = true;
+        var packets    = _capture.GetPackets();
+        string srv     = _config.IsSet ? _config.ServerIp : null!;
+
+        Task.Run(() =>
+        {
+            try
+            {
+                string dir  = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
+                    "HytaleCaptures");
+                Directory.CreateDirectory(dir);
+                string path = Path.Combine(dir,
+                    $"capture_{DateTime.Now:yyyyMMdd_HHmmss}.pcap");
+
+                int written = PcapWriter.Write(path, packets, srv);
+                _pcapLastPath = $"Saved {written} pkts → {path}";
+                _log.Success($"[Capture] PCAP export: {written} packets → {path}");
+                AlertBus.Push(AlertBus.Sec_Capture, AlertLevel.Info,
+                    $"PCAP exported: {written} packets");
+            }
+            catch (Exception ex)
+            {
+                _pcapLastPath = $"Export failed: {ex.Message}";
+                _log.Error($"[Capture] PCAP export: {ex.Message}");
+            }
+            finally { _pcapExporting = false; }
+        });
+    }
+
+    // ── Entropy View ──────────────────────────────────────────────────────
+
+    private void RenderEntropyPanel(List<CapturedPacket> packets, float w)
+    {
+        // Rebuild cache if packet count changed
+        if (packets.Count != _entropyCacheForPktCount)
+            RebuildEntropyCache(packets);
+
+        UiHelper.SectionBox("ENTROPY ANALYSIS", w, 150, () =>
+        {
+            // Controls
+            ImGui.SetNextItemWidth(90);
+            ImGui.InputInt("Opcode filter##entop", ref _entropyOpcode);
+            if (_entropyOpcode < -1) _entropyOpcode = -1;
+            if (_entropyOpcode > 255) _entropyOpcode = 255;
+            ImGui.SameLine(0, 8);
+            UiHelper.MutedLabel(_entropyOpcode < 0 ? "(all)" : $"0x{_entropyOpcode:X2}");
+            ImGui.SameLine(0, 16);
+            ImGui.SetNextItemWidth(72);
+            ImGui.Combo("Dir##entdir", ref _entropyDir, new[] { "Both", "C→S", "S→C" }, 3);
+            ImGui.SameLine(0, 8);
+            UiHelper.SecondaryButton("Refresh##entref", 80, 22, () => RebuildEntropyCache(packets));
+            ImGui.SameLine(0, 8);
+            UiHelper.MutedLabel($"{_entropyCache.Count} packets analysed");
+
+            ImGui.Spacing();
+
+            if (_entropyCache.Count == 0) { UiHelper.MutedLabel("No matching packets."); return; }
+
+            // Shannon entropy bar chart — one bar per packet sample
+            float gw  = ImGui.GetContentRegionAvail().X;
+            float gh  = 70f;
+            var   cp  = ImGui.GetCursorScreenPos();
+            var   gdl = ImGui.GetWindowDrawList();
+
+            gdl.AddRectFilled(cp, cp + new Vector2(gw, gh),
+                ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColBg2));
+
+            // Grid lines at 2/4/6/8 bits
+            foreach (float grid in new[] { 2f, 4f, 6f, 8f })
+            {
+                float gy = cp.Y + gh - (grid / 8f * gh);
+                gdl.AddLine(new Vector2(cp.X, gy), new Vector2(cp.X + gw, gy),
+                    ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColBorder));
+                gdl.AddText(new Vector2(cp.X + 2, gy - 12),
+                    ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColTextMuted), $"{grid:F0}b");
+            }
+
+            int   n       = _entropyCache.Count;
+            float barW    = Math.Max(1, gw / n);
+
+            for (int i = 0; i < n; i++)
+            {
+                float ent   = _entropyCache[i];           // 0-8 bits
+                float barH  = ent / 8f * gh;
+                float bx    = cp.X + i * barW;
+                float by    = cp.Y + gh - barH;
+
+                var barCol  = ent > 6.5f ? MenuRenderer.ColDanger   // high entropy = likely encrypted
+                            : ent > 4f   ? MenuRenderer.ColWarn
+                            :              MenuRenderer.ColAccent;
+
+                gdl.AddRectFilled(new Vector2(bx, by), new Vector2(bx + barW - 1, cp.Y + gh),
+                    ImGui.ColorConvertFloat4ToU32(barCol));
+            }
+
+            ImGui.Dummy(new Vector2(gw, gh));
+
+            // Averages
+            float avg = _entropyCache.Average();
+            float max = _entropyCache.Max();
+            float min = _entropyCache.Min();
+            ImGui.SameLine(0, 0);
+            ImGui.SetCursorPosX(gw * 0.55f);
+            UiHelper.MutedLabel($"avg:{avg:F2}b  min:{min:F2}b  max:{max:F2}b  " +
+                $"{(avg > 6.5f ? "HIGH entropy — likely encrypted" : avg > 4f ? "Medium entropy" : "Low entropy — plaintext")}");
+        });
+
+        ImGui.Spacing();
+    }
+
+    private void RebuildEntropyCache(List<CapturedPacket> packets)
+    {
+        _entropyCache.Clear();
+        var src = packets.AsEnumerable();
+        if (_entropyDir == 1) src = src.Where(p => p.Direction == PacketDirection.ClientToServer);
+        if (_entropyDir == 2) src = src.Where(p => p.Direction == PacketDirection.ServerToClient);
+        if (_entropyOpcode >= 0) src = src.Where(p => p.RawBytes.Length > 0 && p.RawBytes[0] == _entropyOpcode);
+
+        foreach (var pkt in src.TakeLast(400))
+        {
+            if (pkt.RawBytes.Length < 4) continue;
+            _entropyCache.Add(ShannonEntropy(pkt.RawBytes));
+        }
+        _entropyCacheForPktCount = packets.Count;
+    }
+
+    private static float ShannonEntropy(byte[] data)
+    {
+        if (data.Length == 0) return 0;
+        int[] freq = new int[256];
+        foreach (byte b in data) freq[b]++;
+        double entropy = 0;
+        double len     = data.Length;
+        for (int i = 0; i < 256; i++)
+        {
+            if (freq[i] == 0) continue;
+            double p = freq[i] / len;
+            entropy -= p * Math.Log2(p);
+        }
+        return (float)entropy;
+    }
 }
+

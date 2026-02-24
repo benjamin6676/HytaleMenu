@@ -40,7 +40,7 @@ public class DashboardTab : ITab
     // Sub-tab
     private int _subTab = 0;
     private static readonly string[] SubTabs =
-        { "Connection", "Live Stats", "Fingerprint", "Geo / Ports" };
+        { "Connection", "Live Stats", "Fingerprint", "Geo / Ports", "Threat Summary" };
 
     public DashboardTab(TestLog log, ServerConfig config, ServerStats stats)
     {
@@ -62,6 +62,7 @@ public class DashboardTab : ITab
             case 1: RenderLiveStats(w);  break;
             case 2: RenderFingerprint(w); break;
             case 3: RenderGeoAndPorts(w); break;
+            case 4: RenderThreatSummary(w); break;
         }
     }
 
@@ -646,6 +647,123 @@ public class DashboardTab : ITab
             }
             catch (Exception ex) { _log.Error($"[Ports] {ex.Message}"); }
             finally { _scanning = false; }
+        });
+    }
+
+    // ── Threat Summary sub-tab ─────────────────────────────────────────────
+
+    private void RenderThreatSummary(float w)
+    {
+        var feed = AlertBus.GetFeed();
+
+        float half = (w - 12) * 0.5f;
+
+        // ── Alert Feed ────────────────────────────────────────────────────
+        UiHelper.SectionBox("LIVE ALERT FEED", half, 0, () =>
+        {
+            if (feed.Count == 0)
+            {
+                UiHelper.MutedLabel("No alerts yet — run tests in other tabs.");
+                UiHelper.MutedLabel("Claims, admin opcodes, privilege probes and new");
+                UiHelper.MutedLabel("protocol opcodes all push alerts here.");
+                return;
+            }
+
+            UiHelper.SecondaryButton("Clear All##tsclear", -1, 24, AlertBus.ClearAll);
+            ImGui.Spacing();
+
+            float feedH = ImGui.GetContentRegionAvail().Y - 30;
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
+            ImGui.BeginChild("##ts_feed", new Vector2(-1, feedH), ImGuiChildFlags.Border);
+            ImGui.PopStyleColor();
+
+            foreach (var alert in feed)
+            {
+                var col = alert.Level switch
+                {
+                    AlertLevel.Critical => MenuRenderer.ColDanger,
+                    AlertLevel.Warn     => MenuRenderer.ColWarn,
+                    _                   => MenuRenderer.ColBlue,
+                };
+                string glyph = alert.Level switch
+                {
+                    AlertLevel.Critical => "!!",
+                    AlertLevel.Warn     => "! ",
+                    _                   => "· ",
+                };
+                ImGui.PushStyleColor(ImGuiCol.Text, col);
+                ImGui.TextUnformatted($"  {glyph}");
+                ImGui.PopStyleColor();
+                ImGui.SameLine(0, 4);
+                UiHelper.MutedLabel(alert.At.ToString("HH:mm:ss"));
+                ImGui.SameLine(0, 8);
+                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColText);
+                ImGui.TextUnformatted(alert.Message);
+                ImGui.PopStyleColor();
+            }
+
+            ImGui.EndChild();
+        });
+
+        ImGui.SameLine(0, 12);
+
+        // ── Session summary ────────────────────────────────────────────────
+        UiHelper.SectionBox("SESSION THREAT SUMMARY", half, 0, () =>
+        {
+            var byCrit     = feed.Count(a => a.Level == AlertLevel.Critical);
+            var byWarn     = feed.Count(a => a.Level == AlertLevel.Warn);
+            var byInfo     = feed.Count(a => a.Level == AlertLevel.Info);
+            var modAudit   = feed.Count(a => a.SectionIndex == AlertBus.Sec_ModAudit);
+            var priv       = feed.Count(a => a.SectionIndex == AlertBus.Sec_Privilege);
+            var protoMap   = feed.Count(a => a.SectionIndex == AlertBus.Sec_ProtoMap);
+
+            UiHelper.StatusRow("Total alerts",    feed.Count.ToString(), feed.Count > 0, 140);
+            ImGui.Spacing();
+            UiHelper.StatusRow("Critical",        byCrit.ToString(),   byCrit == 0,  140);
+            UiHelper.StatusRow("Warning",         byWarn.ToString(),   byWarn == 0,  140);
+            UiHelper.StatusRow("Info",            byInfo.ToString(),   true,          140);
+            ImGui.Spacing();
+            UiHelper.StatusRow("Mod Audit hits",  modAudit.ToString(), modAudit == 0, 140);
+            UiHelper.StatusRow("Privilege hits",  priv.ToString(),     priv == 0,     140);
+            UiHelper.StatusRow("New opcodes",     protoMap.ToString(), true,          140);
+            ImGui.Spacing();
+
+            // Severity indicator
+            string risk  = byCrit > 0 ? "CRITICAL" : byWarn > 3 ? "HIGH" : byWarn > 0 ? "MEDIUM" : "LOW";
+            var riskCol  = byCrit > 0 ? MenuRenderer.ColDanger : byWarn > 3 ? MenuRenderer.ColDanger
+                         : byWarn > 0 ? MenuRenderer.ColWarn : MenuRenderer.ColAccent;
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
+            ImGui.BeginChild("##ts_risk", new Vector2(-1, 40), ImGuiChildFlags.Border);
+            ImGui.PopStyleColor();
+            ImGui.SetCursorPos(new Vector2(8, 8));
+            ImGui.PushStyleColor(ImGuiCol.Text, riskCol);
+            ImGui.TextUnformatted($"  OVERALL SESSION RISK:  {risk}");
+            ImGui.PopStyleColor();
+            ImGui.EndChild();
+
+            ImGui.Spacing();
+
+            // Copy report button
+            UiHelper.SecondaryButton("Copy Report to Clipboard##tsrpt", -1, 28, () =>
+            {
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"# HytaleSecurityTester — Threat Report");
+                sb.AppendLine($"# Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                sb.AppendLine($"# Server: {(_config.IsSet ? $"{_config.ServerIp}:{_config.ServerPort}" : "not set")}");
+                sb.AppendLine();
+                sb.AppendLine($"Overall Risk: {risk}");
+                sb.AppendLine($"Alerts: {feed.Count} total  (Critical:{byCrit}  Warn:{byWarn}  Info:{byInfo})");
+                sb.AppendLine();
+                sb.AppendLine("--- Alert Feed ---");
+                foreach (var a in feed)
+                    sb.AppendLine($"[{a.Level,-8}] {a.At:HH:mm:ss}  {a.Message}");
+                ImGui.SetClipboardText(sb.ToString());
+                _log.Success("[Dashboard] Threat report copied to clipboard.");
+            });
+
+            ImGui.Spacing();
+            UiHelper.MutedLabel("Tips: start Capture, run Mod Audit, run Privilege probes,");
+            UiHelper.MutedLabel("then return here for a consolidated risk summary.");
         });
     }
 

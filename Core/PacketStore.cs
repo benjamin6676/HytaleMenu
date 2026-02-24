@@ -21,6 +21,10 @@ public class PacketStore
     // ── CRUD ──────────────────────────────────────────────────────────────
 
     public void Save(string label, string notes, byte[] data, PacketDirection direction)
+        => Save(label, notes, data, direction, Array.Empty<string>());
+
+    public void Save(string label, string notes, byte[] data, PacketDirection direction,
+                     string[] tags)
     {
         lock (_lock)
         {
@@ -33,6 +37,7 @@ public class PacketStore
                 HexString = PacketCapture.ToHex(data),
                 Direction = direction,
                 SavedAt   = DateTime.Now,
+                Tags      = tags.ToList(),
             });
             Persist();
         }
@@ -109,6 +114,7 @@ public class SavedPacket
     public string          HexString { get; set; } = "";
     public PacketDirection Direction { get; set; }
     public DateTime        SavedAt   { get; set; }
+    public List<string>    Tags      { get; set; } = new();
 
     public byte[] ToBytes()
     {

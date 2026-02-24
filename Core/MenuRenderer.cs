@@ -17,6 +17,7 @@ public class MenuRenderer
     private readonly PacketTab            _packetTab;
     private readonly DupingTab            _dupingTab;
     private readonly PrivilegeTab         _privilegeTab;
+    private readonly ModAuditorTab        _modAuditorTab;
     private readonly ItemInspectorTab     _itemInspectorTab;
     private readonly PacketBookTab        _packetBookTab;
     private readonly ResponseAnalyserTab  _responseAnalyserTab;
@@ -25,6 +26,8 @@ public class MenuRenderer
     private readonly MemoryTab            _memoryTab;
     private readonly VisualsTab           _visualsTab;
     private readonly SmartDetectionEngine _smartDetect;
+    private readonly ProtocolMapTab       _protocolMapTab;
+    private readonly MacroEngineTab       _macroEngineTab;
 
     private int _selectedSection = 0;
 
@@ -39,10 +42,13 @@ public class MenuRenderer
         ("◈", "Duping",     "Dupe Methods"),
         ("◎", "Capture",    "Capture & Analysis"),
         ("▲", "Privilege",  "Privilege Escalation"),
+        ("⬡", "Mod Audit",  "Mod Auditor"),
         ("⊙", "Inspector",  "Item Inspector"),
         ("◫", "Book",       "Packet Book"),
         ("≡", "Memory",     "Memory Reader"),
-        ("👁️", "Visuals", "Visuals / ESP"),
+        ("👁️", "Visuals",  "Visuals / ESP"),
+        ("⊞", "Proto Map",  "Protocol Map"),
+        ("⟳", "Macros",    "Macro Engine"),
     };
 
     // Palette
@@ -87,8 +93,18 @@ public class MenuRenderer
         _dupingTab           = new DupingTab(_log, _captureTab.UdpProxy, _captureTab.Capture, _store, _config);
         _privilegeTab        = new PrivilegeTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config, _store);
         _smartDetect         = new SmartDetectionEngine(_captureTab.Capture, _store, _log, _config);
+
+        // Wire SmartDetect events into AlertBus
+        _smartDetect.OnAdminOpCodeDetected += (op, _) =>
+            AlertBus.Push(AlertBus.Sec_Inspector, AlertLevel.Critical,
+                $"Admin opcode detected: 0x{op:X2}");
+        _smartDetect.OnLootDropDetected += (id, _) =>
+            AlertBus.Push(AlertBus.Sec_Inspector, AlertLevel.Info,
+                $"Loot drop detected: entity {id}");
+
         _itemInspectorTab    = new ItemInspectorTab(_log, _captureTab.Capture, _captureTab.UdpProxy,
                                    _store, _config, _smartDetect);
+        _modAuditorTab       = new ModAuditorTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config, _store);
         _packetBookTab       = new PacketBookTab(_log, _store, _captureTab.UdpProxy, _captureTab.Capture, _config);
         _responseAnalyserTab = new ResponseAnalyserTab(_log, _tracker, _captureTab.Capture,
                                    _captureTab.UdpProxy, _store, _config);
@@ -97,6 +113,8 @@ public class MenuRenderer
         _logTab              = new LogTab(_log, _pktLog);
         _memoryTab           = new MemoryTab(_log, _store, _config);
         _visualsTab          = new VisualsTab(_log, _config, _smartDetect);
+        _protocolMapTab      = new ProtocolMapTab(_log, _captureTab.Capture);
+        _macroEngineTab      = new MacroEngineTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config, _store);
     }
 
     public void Render()
@@ -220,6 +238,20 @@ public class MenuRenderer
             ImGui.PopStyleVar();
             ImGui.PopStyleColor(4);
 
+            // Badge — red dot with count if there are unread alerts for this section
+            int badge = AlertBus.GetBadge(i);
+            if (badge > 0 && _selectedSection != i)
+            {
+                float bx = btnSP.X + sideW - 18;
+                float by = btnSP.Y + 4;
+                string badgeStr = badge > 9 ? "9+" : badge.ToString();
+                float badgeW = ImGui.CalcTextSize(badgeStr).X + 6;
+                dl.AddRectFilled(new Vector2(bx - 2, by), new Vector2(bx + badgeW, by + 16),
+                    ImGui.ColorConvertFloat4ToU32(ColDanger), 4f);
+                dl.AddText(new Vector2(bx + 1, by + 1),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 1)), badgeStr);
+            }
+
             if (i < Sections.Length - 1)
             {
                 var divSP = ImGui.GetCursorScreenPos();
@@ -273,17 +305,23 @@ public class MenuRenderer
 
     private void RenderContent()
     {
+        // Clear badge for the currently viewed section
+        AlertBus.ClearBadge(_selectedSection);
+
         switch (_selectedSection)
         {
-            case 0: RenderDashboardMerged();    break;
-            case 1: RenderPacketsMerged();      break;
-            case 2: _dupingTab.Render();        break;
-            case 3: RenderCaptureMerged();      break;
-            case 4: _privilegeTab.Render();     break;
-            case 5: _itemInspectorTab.Render(); break;
-            case 6: _packetBookTab.Render();    break;
-            case 7: _memoryTab.Render();        break;
-            case 8: _visualsTab.Render();       break;
+            case 0:  RenderDashboardMerged();      break;
+            case 1:  RenderPacketsMerged();        break;
+            case 2:  _dupingTab.Render();          break;
+            case 3:  RenderCaptureMerged();        break;
+            case 4:  _privilegeTab.Render();       break;
+            case 5:  _modAuditorTab.Render();      break;
+            case 6:  _itemInspectorTab.Render();   break;
+            case 7:  _packetBookTab.Render();      break;
+            case 8:  _memoryTab.Render();          break;
+            case 9:  _visualsTab.Render();         break;
+            case 10: _protocolMapTab.Render();     break;
+            case 11: _macroEngineTab.Render();     break;
         }
     }
 

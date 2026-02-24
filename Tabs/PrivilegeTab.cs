@@ -50,12 +50,41 @@ public class PrivilegeTab : ITab
     private int _subTab = 0;
     private static readonly string[] SubTabs =
         { "Give Item", "Handshake Tamper", "Session Spoofer",
-          "Command Inject", "Metadata Inject", "Perm Spoof", "Response Table" };
+          "Command Inject", "Metadata Inject", "Perm Spoof", "Response Table",
+          "Token Sniff", "Spawn Items", "Admin Replay" };
 
     // ── Give Item ──────────────────────────────────────────────────────────
     private int _giItemId   = 1001;
     private int _giCount    = 1;
     private int _giPlayerId = 1;
+
+    // ── Token Sniff ────────────────────────────────────────────────────────
+    private List<TokenEntry> _tokens        = new();
+    private int              _tokLastPkt    = 0;
+    private bool             _tokReplaying  = false;
+    private int              _tokSelectedIdx = -1;
+
+    // ── Spawn Items ────────────────────────────────────────────────────────
+    private int    _spawnItemId    = 1001;
+    private int    _spawnCount     = 64;
+    private int    _spawnTargetId  = 0;
+    private string _spawnTargetName = "";
+    private int    _spawnMethod    = 0;   // 0=direct packet  1=/give  2=/i  3=/spawnitem  4=/item
+    private string _spawnCustomCmd = "/give {target} diamond 64";
+    private bool   _spawnRepeatMode = false;
+    private int    _spawnRepeatN   = 1;
+    private int    _spawnRepeatDelay = 100;
+    private static readonly string[] SpawnMethods =
+        { "Raw 0x2A packet", "/give command", "/i shorthand", "/spawnitem", "/item", "Custom command" };
+
+    // ── Admin Replay ───────────────────────────────────────────────────────
+    private List<AdminActionEntry> _adminActions  = new();
+    private int    _arLastPktCount = 0;
+    private int    _arSelectedIdx  = -1;
+    private bool   _arArmed        = false;
+    private bool   _arReplaying    = false;
+    private int    _arReplayCount  = 1;
+    private int    _arReplayDelay  = 50;
 
     // ── Handshake Tamper ──────────────────────────────────────────────────
     private int    _hsPermLevel   = 4;       // 0=guest … 4=owner
@@ -160,6 +189,13 @@ public class PrivilegeTab : ITab
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
         ImGui.BeginChild("##privmain", new Vector2(mainW, availH), ImGuiChildFlags.None);
         ImGui.PopStyleColor();
+        // ── Token and admin action auto-scan ─────────────────────────────
+        if (pkts.Count != _tokLastPkt)
+        {
+            ScanTokensAndAdminActions(pkts);
+            _tokLastPkt = pkts.Count;
+        }
+
         switch (_subTab)
         {
             case 0: RenderGiveItem(mainW);        break;
@@ -169,6 +205,9 @@ public class PrivilegeTab : ITab
             case 4: RenderMetadataInject(mainW);  break;
             case 5: RenderPermSpoof(mainW);       break;
             case 6: RenderResponseTable(mainW);   break;
+            case 7: RenderTokenSniff(mainW);      break;
+            case 8: RenderSpawnItems(mainW);      break;
+            case 9: RenderAdminReplay(mainW);     break;
         }
         ImGui.EndChild();
 
@@ -1079,6 +1118,572 @@ public class PrivilegeTab : ITab
     }
 
     // ══════════════════════════════════════════════════════════════════════
+    // SUB-TAB: TOKEN SNIFF
+    // ══════════════════════════════════════════════════════════════════════
+
+    private void RenderTokenSniff(float w)
+    {
+        UiHelper.SectionBox("AUTH / SESSION TOKEN SNIFFER", w, 80, () =>
+        {
+            UiHelper.MutedLabel("Automatically extracts high-entropy token candidates from captured packets.");
+            UiHelper.MutedLabel("Captures session tokens, auth keys, and handshake secrets for replay testing.");
+            ImGui.Spacing();
+            UiHelper.SecondaryButton("Re-Scan##tokscan", 120, 26, () =>
+            {
+                _tokens.Clear();
+                ScanTokensAndAdminActions(_capture.GetPackets());
+                _log.Info($"[Tokens] Scan complete — {_tokens.Count} token candidates found.");
+            });
+            ImGui.SameLine(0, 8);
+            UiHelper.MutedLabel($"{_tokens.Count} candidates found");
+        });
+
+        ImGui.Spacing();
+
+        float tableH = ImGui.GetContentRegionAvail().Y - 100;
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
+        ImGui.BeginChild("##tok_list", new Vector2(w, tableH), ImGuiChildFlags.Border);
+        ImGui.PopStyleColor();
+
+        UiHelper.MutedLabel($"  {"Dir",-5} {"Opcode",-8} {"Offset",-7} {"Len",-5} Token hex");
+        var dlh = ImGui.GetWindowDrawList();
+        float hy = ImGui.GetCursorScreenPos().Y - 1;
+        dlh.AddLine(new Vector2(ImGui.GetWindowPos().X, hy),
+                    new Vector2(ImGui.GetWindowPos().X + w, hy),
+                    ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColBorder));
+
+        if (_tokens.Count == 0)
+        {
+            ImGui.SetCursorPosX(12);
+            UiHelper.MutedLabel("No token candidates yet — capture traffic while logging in/joining.");
+        }
+
+        for (int ti = 0; ti < _tokens.Count; ti++)
+        {
+            var t   = _tokens[ti];
+            bool sel = _tokSelectedIdx == ti;
+
+            if (sel)
+            {
+                var sp = ImGui.GetCursorScreenPos();
+                ImGui.GetWindowDrawList().AddRectFilled(sp, sp + new Vector2(w, 22),
+                    ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColAccentDim));
+            }
+
+            var dirCol = t.Direction == PacketDirection.ClientToServer
+                ? MenuRenderer.ColBlue : MenuRenderer.ColAccent;
+
+            ImGui.PushStyleColor(ImGuiCol.Text, dirCol);
+            ImGui.TextUnformatted($"  {(t.Direction == PacketDirection.ClientToServer ? "C→S" : "S→C"),-5}");
+            ImGui.PopStyleColor();
+            ImGui.SameLine(0, 4);
+            UiHelper.MutedLabel($" 0x{t.Opcode:X2}   +{t.Offset,-6} {t.TokenBytes.Length,-5}");
+            ImGui.SameLine(0, 4);
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 1f, 0.6f, 1f));
+            string preview = BytesToHex(t.TokenBytes, 20);
+            ImGui.TextUnformatted(preview);
+            ImGui.PopStyleColor();
+
+            // Buttons
+            ImGui.SameLine(w - 160);
+            UiHelper.SecondaryButton($"Copy##tokcopy{ti}", 50, 18, () =>
+            {
+                ImGui.SetClipboardText(BytesToHex(t.TokenBytes, t.TokenBytes.Length));
+                _log.Info($"[Tokens] Copied {t.TokenBytes.Length}b token (0x{t.Opcode:X2}).");
+            });
+            ImGui.SameLine(0, 4);
+            UiHelper.WarnButton($"Replay##tokrep{ti}", 65, 18, () =>
+            {
+                _tokSelectedIdx = ti;
+                SendRaw(t.FullPacket);
+                _log.Info($"[Tokens] Replayed full packet (0x{t.Opcode:X2} {t.FullPacket.Length}b).");
+                AlertBus.Push(AlertBus.Sec_Privilege, AlertLevel.Warn,
+                    $"Token replayed: 0x{t.Opcode:X2} {t.TokenBytes.Length}b");
+            });
+            ImGui.SameLine(0, 4);
+            if (ImGui.Selectable($"##toksel{ti}", sel, ImGuiSelectableFlags.None, new Vector2(0, 22)))
+                _tokSelectedIdx = ti;
+        }
+
+        ImGui.EndChild();
+
+        if (_tokSelectedIdx >= 0 && _tokSelectedIdx < _tokens.Count)
+        {
+            var t = _tokens[_tokSelectedIdx];
+            ImGui.Spacing();
+            UiHelper.SectionBox("SELECTED TOKEN ACTIONS", w, 70, () =>
+            {
+                UiHelper.MutedLabel($"Token: {BytesToHex(t.TokenBytes, t.TokenBytes.Length)}");
+                UiHelper.MutedLabel($"Full packet ({t.FullPacket.Length}b): {BytesToHex(t.FullPacket, 32)}");
+                ImGui.Spacing();
+                UiHelper.WarnButton("Replay Full Packet##tokrepfull", 180, 26, () =>
+                {
+                    SendRaw(t.FullPacket);
+                    _log.Info($"[Tokens] Replayed 0x{t.Opcode:X2} {t.FullPacket.Length}b.");
+                });
+                ImGui.SameLine(0, 8);
+                UiHelper.SecondaryButton("Send to Handshake Tamper##tok2hs", 220, 26, () =>
+                {
+                    _hsCapturedHex  = BytesToHex(t.FullPacket, t.FullPacket.Length);
+                    _hsReuseCapture = true;
+                    _subTab         = 1;
+                    _log.Info("[Tokens] Token loaded into Handshake Tamper.");
+                });
+            });
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // SUB-TAB: SPAWN ITEMS
+    // ══════════════════════════════════════════════════════════════════════
+
+    private void RenderSpawnItems(float w)
+    {
+        UiHelper.SectionBox("ADMIN ITEM SPAWN — MULTI-METHOD TESTER", w, 200, () =>
+        {
+            UiHelper.MutedLabel("Tests item spawning/giving through every available attack vector.");
+            UiHelper.MutedLabel("Iterates raw packets, command variants, and admin-session wrapping.");
+            ImGui.Spacing();
+
+            float half = (w - 20) * 0.5f;
+
+            // Item config
+            ImGui.SetNextItemWidth(130); ImGui.InputInt("Item ID##spid", ref _spawnItemId);
+            _spawnItemId = Math.Max(1, _spawnItemId);
+            ImGui.SameLine(0, 6);
+            InlineAutoFill("##spaf", () =>
+            {
+                var f = ContextFiller.Fill(_capture, _udpProxy);
+                if (f.HasItem) _spawnItemId = f.ItemId!.Value;
+            });
+            ImGui.SameLine(0, 16);
+            ImGui.SetNextItemWidth(100); ImGui.InputInt("Count##spcnt", ref _spawnCount);
+            _spawnCount = Math.Clamp(_spawnCount, 1, 9999);
+
+            ImGui.SetNextItemWidth(140); ImGui.InputInt("Target Player ID##sptid", ref _spawnTargetId);
+            ImGui.SameLine(0, 8);
+            if (_targetPlayerId > 0)
+            {
+                UiHelper.SecondaryButton($"Use sidebar ({_targetPlayerId})##spuse", 180, 22,
+                    () => { _spawnTargetId = _targetPlayerId; _spawnTargetName = _targetPlayerName; });
+            }
+
+            // Method
+            ImGui.Spacing();
+            ImGui.SetNextItemWidth(-1);
+            ImGui.Combo("Method##spmth", ref _spawnMethod, SpawnMethods, SpawnMethods.Length);
+
+            if (_spawnMethod == 5)
+            {
+                ImGui.SetNextItemWidth(-1);
+                ImGui.InputText("Custom cmd (use {item},{count},{target})##spcmd", ref _spawnCustomCmd, 256);
+            }
+            ImGui.Spacing();
+
+            ImGui.Checkbox("Repeat##sprep", ref _spawnRepeatMode);
+            if (_spawnRepeatMode)
+            {
+                ImGui.SameLine(0, 8);
+                ImGui.SetNextItemWidth(80); ImGui.InputInt("N##sprepn", ref _spawnRepeatN);
+                _spawnRepeatN = Math.Clamp(_spawnRepeatN, 1, 200);
+                ImGui.SameLine(0, 8);
+                ImGui.SetNextItemWidth(80); ImGui.InputInt("ms##sprep_d", ref _spawnRepeatDelay);
+                _spawnRepeatDelay = Math.Max(0, _spawnRepeatDelay);
+            }
+        });
+
+        ImGui.Spacing();
+
+        // Action buttons
+        float btnW = (w - 30) / 3f;
+        UiHelper.WarnButton("Spawn via Packet##sprun_pkt", btnW, 34,
+            () => ExecuteSpawn(0));
+        ImGui.SameLine(0, 8);
+        UiHelper.WarnButton("/give Command##sprun_give", btnW, 34,
+            () => ExecuteSpawn(1));
+        ImGui.SameLine(0, 8);
+        UiHelper.WarnButton("Try ALL Methods##sprun_all", btnW, 34,
+            () => { for (int m = 0; m < SpawnMethods.Length - 1; m++) ExecuteSpawn(m); });
+
+        if (_spawnMethod == 5)
+        {
+            ImGui.Spacing();
+            UiHelper.WarnButton("Send Custom Command##sprun_cust", 220, 30,
+                () => ExecuteSpawn(5));
+        }
+
+        ImGui.Spacing();
+
+        // Privilege escalation chain
+        UiHelper.SectionBox("PRIVILEGE ESCALATION CHAIN", w, 100, () =>
+        {
+            UiHelper.MutedLabel("Combines handshake tamper + session spoof + item spawn in sequence.");
+            UiHelper.MutedLabel("Step 1: forge elevated handshake  Step 2: spoof admin session  Step 3: spawn item");
+            ImGui.Spacing();
+            UiHelper.WarnButton("Run Full Chain##spchain", 220, 32, () =>
+            {
+                Task.Run(async () =>
+                {
+                    _log.Info("[SpawnChain] Starting full privilege escalation chain…");
+
+                    // Step 1: Forge handshake
+                    byte[] hsPacket = BuildHandshakePacket();
+                    SendRaw(hsPacket);
+                    _log.Info($"[SpawnChain] Step 1: Forged handshake (perm={_hsPermLevel}) sent.");
+                    await Task.Delay(300);
+
+                    // Step 2: Spoof session with admin ID
+                    int adminId = _spawnTargetId > 0 ? _spawnTargetId
+                                : _targetPlayerId > 0 ? _targetPlayerId : 1;
+
+                    // Step 3: Spawn item
+                    var itemPkt = new List<byte> { 0x2A };
+                    itemPkt.AddRange(BitConverter.GetBytes(_spawnItemId));
+                    itemPkt.AddRange(BitConverter.GetBytes(_spawnCount));
+                    itemPkt.AddRange(BitConverter.GetBytes(adminId));
+                    byte[] wrapped = WrapWithPlayerId(adminId, itemPkt.ToArray(), true);
+                    SendRaw(wrapped);
+                    _log.Info($"[SpawnChain] Step 3: Wrapped give-item sent (ItemID={_spawnItemId} ×{_spawnCount} → PlayerID={adminId}).");
+                    await Task.Delay(200);
+
+                    // Step 4: Command variant
+                    string target = _spawnTargetName.Length > 0 ? _spawnTargetName : adminId.ToString();
+                    string cmd    = $"/give {target} {_spawnItemId} {_spawnCount}";
+                    SendRaw(BuildChatPacket(cmd, false));
+                    _log.Success($"[SpawnChain] Chain complete. Check inventory and server response.");
+                    AlertBus.Push(AlertBus.Sec_Privilege, AlertLevel.Critical,
+                        $"Escalation chain fired: item {_spawnItemId} ×{_spawnCount}");
+                });
+            });
+
+            ImGui.SameLine(0, 12);
+            UiHelper.MutedLabel("Tests all privilege bypass techniques simultaneously.");
+        });
+
+        ImGui.Spacing();
+        RenderHowTo(
+            "1. Auto-fill item ID from Item Inspector (⟳ button) or enter manually",
+            "2. Set target Player ID (yourself = 0, admin target = use sidebar)",
+            "3. Try 'Try ALL Methods' — this fires every known spawn technique",
+            "4. ANY method that puts the item in inventory = server-side vulnerability",
+            "5. Use 'Run Full Chain' to combine handshake tamper + session spoof + spawn",
+            "6. Document successful vectors in Protocol Map for future reference");
+    }
+
+    private void ExecuteSpawn(int method)
+    {
+        int targetId = _spawnTargetId > 0 ? _spawnTargetId
+                     : _targetPlayerId > 0 ? _targetPlayerId : 0;
+        string targetName = _spawnTargetName.Length > 0 ? _spawnTargetName
+                          : _targetPlayerName.Length > 0 ? _targetPlayerName
+                          : targetId > 0 ? targetId.ToString() : "@p";
+
+        int repeatN = _spawnRepeatMode ? _spawnRepeatN : 1;
+        int delay   = _spawnRepeatDelay;
+
+        Task.Run(async () =>
+        {
+            for (int r = 0; r < repeatN; r++)
+            {
+                byte[]? pkt = null;
+                string  desc;
+
+                switch (method)
+                {
+                    case 0: // Raw 0x2A give packet
+                        var raw = new List<byte> { 0x2A };
+                        raw.AddRange(BitConverter.GetBytes(_spawnItemId));
+                        raw.AddRange(BitConverter.GetBytes(_spawnCount));
+                        raw.AddRange(BitConverter.GetBytes(targetId));
+                        pkt  = raw.ToArray();
+                        desc = $"0x2A packet (item={_spawnItemId} ×{_spawnCount} → {targetId})";
+                        break;
+                    case 1: // /give
+                        pkt  = BuildChatPacket($"/give {targetName} {_spawnItemId} {_spawnCount}", false);
+                        desc = $"/give {targetName} {_spawnItemId} {_spawnCount}";
+                        break;
+                    case 2: // /i
+                        pkt  = BuildChatPacket($"/i {_spawnItemId} {_spawnCount}", false);
+                        desc = $"/i {_spawnItemId} {_spawnCount}";
+                        break;
+                    case 3: // /spawnitem
+                        pkt  = BuildChatPacket($"/spawnitem {_spawnItemId} {_spawnCount}", false);
+                        desc = $"/spawnitem {_spawnItemId} {_spawnCount}";
+                        break;
+                    case 4: // /item
+                        pkt  = BuildChatPacket($"/item {_spawnItemId} {_spawnCount}", false);
+                        desc = $"/item {_spawnItemId} {_spawnCount}";
+                        break;
+                    case 5: // Custom
+                        string cmd = _spawnCustomCmd
+                            .Replace("{item}", _spawnItemId.ToString())
+                            .Replace("{count}", _spawnCount.ToString())
+                            .Replace("{target}", targetName);
+                        pkt  = BuildChatPacket(cmd, false);
+                        desc = cmd;
+                        break;
+                    default:
+                        return;
+                }
+
+                if (pkt != null)
+                {
+                    SendRaw(pkt);
+                    _log.Info($"[SpawnItems] [{SpawnMethods[method]}] {desc} {(repeatN > 1 ? $"({r+1}/{repeatN})" : "")}");
+                }
+
+                if (delay > 0 && r < repeatN - 1)
+                    await Task.Delay(delay);
+            }
+            _log.Success($"[SpawnItems] Done — method '{SpawnMethods[method]}' × {repeatN}");
+        });
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // SUB-TAB: ADMIN REPLAY
+    // ══════════════════════════════════════════════════════════════════════
+
+    private void RenderAdminReplay(float w)
+    {
+        // Refresh admin action list on new packets
+        var pkts = _capture.GetPackets();
+        if (pkts.Count != _arLastPktCount)
+        {
+            ScanTokensAndAdminActions(pkts);
+            _arLastPktCount = pkts.Count;
+        }
+
+        UiHelper.SectionBox("ADMIN ACTION INTERCEPTOR", w, 80, () =>
+        {
+            UiHelper.MutedLabel("Captures packets that appear to come from or affect admin players.");
+            UiHelper.MutedLabel("Replay them as yourself to test if admin-only actions are sender-validated.");
+            ImGui.Spacing();
+            UiHelper.SecondaryButton("Re-Scan##arrescan", 120, 26, () =>
+            {
+                _adminActions.Clear();
+                ScanTokensAndAdminActions(_capture.GetPackets());
+                _log.Info($"[AdminReplay] {_adminActions.Count} admin action candidates found.");
+            });
+            ImGui.SameLine(0, 8);
+            UiHelper.MutedLabel($"{_adminActions.Count} actions detected");
+        });
+
+        ImGui.Spacing();
+
+        // Action list
+        float listH = ImGui.GetContentRegionAvail().Y - 90;
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
+        ImGui.BeginChild("##ar_list", new Vector2(w, listH), ImGuiChildFlags.Border);
+        ImGui.PopStyleColor();
+
+        UiHelper.MutedLabel($"  {"#",-3} {"Dir",-5} {"Op",-6} {"Size",-6} {"At",-10} Reason");
+        var dlh = ImGui.GetWindowDrawList();
+        float hy = ImGui.GetCursorScreenPos().Y - 1;
+        dlh.AddLine(new Vector2(ImGui.GetWindowPos().X, hy),
+                    new Vector2(ImGui.GetWindowPos().X + w, hy),
+                    ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColBorder));
+
+        if (_adminActions.Count == 0)
+        {
+            ImGui.SetCursorPosX(12);
+            UiHelper.MutedLabel("No admin actions captured yet.");
+            ImGui.SetCursorPosX(12);
+            UiHelper.MutedLabel("Capture traffic while an admin is online and active.");
+        }
+
+        for (int ai = 0; ai < _adminActions.Count; ai++)
+        {
+            var  action = _adminActions[ai];
+            bool sel    = _arSelectedIdx == ai;
+
+            if (sel)
+            {
+                var sp = ImGui.GetCursorScreenPos();
+                ImGui.GetWindowDrawList().AddRectFilled(sp, sp + new Vector2(w, 22),
+                    ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColWarnDim));
+            }
+
+            var dirCol = action.Direction == PacketDirection.ClientToServer
+                ? MenuRenderer.ColBlue : MenuRenderer.ColAccent;
+
+            ImGui.PushStyleColor(ImGuiCol.Text, dirCol);
+            ImGui.TextUnformatted($"  [{ai+1,-2}] {(action.Direction == PacketDirection.ClientToServer ? "C→S" : "S→C"),-5}");
+            ImGui.PopStyleColor();
+            ImGui.SameLine(0, 4);
+            UiHelper.MutedLabel($"0x{action.Opcode:X2}   {action.Data.Length,-6} {action.At:HH:mm:ss,-10} {action.Reason}");
+
+            // Replay inline
+            ImGui.SameLine(w - 75);
+            UiHelper.WarnButton($"▶##arrep{ai}", 30, 18, () =>
+            {
+                _arSelectedIdx = ai;
+                DoReplay(action);
+            });
+            ImGui.SameLine(0, 2);
+            UiHelper.SecondaryButton($"→HS##ar2hs{ai}", 40, 18, () =>
+            {
+                _hsCapturedHex  = BytesToHex(action.Data, action.Data.Length);
+                _hsReuseCapture = true;
+                _subTab         = 1;
+            });
+
+            if (ImGui.Selectable($"##arsel{ai}", sel, ImGuiSelectableFlags.None, new Vector2(w - 82, 22)))
+                _arSelectedIdx = ai;
+        }
+
+        ImGui.EndChild();
+
+        // Selected action detail + controls
+        if (_arSelectedIdx >= 0 && _arSelectedIdx < _adminActions.Count)
+        {
+            var action = _adminActions[_arSelectedIdx];
+            ImGui.Spacing();
+            UiHelper.SectionBox("REPLAY CONTROLS", w, 80, () =>
+            {
+                UiHelper.MutedLabel($"Packet: {BytesToHex(action.Data, 40)}");
+                ImGui.Spacing();
+                ImGui.SetNextItemWidth(80); ImGui.InputInt("Count##arrc", ref _arReplayCount);
+                _arReplayCount = Math.Clamp(_arReplayCount, 1, 500);
+                ImGui.SameLine(0, 8);
+                ImGui.SetNextItemWidth(80); ImGui.InputInt("Delay ms##arrd", ref _arReplayDelay);
+                _arReplayDelay = Math.Max(0, _arReplayDelay);
+                ImGui.SameLine(0, 12);
+                UiHelper.WarnButton($"Replay ×{_arReplayCount}##arrepN", 140, 28, () =>
+                {
+                    int count = _arReplayCount, delay = _arReplayDelay;
+                    var data  = action.Data;
+                    Task.Run(async () =>
+                    {
+                        for (int r = 0; r < count; r++)
+                        {
+                            SendRaw(data);
+                            _log.Info($"[AdminReplay] #{r+1}/{count}: 0x{data[0]:X2} {data.Length}b");
+                            if (delay > 0) await Task.Delay(delay);
+                        }
+                        _log.Success($"[AdminReplay] Done × {count}.");
+                        AlertBus.Push(AlertBus.Sec_Privilege, AlertLevel.Warn,
+                            $"Admin action replayed ×{count}: 0x{data[0]:X2}");
+                    });
+                });
+            });
+        }
+
+        ImGui.Spacing();
+        RenderHowTo(
+            "1. Start proxy in Capture tab",
+            "2. Have an admin online — watch them perform privileged actions",
+            "3. Their action packets appear here, flagged by opcode / ID patterns",
+            "4. Select an action and click ▶ to replay it as your session",
+            "5. Server accepts = it validates sender-side only at login, not per-packet",
+            "6. Use '→HS' to load the packet into Handshake Tamper for deeper mutation");
+    }
+
+    private void DoReplay(AdminActionEntry action)
+    {
+        SendRaw(action.Data);
+        _log.Info($"[AdminReplay] Replayed 0x{action.Opcode:X2} {action.Data.Length}b.");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // TOKEN + ADMIN ACTION SCANNER
+    // ══════════════════════════════════════════════════════════════════════
+
+    private void ScanTokensAndAdminActions(List<CapturedPacket> packets)
+    {
+        var newPkts = packets.Skip(Math.Max(0, packets.Count - 100)).ToList();
+
+        foreach (var pkt in newPkts)
+        {
+            if (pkt.RawBytes.Length < 8) continue;
+
+            // ── Token detection: high-entropy runs of >= 16 consecutive bytes ──
+            int runStart = -1, runLen = 0;
+            for (int i = 1; i < pkt.RawBytes.Length; i++)
+            {
+                byte b = pkt.RawBytes[i];
+                bool isHighEntropy = (b > 0x1F && b < 0x7F) || b > 0x9F;
+                if (isHighEntropy) { if (runStart < 0) runStart = i; runLen++; }
+                else
+                {
+                    if (runLen >= 16)
+                    {
+                        byte[] tokenBytes = new byte[runLen];
+                        Array.Copy(pkt.RawBytes, runStart, tokenBytes, 0, runLen);
+                        float entropy = ShannonEntropy(tokenBytes);
+                        if (entropy > 3.5f && !_tokens.Any(t =>
+                            t.Opcode == pkt.RawBytes[0] && t.Offset == runStart))
+                        {
+                            _tokens.Add(new TokenEntry
+                            {
+                                Opcode     = pkt.RawBytes[0],
+                                Direction  = pkt.Direction,
+                                Offset     = runStart,
+                                TokenBytes = tokenBytes,
+                                FullPacket = (byte[])pkt.RawBytes.Clone(),
+                                At         = pkt.Timestamp,
+                            });
+                        }
+                    }
+                    runStart = -1; runLen = 0;
+                }
+            }
+
+            // ── Admin action detection: opcodes associated with admin commands ──
+            byte op = pkt.RawBytes[0];
+            bool isAdminOpcode =
+                op == 0x50 || op == 0x51 || op == 0x52 ||   // typical admin ops
+                op == 0x60 || op == 0x61 || op == 0x70 ||
+                op == 0x2A ||                                  // give item
+                (op == 0x01 && pkt.RawBytes.Length > 3 &&     // chat with / = command
+                 pkt.RawBytes[3] == '/');
+
+            if (isAdminOpcode && !_adminActions.Any(a =>
+                a.Opcode == op && a.Data.Length == pkt.RawBytes.Length &&
+                a.Data.SequenceEqual(pkt.RawBytes)))
+            {
+                string reason = op switch
+                {
+                    0x2A => "Give/spawn item packet",
+                    0x01 => "Command packet (/ prefix)",
+                    0x50 or 0x51 or 0x52 => "Admin opcode range (0x50–0x52)",
+                    0x60 or 0x61 => "Admin opcode range (0x60–0x61)",
+                    0x70 => "Admin opcode 0x70",
+                    _ => $"Flagged opcode 0x{op:X2}",
+                };
+                _adminActions.Add(new AdminActionEntry
+                {
+                    Opcode    = op,
+                    Direction = pkt.Direction,
+                    Data      = (byte[])pkt.RawBytes.Clone(),
+                    Reason    = reason,
+                    At        = pkt.Timestamp,
+                });
+                AlertBus.Push(AlertBus.Sec_Privilege, AlertLevel.Warn,
+                    $"Admin action captured: {reason}");
+            }
+        }
+
+        // Cap lists
+        while (_tokens.Count > 50)        _tokens.RemoveAt(0);
+        while (_adminActions.Count > 100) _adminActions.RemoveAt(0);
+    }
+
+    private static float ShannonEntropy(byte[] data)
+    {
+        if (data.Length == 0) return 0;
+        int[] freq = new int[256];
+        foreach (byte b in data) freq[b]++;
+        double e = 0, len = data.Length;
+        for (int i = 0; i < 256; i++)
+        {
+            if (freq[i] == 0) continue;
+            double p = freq[i] / len;
+            e -= p * Math.Log2(p);
+        }
+        return (float)e;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
     // STATUS BAR + AUTO-FILL BAR
     // ══════════════════════════════════════════════════════════════════════
 
@@ -1832,14 +2437,32 @@ public class ProbeEntry
 
 // ── Supporting types ──────────────────────────────────────────────────────────
 
-/// <summary>
-/// A player ID candidate identified from packet traffic, used to populate
-/// the Admin Candidates sidebar in the Privilege Escalation tab.
-/// </summary>
+/// <summary>A player ID candidate identified from packet traffic.</summary>
 public class AdminCandidate
 {
     public int     PlayerId { get; set; }
-    public int     Seen     { get; set; }   // occurrence count in captured packets
-    public string? Name     { get; set; }   // player name if found in string fields
-    public int     Score    { get; set; }   // raw confidence score from schema discovery
+    public int     Seen     { get; set; }
+    public string? Name     { get; set; }
+    public int     Score    { get; set; }
+}
+
+/// <summary>A high-entropy byte run extracted from a captured packet — potential auth token.</summary>
+public sealed class TokenEntry
+{
+    public byte             Opcode    { get; set; }
+    public PacketDirection  Direction { get; set; }
+    public int              Offset    { get; set; }
+    public byte[]           TokenBytes { get; set; } = Array.Empty<byte>();
+    public byte[]           FullPacket { get; set; } = Array.Empty<byte>();
+    public DateTime         At        { get; set; }
+}
+
+/// <summary>A captured packet flagged as a potential admin action.</summary>
+public sealed class AdminActionEntry
+{
+    public byte             Opcode    { get; set; }
+    public PacketDirection  Direction { get; set; }
+    public byte[]           Data      { get; set; } = Array.Empty<byte>();
+    public string           Reason    { get; set; } = "";
+    public DateTime         At        { get; set; }
 }

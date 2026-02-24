@@ -29,6 +29,12 @@ public class PacketBookTab : ITab
     private int    _replayCount  = 5;
     private int    _replayDelay  = 50;
 
+    // ── Search + tag filter ───────────────────────────────────────────────
+    private string _searchText   = "";
+    private string _tagFilter    = "";
+    private string _newTagInput  = "";
+    private int    _sortMode     = 0;   // 0=saved-at  1=opcode  2=size  3=label
+
     public PacketBookTab(TestLog log, PacketStore store, UdpProxy udpProxy,
                           PacketCapture capture, ServerConfig config)
     {
@@ -54,7 +60,48 @@ public class PacketBookTab : ITab
         ImGui.PopStyleColor();
         ImGui.Spacing();
 
+        // ── Search + sort toolbar ──────────────────────────────────────────
+        ImGui.SetNextItemWidth(listW - 16);
+        ImGui.InputText("##pbsearch", ref _searchText, 64);
+        if (_searchText.Length == 0)
+        {
+            var dl2 = ImGui.GetWindowDrawList();
+            var p2  = ImGui.GetItemRectMin();
+            dl2.AddText(p2 + new Vector2(6, 3),
+                ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColTextMuted), "Search…");
+        }
+        ImGui.Spacing();
+        ImGui.SetNextItemWidth(listW - 16);
+        ImGui.InputText("Tag##pbtag", ref _tagFilter, 32);
+        ImGui.Spacing();
+        ImGui.SetNextItemWidth(listW - 16);
+        ImGui.Combo("Sort##pbsort", ref _sortMode, new[] { "Newest", "Opcode", "Size", "Label" }, 4);
+        ImGui.Spacing();
+
         var packets = _store.GetAll();
+
+        // Apply search/filter
+        var filtered = packets.AsEnumerable();
+        if (_searchText.Length > 0)
+        {
+            string su = _searchText.ToLower();
+            filtered = filtered.Where(p =>
+                p.Label.ToLower().Contains(su) ||
+                p.Notes.ToLower().Contains(su) ||
+                p.HexString.ToLower().Contains(su) ||
+                p.Tags.Any(t => t.ToLower().Contains(su)));
+        }
+        if (_tagFilter.Length > 0)
+            filtered = filtered.Where(p => p.Tags.Any(t =>
+                t.ToLower().Contains(_tagFilter.ToLower())));
+
+        var sortedList = _sortMode switch
+        {
+            1 => filtered.OrderBy(p => p.ToBytes().Length > 0 ? p.ToBytes()[0] : 0).ToList(),
+            2 => filtered.OrderByDescending(p => p.ToBytes().Length).ToList(),
+            3 => filtered.OrderBy(p => p.Label).ToList(),
+            _ => filtered.OrderByDescending(p => p.SavedAt).ToList(),
+        };
 
         if (packets.Count == 0)
         {
@@ -69,16 +116,25 @@ public class PacketBookTab : ITab
         var dl = ImGui.GetWindowDrawList();
         var lp = ImGui.GetWindowPos();
 
-        for (int i = 0; i < packets.Count; i++)
+        // Show filter hint
+        if (sortedList.Count < packets.Count)
         {
-            var  pkt = packets[i];
+            ImGui.SetCursorPosX(8);
+            UiHelper.MutedLabel($"{sortedList.Count}/{packets.Count} shown");
+            ImGui.Spacing();
+        }
+
+        for (int i = 0; i < sortedList.Count; i++)
+        {
+            var  pkt = sortedList[i];
+            int  globalIdx = packets.IndexOf(pkt);
             bool cs  = pkt.Direction == PacketDirection.ClientToServer;
             var  col = cs ? MenuRenderer.ColBlue : MenuRenderer.ColAccent;
 
-            if (_selectedIdx == i)
+            if (_selectedIdx == globalIdx)
             {
                 var sp = ImGui.GetCursorScreenPos();
-                dl.AddRectFilled(sp, sp + new Vector2(listW, 44),
+                dl.AddRectFilled(sp, sp + new Vector2(listW, 54),
                     ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColAccentDim));
             }
 
@@ -90,6 +146,19 @@ public class PacketBookTab : ITab
             UiHelper.MutedLabel(
                 $"{pkt.Direction.ToString()[..1]}→  {pkt.ToBytes().Length}b  " +
                 $"saved {pkt.SavedAt:HH:mm dd/MM}");
+            if (pkt.Tags.Count > 0)
+            {
+                ImGui.SetCursorPosX(12);
+                foreach (var tag in pkt.Tags.Take(4))
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBlueDim);
+                    ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColBlue);
+                    ImGui.Button($"#{tag}##tag_{pkt.Label}_{tag}", new Vector2(0, 14));
+                    ImGui.PopStyleColor(2);
+                    ImGui.SameLine(0, 2);
+                }
+                ImGui.NewLine();
+            }
             if (!string.IsNullOrEmpty(pkt.Notes))
             {
                 ImGui.SetCursorPosX(12);
@@ -98,11 +167,12 @@ public class PacketBookTab : ITab
             }
 
             // Invisible selectable over the block
-            ImGui.SetCursorPosY(ImGui.GetCursorPosY() - 48);
-            if (ImGui.Selectable($"##pbs{i}", _selectedIdx == i,
-                ImGuiSelectableFlags.None, new Vector2(listW - 12, 48)))
+            float rowH = pkt.Tags.Count > 0 ? 60 : (pkt.Notes.Length > 0 ? 60 : 48);
+            ImGui.SetCursorPosY(ImGui.GetCursorPosY() - rowH);
+            if (ImGui.Selectable($"##pbs{globalIdx}", _selectedIdx == globalIdx,
+                ImGuiSelectableFlags.None, new Vector2(listW - 12, rowH)))
             {
-                _selectedIdx = i;
+                _selectedIdx = globalIdx;
                 _editing     = false;
             }
             ImGui.Separator();
@@ -117,7 +187,9 @@ public class PacketBookTab : ITab
         ImGui.PopStyleColor();
 
         if (_selectedIdx >= 0 && _selectedIdx < packets.Count)
+        {
             RenderDetail(packets[_selectedIdx], detW);
+        }
         else
         {
             ImGui.SetCursorPosY(h * 0.4f);
@@ -145,6 +217,41 @@ public class PacketBookTab : ITab
         if (data.Length > 0)
             UiHelper.StatusRow("Packet ID", $"0x{data[0]:X2}", true, 90);
         UiHelper.StatusRow("Saved",     pkt.SavedAt.ToString("HH:mm dd/MM/yy"), true, 90);
+
+        // ── Tag editor ────────────────────────────────────────────────────
+        ImGui.Spacing();
+        ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccentMid);
+        ImGui.TextUnformatted("TAGS");
+        ImGui.PopStyleColor();
+        ImGui.Spacing();
+        foreach (var tag in pkt.Tags.ToList())
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBlueDim);
+            ImGui.PushStyleColor(ImGuiCol.Text,   MenuRenderer.ColBlue);
+            if (ImGui.Button($"#{tag}##dettag_{tag}", new Vector2(0, 20)))
+            {
+                pkt.Tags.Remove(tag);
+                _store.Save(pkt.Label, pkt.Notes, pkt.ToBytes(), pkt.Direction,
+                    pkt.Tags.ToArray());
+            }
+            ImGui.PopStyleColor(2);
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Click to remove");
+            ImGui.SameLine(0, 4);
+        }
+        ImGui.NewLine();
+        ImGui.SetNextItemWidth(100); ImGui.InputText("##pbtaginput", ref _newTagInput, 24);
+        ImGui.SameLine(0, 4);
+        UiHelper.SecondaryButton("Add Tag##pbtagadd", 80, 20, () =>
+        {
+            string t = _newTagInput.Trim().ToLower().Replace(" ", "_");
+            if (t.Length > 0 && !pkt.Tags.Contains(t))
+            {
+                pkt.Tags.Add(t);
+                _store.Save(pkt.Label, pkt.Notes, pkt.ToBytes(), pkt.Direction,
+                    pkt.Tags.ToArray());
+            }
+            _newTagInput = "";
+        });
         if (!string.IsNullOrEmpty(pkt.Notes))
         {
             ImGui.Spacing();
