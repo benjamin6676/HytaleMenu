@@ -116,7 +116,7 @@ public class EntityTracker
                 field.ResolvedName = entity.Name;
 
             // Track packet in ring buffer
-            entity.AddPacketRef(sp.Opcode, sp.Raw.Timestamp);
+            entity.AddPacketRef((byte)sp.Opcode, sp.Raw.Timestamp);
         }
 
         // Slot-map update for container desync detection
