@@ -129,6 +129,8 @@ public class SmartDetectionEngine : IDisposable
                 }
                 PurgeStaleEntities();
                 AutoPinHighConfidenceItems();
+                SyncNamesToConfirmedItems();     // back-fill NameHints once IdNameMap has data
+                SyncNamesToPkt4AEntities();
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -706,21 +708,39 @@ public class SmartDetectionEngine : IDisposable
     private static readonly Regex JunkRx =
         new(@"\.", RegexOptions.Compiled);  // dots = serialisation fragment
 
+    // Acceptable player name: 3-16 alphanumeric, starts with letter, lowercase present
+    private static readonly Regex PlayerNameRx =
+        new(@"^[A-Za-z][A-Za-z0-9]{2,15}$", RegexOptions.Compiled);
+
+    // Valid Hytale item/block namespace
+    private static readonly Regex HytaleNamespaceRx =
+        new(@"^hytale:[a-z][a-z0-9_]{2,31}$", RegexOptions.Compiled);
+
+    // Snake-case identifiers (item tags like oak_log, iron_sword)
+    private static readonly Regex SnakeCaseRx =
+        new(@"^[a-z][a-z0-9]{1,15}_[a-z0-9_]{2,24}$", RegexOptions.Compiled);
+
     private static bool IsHighQualityName(string s)
     {
-        if (s.Length < 3) return false;
+        if (s.Length < 3 || s.Length > 32) return false;
         if (s.All(char.IsDigit)) return false;
+        // Must have at least one lowercase letter (rejects ALL_CAPS junk like DR9, FC2, etc.)
+        if (!s.Any(char.IsLower)) return false;
         if (s.Distinct().Count() < 2) return false;
         if (JunkRx.IsMatch(s)) return false;
-        // Must have at least one letter
-        if (!s.Any(char.IsLetter)) return false;
-        // Hytale-namespace: always accept
-        if (s.StartsWith("hytale:", StringComparison.Ordinal)) return true;
-        // Must be at least 4 chars unless it contains _
-        if (s.Length < 4 && !s.Contains('_')) return false;
-        // All-uppercase short strings are likely hex junk
-        if (s.Length <= 6 && s.All(c => char.IsUpper(c) || char.IsDigit(c))) return false;
-        return true;
+        // Hytale namespace - always accept
+        if (HytaleNamespaceRx.IsMatch(s)) return true;
+        // Snake-case item tag - accept
+        if (SnakeCaseRx.IsMatch(s)) return true;
+        // Player name format: 3-16 chars, alphanumeric, starts with letter
+        if (PlayerNameRx.IsMatch(s))
+        {
+            // Reject very short all-uppercase-heavy strings (DR9, FC2, etc.)
+            int upperCount = s.Count(char.IsUpper);
+            if (upperCount > s.Length / 2 && s.Length < 5) return false;
+            return true;
+        }
+        return false;
     }
 
     private void ProcessAutoNaming(byte[] data)
@@ -729,38 +749,93 @@ public class SmartDetectionEngine : IDisposable
         {
             uint id = BitConverter.ToUInt32(data, i);
             if ((id < 100 || id > 9_999) && (id < 1_000 || id > 4_000_000)) continue;
-            if (IdNameMap.ContainsKey(id)) continue;
 
-            int winStart = Math.Max(0, i - 64);
-            int winEnd   = Math.Min(data.Length, i + 4 + 64);
-            string window = Encoding.UTF8.GetString(data, winStart, winEnd - winStart)
-                .Replace("\0", " ");
+            // Already have a good name - skip
+            if (IdNameMap.TryGetValue(id, out var existing) && IsHighQualityName(existing))
+                continue;
 
-            // Walk matches in priority order - prefer Hytale-namespace first
-            Match? best = null;
-            foreach (Match m in ItemNameRx.Matches(window))
+            // Gather any per-ID blacklisted names
+            _blacklistedNames.TryGetValue(id, out var blacklisted);
+
+            // --- 128-byte UTF-8 window ---
+            int winStart = Math.Max(0, i - 128);
+            int winEnd   = Math.Min(data.Length, i + 4 + 128);
+            int winLen   = winEnd - winStart;
+
+            string utf8Window = "";
+            try { utf8Window = Encoding.UTF8.GetString(data, winStart, winLen).Replace("\0", " "); }
+            catch { }
+
+            // --- UTF-16 LE window (Update 3 may use wide strings) ---
+            string utf16Window = "";
+            try
             {
-                string candidate = m.Value;
-                if (!IsHighQualityName(candidate)) continue;
-                // Prefer hytale: prefix over anything else
-                if (best == null || candidate.StartsWith("hytale:"))
+                // Only attempt if we have an even number of bytes
+                int w16Start = (winStart % 2 == 0) ? winStart : winStart + 1;
+                int w16Len   = Math.Min(winLen & ~1, data.Length - w16Start);
+                if (w16Len >= 4)
+                    utf16Window = Encoding.Unicode.GetString(data, w16Start, w16Len)
+                                           .Replace("\0", " ");
+            }
+            catch { }
+
+            // --- Try both windows, collect candidates ---
+            string? bestName = null;
+            int     bestScore = 0;
+
+            foreach (string windowText in new[] { utf8Window, utf16Window })
+            {
+                if (string.IsNullOrEmpty(windowText)) continue;
+                foreach (Match m in ItemNameRx.Matches(windowText))
                 {
-                    best = m;
-                    if (candidate.StartsWith("hytale:")) break;
+                    string candidate = m.Value;
+                    if (!IsHighQualityName(candidate)) continue;
+                    // Skip blacklisted names for this ID
+                    if (blacklisted != null) { lock (blacklisted) { if (blacklisted.Contains(candidate)) continue; } }
+
+                    // Score: hytale: = 100, snake_case = 60, player = 40
+                    int score = HytaleNamespaceRx.IsMatch(candidate) ? 100
+                              : SnakeCaseRx.IsMatch(candidate)       ? 60
+                                                                      : 40;
+                    // Proximity bonus: closer to ID bytes = better
+                    int dist = Math.Abs(m.Index - (i - winStart));
+                    score += Math.Max(0, 50 - dist);
+
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        bestName  = candidate;
+                    }
                 }
             }
 
-            if (best == null) continue;
-            string name = best.Value;
-            IdNameMap[id] = name;
-            string bookLabel = $"Schema:{id}={name}";
+            if (bestName == null || bestScore < 50) continue;  // minimum confidence threshold
+
+            IdNameMap[id] = bestName;
+
+            // Context-aware tagging: set EntityClass based on content
+            bool isHytaleItem = HytaleNamespaceRx.IsMatch(bestName) || SnakeCaseRx.IsMatch(bestName);
+            bool isMoving     = DeltaClassifications.TryGetValue(id, out var dc)
+                                    && dc == DeltaClass.Dynamic;
+            if (isHytaleItem && !isMoving)
+                EntityClassifications[id] = EntityClass.Item;
+            else if (!isHytaleItem && isMoving)
+                EntityClassifications[id] = EntityClass.Player;
+
+            string bookLabel = $"Schema:{id}={bestName}";
             if (_store.Get(bookLabel) == null)
             {
                 _store.Save(bookLabel,
-                    $"Auto-named: ID {id} found with string '{name}' (within 16 bytes)",
+                    $"Auto-named: ID {id} -> '{bestName}' (score={bestScore})",
                     BitConverter.GetBytes(id), PacketDirection.ServerToClient);
-                _log.Success($"[SmartDetect] Auto-named: {id} -> '{name}' -> Book.");
+                _log.Success($"[SmartDetect] Auto-named: {id} -> '{bestName}' (score {bestScore})");
             }
+
+            // Back-fill existing entries
+            if (ConfirmedItems.TryGetValue(id, out var ci)  && string.IsNullOrEmpty(ci.NameHint))
+                ci.NameHint  = bestName;
+            if (Pkt4AEntities.TryGetValue(id, out var p4a) && string.IsNullOrEmpty(p4a.NameHint))
+                p4a.NameHint = bestName;
         }
     }
 
@@ -829,6 +904,74 @@ public class SmartDetectionEngine : IDisposable
     //   a) it has a resolved name in IdNameMap, OR
     //   b) it has a non-zero slot index (not in slot 0) which implies real inventory,  OR
     //   c) its stack count is unusual (>1 and non-default values like 64)
+
+    // ── Name sync: back-fill NameHints after IdNameMap is updated ─────────
+    //
+    // Problem: ConfirmedItem and Pkt4AEntry get their NameHint set only at the
+    // moment they are first created/updated.  If IdNameMap is populated LATER
+    // (e.g. from a subsequent packet or manual entry), the Name column stays
+    // empty.  This method runs every loop pass and propagates new names.
+
+    private void SyncNamesToConfirmedItems()
+    {
+        foreach (var kv in ConfirmedItems)
+        {
+            if (!string.IsNullOrEmpty(kv.Value.NameHint)) continue;
+            if (!IdNameMap.TryGetValue(kv.Key, out var name)) continue;
+            if (!IsHighQualityName(name)) continue;
+            kv.Value.NameHint = name;
+        }
+    }
+
+    private void SyncNamesToPkt4AEntities()
+    {
+        foreach (var kv in Pkt4AEntities)
+        {
+            if (!string.IsNullOrEmpty(kv.Value.NameHint)) continue;
+            if (!IdNameMap.TryGetValue(kv.Key, out var name)) continue;
+            if (!IsHighQualityName(name)) continue;
+            kv.Value.NameHint = name;
+        }
+    }
+
+    // ── Manual name registration (right-click -> Manually Name ID) ────────
+
+    /// <summary>
+    /// Manually assign a name to an ID.  Saved to config.json immediately.
+    /// Clears any blacklisted state for the same ID.
+    /// </summary>
+    public void ManuallyNameId(uint id, string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return;
+        name = name.Trim();
+        IdNameMap[id] = name;
+        GlobalConfig.Instance.SetName(id, name);
+        _blacklistedNames.TryRemove(id, out _);
+        // Back-fill any existing entries
+        if (ConfirmedItems.TryGetValue(id, out var ci))  ci.NameHint  = name;
+        if (Pkt4AEntities.TryGetValue(id, out var p4a)) p4a.NameHint = name;
+        _log.Success($"[SmartDetect] Manual name: ID {id} -> '{name}' saved to config.json.");
+    }
+
+    /// <summary>
+    /// Blacklist a name for a specific ID — remove it and keep scanning.
+    /// </summary>
+    public void BlacklistNameForId(uint id, string badName)
+    {
+        if (!_blacklistedNames.TryGetValue(id, out var set))
+            _blacklistedNames[id] = set = new();
+        lock (set) set.Add(badName);
+        // Remove from IdNameMap so it re-scans
+        IdNameMap.TryRemove(id, out _);
+        if (ConfirmedItems.TryGetValue(id, out var ci) && ci.NameHint == badName)
+            ci.NameHint = "";
+        if (Pkt4AEntities.TryGetValue(id, out var p4a) && p4a.NameHint == badName)
+            p4a.NameHint = "";
+        _log.Info($"[SmartDetect] Blacklisted '{badName}' for ID {id} - will rescan.");
+    }
+
+    // Thread-safe blacklist store
+    private readonly ConcurrentDictionary<uint, HashSet<string>> _blacklistedNames = new();
 
     private void AutoPinHighConfidenceItems()
     {

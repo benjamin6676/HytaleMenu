@@ -100,6 +100,15 @@ public class ItemInspectorTab : ITab
     private uint  _ctxMenuId    = 0;
     private bool  _ctxMenuOpen  = false;
 
+    // Manual name entry modal
+    private bool   _manualNameOpen = false;
+    private uint   _manualNameId   = 0;
+    private string _manualNameBuf  = "";
+
+    // Last hovered entity (for F9 Lock hotkey)
+    private uint  _lastHoveredEntityId = 0;
+    private string _lastHoveredName    = "";
+
     public DetectedItem? PinnedItem => _pinnedItem;
 
     public ItemInspectorTab(TestLog log, PacketCapture capture,
@@ -125,6 +134,38 @@ public class ItemInspectorTab : ITab
 
         RenderStatusBar(w);
         ImGui.Spacing(); ImGui.Spacing();
+
+        // ── Manual Name Entry modal ───────────────────────────────────────
+        if (_manualNameOpen)
+        {
+            ImGui.OpenPopup("##manualname_modal");
+            _manualNameOpen = false;
+        }
+        if (ImGui.BeginPopupModal("##manualname_modal", ref _manualNameOpen,
+                ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoTitleBar))
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccentMid);
+            ImGui.TextUnformatted($"Manually Name ID: {_manualNameId}  (0x{_manualNameId:X})");
+            ImGui.PopStyleColor();
+            ImGui.Spacing();
+            ImGui.SetNextItemWidth(300);
+            ImGui.InputText("##mnamedInput", ref _manualNameBuf, 64);
+            ImGui.Spacing();
+            ImGui.PushStyleColor(ImGuiCol.Button,        MenuRenderer.ColAccentDim);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, MenuRenderer.ColAccent with { W = 0.4f });
+            ImGui.PushStyleColor(ImGuiCol.Text,          MenuRenderer.ColAccent);
+            if (ImGui.Button("Save##mnameSave", new System.Numerics.Vector2(90, 26)))
+            {
+                if (!string.IsNullOrWhiteSpace(_manualNameBuf))
+                    _smart.ManuallyNameId(_manualNameId, _manualNameBuf.Trim());
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.PopStyleColor(3);
+            ImGui.SameLine(0, 8);
+            if (ImGui.Button("Cancel##mnameCancel", new System.Numerics.Vector2(80, 26)))
+                ImGui.CloseCurrentPopup();
+            ImGui.EndPopup();
+        }
 
         // Throttled auto-scan
         // Cache packet list ONCE per frame - GetPackets() copies 348k items each call
@@ -399,7 +440,7 @@ public class ItemInspectorTab : ITab
                     ? new Vector4(0.18f, 0.65f, 0.95f, 1f)  // blue = local player
                     : ent.IsDynamic ? MenuRenderer.ColAccent : MenuRenderer.ColWarn;
 
-                string displayIcon = ent.IsLocalPlayer ? "[*]" : ent.IsDynamic ? ">" : "■";
+                string displayIcon = ent.IsLocalPlayer ? "[*]" : ent.IsDynamic ? ">" : "[=]";
                 string displayHint = ent.IsLocalPlayer
                     ? " LocalPlayer"
                     : string.IsNullOrEmpty(ent.NameHint) ? ""
@@ -453,7 +494,7 @@ public class ItemInspectorTab : ITab
         ImGui.Spacing();
 
         // ── Delta Watcher - Static vs Dynamic classification ──────────────
-        var delta = _smart.DeltaClassifications.ToList();
+        var delta = _smart.DeltaClassifications.ToArray();
         if (delta.Count > 0)
         {
             ImGui.SetCursorPosX(4);
@@ -470,7 +511,7 @@ public class ItemInspectorTab : ITab
                 bool stat = kv.Value == DeltaClass.Static;
                 ImGui.PushStyleColor(ImGuiCol.Text,
                     stat ? MenuRenderer.ColWarn : MenuRenderer.ColAccent);
-                ImGui.TextUnformatted($"  {(stat ? "■" : ">")} {kv.Key,-8} {(stat ? "Static" : "Dynamic")}");
+                ImGui.TextUnformatted($"  {(stat ? "[=]" : ">")} {kv.Key,-8} {(stat ? "Static" : "Dynamic")}");
                 ImGui.PopStyleColor();
             }
             ImGui.EndChild();
@@ -478,7 +519,7 @@ public class ItemInspectorTab : ITab
         }
 
         // ── Auto-Named IDs ────────────────────────────────────────────────
-        var names = _smart.IdNameMap.ToList();
+        var names = _smart.IdNameMap.ToArray();
         if (names.Count > 0)
         {
             ImGui.SetCursorPosX(4);
@@ -701,6 +742,21 @@ public class ItemInspectorTab : ITab
                         _config.SetTargetItemId((int)it.ItemId, "Spoofer via context menu");
                         _log.Success($"[Inspector] {it.ItemId} -> Target (Spoofer).");
                     }
+                    ImGui.Separator();
+                    // Manual Name Entry
+                    if (ImGui.MenuItem("Manually Name this ID..."))
+                    {
+                        _manualNameId    = (uint)it.ItemId;
+                        _manualNameBuf   = it.NameHint ?? "";
+                        _manualNameOpen  = true;
+                    }
+                    // Blacklist current bad name
+                    if (!string.IsNullOrEmpty(it.NameHint)
+                        && ImGui.MenuItem($"Blacklist name '{it.NameHint}' (keep scanning)"))
+                    {
+                        _smart.BlacklistNameForId((uint)it.ItemId, it.NameHint);
+                        _log.Info($"[Inspector] '{it.NameHint}' blacklisted for ID {it.ItemId}.");
+                    }
                     ImGui.EndPopup();
                 }
 
@@ -716,7 +772,12 @@ public class ItemInspectorTab : ITab
                 ImGui.TextUnformatted($"{it.SlotIndex,-6} {nameStr,-20} {it.PacketCount,-5} {timeStr}");
                 ImGui.PopStyleColor();
 
-                if (ImGui.IsItemHovered()) RenderIdTooltip((uint)it.ItemId);
+                if (ImGui.IsItemHovered())
+                {
+                    RenderIdTooltip((uint)it.ItemId);
+                    _lastHoveredEntityId = (uint)it.ItemId;
+                    _lastHoveredName     = it.NameHint ?? "";
+                }
 
                 // ── Icon-style action buttons ─────────────────────────────
                 // Using compact text glyphs instead of verbose labels
@@ -840,12 +901,12 @@ public class ItemInspectorTab : ITab
                 _smart.EntityClassifications.TryGetValue(e.EntityId, out var cls);
                 string badge = isLP ? "[*]"
                              : cls == EntityClass.Player ? "[P]"
-                             : cls == EntityClass.Mob    ? "[M]"
-                             : cls == EntityClass.Item   ? "[I]" : "[E]";   // [E] = unknown Entity
+                             : cls == EntityClass.Mob ? "[M]"
+                             : cls == EntityClass.Item ? "[I]" : "[E]";   // [E] = unknown Entity
                 var badgeColor = isLP ? new Vector4(0.18f, 0.65f, 0.95f, 1f)
                                : cls == EntityClass.Player ? new Vector4(0.18f, 0.95f, 0.45f, 1f)
-                               : cls == EntityClass.Mob    ? new Vector4(0.95f, 0.28f, 0.22f, 1f)
-                               : cls == EntityClass.Item   ? new Vector4(0.95f, 0.75f, 0.10f, 1f)
+                               : cls == EntityClass.Mob ? new Vector4(0.95f, 0.28f, 0.22f, 1f)
+                               : cls == EntityClass.Item ? new Vector4(0.95f, 0.75f, 0.10f, 1f)
                                : MenuRenderer.ColTextMuted;  // grey for unclassified
 
                 ImGui.PushStyleColor(ImGuiCol.Text, badgeColor);
@@ -861,7 +922,7 @@ public class ItemInspectorTab : ITab
                     false, ImGuiSelectableFlags.None, new Vector2(w - 190, RowH4));
                 ImGui.PopStyleColor();
 
-                if (ImGui.IsItemHovered()) RenderIdTooltip(e.EntityId);
+                if (ImGui.IsItemHovered()) { RenderIdTooltip(e.EntityId); _lastHoveredEntityId = e.EntityId; _lastHoveredName = e.NameHint ?? ""; }
 
                 ImGui.SameLine(0, 4);
                 UiHelper.WarnButton($"Target##4aset{qi}", 56, 20, () =>
@@ -893,9 +954,9 @@ public class ItemInspectorTab : ITab
                     ImGui.TextUnformatted($"Entity {e.EntityId}  (0x{e.EntityId:X})  {badge}");
                     ImGui.PopStyleColor();
                     ImGui.Separator();
-                    if (ImGui.MenuItem("Copy Hex"))     WindowsClipboard.Set($"0x{e.EntityId:X8}");
+                    if (ImGui.MenuItem("Copy Hex")) WindowsClipboard.Set($"0x{e.EntityId:X8}");
                     if (ImGui.MenuItem("Copy Decimal")) WindowsClipboard.Set(e.EntityId.ToString());
-                    if (ImGui.MenuItem("Filter"))       _keywordFilter = e.EntityId.ToString();
+                    if (ImGui.MenuItem("Filter")) _keywordFilter = e.EntityId.ToString();
                     if (ImGui.MenuItem("Search in Memory"))
                         _log.Info($"[Inspector] Open Memory tab and search 0x{e.EntityId:X8}");
                     if (ImGui.MenuItem("Send to Spoofer"))
@@ -903,27 +964,39 @@ public class ItemInspectorTab : ITab
                         _config.SetTargetItemId((int)e.EntityId, "Spoofer via context");
                         _log.Success($"[Inspector] {e.EntityId} -> Target.");
                     }
+                    ImGui.Separator();
+                    if (ImGui.MenuItem("Manually Name this Entity..."))
+                    {
+                        _manualNameId = e.EntityId;
+                        _manualNameBuf = e.NameHint ?? "";
+                        _manualNameOpen = true;
+                    }
+                    if (!string.IsNullOrEmpty(e.NameHint)
+                        && ImGui.MenuItem($"Blacklist name '{e.NameHint}'"))
+                    {
+                        _smart.BlacklistNameForId(e.EntityId, e.NameHint);
+                        _log.Info($"[Inspector] '{e.NameHint}' blacklisted for entity {e.EntityId}.");
+                    }
                     ImGui.EndPopup();
                 }
+
+                if (entries.Count == 0)
+                {
+                    ImGui.SetCursorPosY((h - 80f) * 0.4f);
+                    UiHelper.MutedLabel("  No 0x4A packets captured yet.");
+                    UiHelper.MutedLabel("  Parser activates automatically on first 0x4A.");
+                }
+
+                ImGui.EndChild();
             }
         }
-        clip.End();
-
-        if (entries.Count == 0)
-        {
-            ImGui.SetCursorPosY((h - 80f) * 0.4f);
-            UiHelper.MutedLabel("  No 0x4A packets captured yet.");
-            UiHelper.MutedLabel("  Parser activates automatically on first 0x4A.");
-        }
-
-        ImGui.EndChild();
     }
 
     // ── String Correlation table ──────────────────────────────────────────
 
     private void RenderStringCorrelationTable(float w, float h)
     {
-        var corr = _smart.StringCorrelation.ToList().OrderBy(kv => kv.Key).ToList();
+        var corr = _smart.StringCorrelation.ToArray().OrderBy(kv => kv.Key).ToList();
 
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
         ImGui.BeginChild("##scorrhdr", new Vector2(w, 44), ImGuiChildFlags.Border);
@@ -1617,6 +1690,26 @@ public class ItemInspectorTab : ITab
     }
 
     private static string GuessItemName(int id) => ItemScanResult.GuessItemNamePublic(id);
+
+    // ── Hotkey-callable actions ───────────────────────────────────────────
+
+    /// <summary>
+    /// Called by F9 hotkey via MenuRenderer.LockHoveredTarget().
+    /// Pins the last entity the user hovered in the 0x4A or Confirmed Items tab.
+    /// </summary>
+    public void LockLastHoveredTarget()
+    {
+        if (_lastHoveredEntityId == 0) return;
+        _pinnedItem = new DetectedItem
+        {
+            ItemId    = (int)_lastHoveredEntityId,
+            StackCount = 1,
+            Confidence = FieldConfidence.High,
+            NameHint   = _lastHoveredName,
+        };
+        _log.Success($"[Inspector] F9 locked entity {_lastHoveredEntityId}" +
+            (string.IsNullOrEmpty(_lastHoveredName) ? "" : $" ({_lastHoveredName})"));
+    }
 }
 
 // ── Supporting types ──────────────────────────────────────────────────────────

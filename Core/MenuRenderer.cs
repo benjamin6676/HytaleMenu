@@ -460,4 +460,34 @@ public class MenuRenderer
         c[(int)ImGuiCol.NavWindowingDimBg]    = new Vector4(0, 0, 0, 0.6f);
         c[(int)ImGuiCol.ModalWindowDimBg]     = new Vector4(0, 0, 0, 0.6f);
     }
+
+    // ── Global hotkey actions ─────────────────────────────────────────────
+
+    /// <summary>
+    /// F8: Insert a purple timeline marker into the capture log.
+    /// Appears as a separator line in the packet log with a timestamp.
+    /// </summary>
+    public void InsertTimelineMarker()
+    {
+        var marker = new CapturedPacket
+        {
+            Timestamp   = DateTime.Now,
+            IsMarker    = true,
+            MarkerLabel = $"[F8 MARKER] {DateTime.Now:HH:mm:ss.fff}",
+            MarkerColor = 0xFF9000FF,  // Purple ABGR
+            Direction   = PacketDirection.ServerToClient,
+            Data        = Array.Empty<byte>(),
+        };
+        _captureTab.Capture.AddPacketExternal(marker);
+        _log.Info($"[Marker] Timeline marker inserted at {DateTime.Now:HH:mm:ss.fff}");
+    }
+
+    /// <summary>
+    /// F9: Lock/pin the last hovered entity in Item Inspector so it persists on Alt-Tab.
+    /// </summary>
+    public void LockHoveredTarget()
+    {
+        _itemInspectorTab.LockLastHoveredTarget();
+        _log.Info("[Lock] Target locked via hotkey.");
+    }
 }

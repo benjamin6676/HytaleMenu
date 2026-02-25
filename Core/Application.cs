@@ -81,6 +81,20 @@ public sealed class Application : IDisposable
             return;
         }
 
+        // Marker hotkey (F8 default): insert a timeline marker
+        if (key == GlobalHotkeyConfig.Instance.MarkerHotkey)
+        {
+            Console.WriteLine("[HotkeyDebug] Marker Key Pressed");
+            _menu?.InsertTimelineMarker();
+        }
+
+        // Lock hotkey (F9 default): pin the hovered/last-seen entity ID
+        if (key == GlobalHotkeyConfig.Instance.LockHotkey)
+        {
+            Console.WriteLine("[HotkeyDebug] Lock Key Pressed");
+            _menu?.LockHoveredTarget();
+        }
+
         // Capture key binding if Settings tab is waiting for input
         GlobalHotkeyConfig.Instance.TryCapture(key);
     }

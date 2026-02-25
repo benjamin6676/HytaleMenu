@@ -234,15 +234,50 @@ public sealed class AutoUpdateHandler
 
             if (addr != IntPtr.Zero)
             {
-                long abs = addr.ToInt64();
-                _log?.Success($"[AutoUpdate] [OK] {name} = 0x{abs:X}");
-                OnSymbolFound?.Invoke(name, abs);
-                switch (name)
+                long instrAddr = addr.ToInt64();
+
+                // ── RIP-relative dereference ──────────────────────────────
+                //
+                // AOB patterns like:
+                //   LEA RCX, [RIP+offset]   (48 8D 0D xx xx xx xx)
+                //   MOV [RIP+offset], RAX   (48 89 05 xx xx xx xx)
+                //   MOV R8, [RIP+offset]    (4C 8B 05 xx xx xx xx)
+                //   MOV [RIP+offset], EBX   (89 1D xx xx xx xx)
+                //
+                // The 4-byte signed offset is at bytes +3 (or +2 for 89 1D).
+                // Effective address = instrAddr + offsetLen + signedOffset
+                // For a pointer-store pattern, the value AT that EA is the pointer.
+                //
+                // offsetByte = position of the 4-byte RIP offset within the instruction
+                // instrLen   = total instruction length (used as RIP value = instrAddr + instrLen)
+
+                long resolvedAddr = TryResolveRipRelative(reader, instrAddr, name, out string resolveInfo);
+
+                if (resolvedAddr != 0)
                 {
-                    case "EntityList":    EntityListAddr  = abs; break;
-                    case "LocalPlayer":   LocalPlayerAddr = abs; break;
-                    case "ItemList":      ItemListAddr    = abs; break;
-                    case "HoverEntityId": HoverIdAddr     = abs; break;
+                    _log?.Success($"[AutoUpdate] [OK] {name} = 0x{resolvedAddr:X}  (instr@0x{instrAddr:X}, {resolveInfo})");
+                    OnSymbolFound?.Invoke(name, resolvedAddr);
+                    switch (name)
+                    {
+                        case "EntityList":    EntityListAddr  = resolvedAddr; break;
+                        case "LocalPlayer":   LocalPlayerAddr = resolvedAddr; break;
+                        case "ItemList":      ItemListAddr    = resolvedAddr; break;
+                        case "HoverEntityId": HoverIdAddr     = resolvedAddr; break;
+                    }
+                }
+                else
+                {
+                    // Fallback: store raw instruction address (at least marks it as found)
+                    long abs = instrAddr;
+                    _log?.Warn($"[AutoUpdate] [!] {name}: RIP resolve failed ({resolveInfo}), storing raw 0x{abs:X}");
+                    OnSymbolFound?.Invoke(name, abs);
+                    switch (name)
+                    {
+                        case "EntityList":    EntityListAddr  = abs; break;
+                        case "LocalPlayer":   LocalPlayerAddr = abs; break;
+                        case "ItemList":      ItemListAddr    = abs; break;
+                        case "HoverEntityId": HoverIdAddr     = abs; break;
+                    }
                 }
             }
             else
@@ -278,6 +313,89 @@ public sealed class AutoUpdateHandler
 
         PersistCache();
         ScanRunning = false;
+    }
+
+    // ── RIP-relative resolution ───────────────────────────────────────────
+    //
+    // Reads the 4-byte signed offset from the matched instruction bytes and
+    // computes the effective address of the static data pointer.
+    // Then dereferences it once with ReadInt64 to get the actual pointer value.
+    //
+    // Returns the dereferenced pointer, or 0 if anything fails.
+
+    private static long TryResolveRipRelative(MemoryReader reader, long instrAddr,
+                                               string sigName, out string info)
+    {
+        info = "";
+        try
+        {
+            // Read the first 12 bytes of the matched instruction
+            var buf = new byte[12];
+            if (!reader.ReadBytes(new IntPtr(instrAddr), buf))
+            {
+                info = "ReadBytes failed";
+                return 0;
+            }
+            int read = buf.Length;
+
+            // Determine opcode layout to find offset byte position and instruction length
+            // Layout: [prefix(s)] opcode [mod/rm] [4-byte RIP offset]
+            int offsetPos;   // byte position of the 4-byte signed offset
+            int instrLen;    // full instruction length (RIP = instrAddr + instrLen)
+
+            byte b0 = buf[0], b1 = buf[1], b2 = buf[2];
+
+            if (b0 == 0x48 && b1 == 0x8D && b2 == 0x0D)         // LEA RCX,[RIP+off]
+                { offsetPos = 3; instrLen = 7; }
+            else if (b0 == 0x48 && b1 == 0x89 && b2 == 0x05)    // MOV [RIP+off],RAX
+                { offsetPos = 3; instrLen = 7; }
+            else if (b0 == 0x48 && b1 == 0x8B && b2 == 0x05)    // MOV RAX,[RIP+off]
+                { offsetPos = 3; instrLen = 7; }
+            else if (b0 == 0x4C && b1 == 0x8B && b2 == 0x05)    // MOV R8,[RIP+off]
+                { offsetPos = 3; instrLen = 7; }
+            else if (b0 == 0x89 && b1 == 0x1D)                   // MOV [RIP+off],EBX
+                { offsetPos = 2; instrLen = 6; }
+            else if (b0 == 0x48 && b1 == 0x8B && b2 == 0x0D)    // MOV RCX,[RIP+off]
+                { offsetPos = 3; instrLen = 7; }
+            else
+            {
+                // Unknown layout - try generic: offset at byte 3, len 7
+                offsetPos = 3; instrLen = 7;
+                info = $"Unknown opcode {b0:X2} {b1:X2} {b2:X2}, guessing offset@3";
+            }
+
+            if (offsetPos + 4 > read) { info = "Buffer too small"; return 0; }
+
+            int  ripOffset  = BitConverter.ToInt32(buf, offsetPos);
+            long ripValue   = instrAddr + instrLen;   // RIP = address of NEXT instruction
+            long ptrAddress = ripValue + ripOffset;   // effective address of the static var
+
+            // For pointer-load instructions (MOV R8,[RIP+off]), the static var IS the pointer
+            // For pointer-store instructions (MOV [RIP+off],RAX), the static var holds the ptr
+            // Either way we read 8 bytes at ptrAddress to get the actual heap/segment address
+            if (!reader.ReadInt64(new IntPtr(ptrAddress), out long pointedValue))
+            {
+                // Return the static var address itself as a fallback
+                info = $"off={ripOffset:X8}, ea=0x{ptrAddress:X}, ReadInt64 failed";
+                return ptrAddress;
+            }
+
+            info = $"off={ripOffset:X8}, ea=0x{ptrAddress:X}, deref=0x{pointedValue:X}";
+
+            // Sanity check: deref'd value should be a plausible heap pointer
+            // (typically 0x7FF... on 64-bit Windows, or 0x00007F... on Linux)
+            if (pointedValue > 0x0000_0100_0000_0000L && pointedValue < 0x7FFF_FFFF_FFFF_FFFFL)
+                return pointedValue;
+
+            // Value looks wrong - return static EA instead
+            info += " [deref OOB, returning EA]";
+            return ptrAddress;
+        }
+        catch (Exception ex)
+        {
+            info = $"Exception: {ex.Message}";
+            return 0;
+        }
     }
 
     private void ClearCachedPointers()
