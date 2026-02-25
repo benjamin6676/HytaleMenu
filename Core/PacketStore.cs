@@ -52,6 +52,30 @@ public class PacketStore
         }
     }
 
+    /// <summary>Remove all entries whose label starts with <paramref name="prefix"/>.</summary>
+    public int ClearByPrefix(string prefix)
+    {
+        lock (_lock)
+        {
+            int removed = _packets.RemoveAll(p =>
+                p.Label.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+            if (removed > 0) Persist();
+            return removed;
+        }
+    }
+
+    /// <summary>Remove every entry in the book.</summary>
+    public int ClearAll()
+    {
+        lock (_lock)
+        {
+            int count = _packets.Count;
+            _packets.Clear();
+            Persist();
+            return count;
+        }
+    }
+
     public List<SavedPacket> GetAll()
     {
         lock (_lock) return new List<SavedPacket>(_packets);

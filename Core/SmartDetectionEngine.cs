@@ -840,7 +840,25 @@ public class SmartDetectionEngine : IDisposable
                 EntityClassifications[id] = EntityClass.Player;
 
             string bookLabel = $"Schema:{id}={bestName}";
-            if (_store.Get(bookLabel) == null)
+            bool shouldSave = _store.Get(bookLabel) == null;
+
+            // If a DIFFERENT (stale/bad) name was saved for this same ID, remove it
+            if (!shouldSave)
+            {
+                var stale = _store.GetAll()
+                    .Where(p => p.Label.StartsWith($"Schema:{id}=",
+                                    StringComparison.OrdinalIgnoreCase)
+                             && !p.Label.Equals(bookLabel, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                foreach (var old in stale)
+                {
+                    _store.Delete(old.Label);
+                    shouldSave = true;
+                    _log.Info($"[SmartDetect] Replaced stale '{old.Label}' with '{bestName}'");
+                }
+            }
+
+            if (shouldSave)
             {
                 _store.Save(bookLabel,
                     $"Auto-named: ID {id} -> '{bestName}' (score={bestScore})",

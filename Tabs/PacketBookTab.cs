@@ -78,9 +78,46 @@ public class PacketBookTab : ITab
         ImGui.Combo("Sort##pbsort", ref _sortMode, new[] { "Newest", "Opcode", "Size", "Label" }, 4);
         ImGui.Spacing();
 
+        // ── Clear buttons ─────────────────────────────────────────────────
         var packets = _store.GetAll();
+        int schemaCount = packets.Count(p => p.Label.StartsWith("Schema:", StringComparison.OrdinalIgnoreCase));
+
+        // Clear auto-named (Schema:) entries only
+        if (schemaCount > 0)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button,        MenuRenderer.ColWarnDim);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, MenuRenderer.ColWarn with { W = 0.35f });
+            ImGui.PushStyleColor(ImGuiCol.Text,          MenuRenderer.ColWarn);
+            if (ImGui.Button($"Clear auto-names ({schemaCount})##pbclrsch",
+                new Vector2(listW - 16, 22)))
+            {
+                int n = _store.ClearByPrefix("Schema:");
+                _log.Info($"[Book] Cleared {n} auto-named (Schema:*) entries.");
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Remove all Schema:xxx=yyy auto-named entries.\n" +
+                    "Manual entries are kept. Re-run capture to rebuild from scratch.");
+            ImGui.PopStyleColor(3);
+            ImGui.Spacing();
+        }
+
+        // Clear everything
+        ImGui.PushStyleColor(ImGuiCol.Button,        MenuRenderer.ColDanger with { W = 0.22f });
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, MenuRenderer.ColDanger with { W = 0.40f });
+        ImGui.PushStyleColor(ImGuiCol.Text,          MenuRenderer.ColDanger);
+        if (ImGui.Button($"Clear ALL ({packets.Count})##pbclrall",
+            new Vector2(listW - 16, 22)))
+        {
+            int n = _store.ClearAll();
+            _log.Warn($"[Book] Cleared ALL {n} entries from Packet Book.");
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Remove EVERY entry including manual ones.\nThis cannot be undone.");
+        ImGui.PopStyleColor(3);
+        ImGui.Spacing();
 
         // Apply search/filter
+        packets = _store.GetAll();  // re-fetch in case user just cleared
         var filtered = packets.AsEnumerable();
         if (_searchText.Length > 0)
         {
