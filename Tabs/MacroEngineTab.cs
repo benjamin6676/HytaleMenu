@@ -7,10 +7,10 @@ using System.Text;
 namespace HytaleSecurityTester.Tabs;
 
 /// <summary>
-/// Macro Engine — replaces PacketTab's basic Combo Chain with a full macro system.
+/// Macro Engine - replaces PacketTab's basic Combo Chain with a full macro system.
 ///
 /// Features:
-///   - Named macros saved to disk — survive restarts
+///   - Named macros saved to disk - survive restarts
 ///   - Per-step hex templates with {{VAR}} variable substitution
 ///   - Per-step conditions: always / if_response / if_no_response
 ///   - Loop count per macro
@@ -94,7 +94,7 @@ public class MacroEngineTab : ITab
         else
         {
             ImGui.SetCursorPosY(h * 0.4f);
-            UiHelper.MutedLabel("   ← select a macro or create one");
+            UiHelper.MutedLabel("   <- select a macro or create one");
         }
         ImGui.EndChild();
     }
@@ -111,17 +111,17 @@ public class MacroEngineTab : ITab
         ImGui.PopStyleColor();
         ImGui.SetCursorPos(new Vector2(12, 6));
         ImGui.PushStyleColor(ImGuiCol.Text, srv ? MenuRenderer.ColAccent : MenuRenderer.ColDanger);
-        ImGui.TextUnformatted(srv ? $"● {_config.ServerIp}:{_config.ServerPort}" : "● No server");
+        ImGui.TextUnformatted(srv ? $"[>] {_config.ServerIp}:{_config.ServerPort}" : "[>] No server");
         ImGui.PopStyleColor();
         ImGui.SameLine(0, 24);
         ImGui.PushStyleColor(ImGuiCol.Text, prxy ? MenuRenderer.ColAccent : MenuRenderer.ColWarn);
-        ImGui.TextUnformatted(prxy ? "● Proxy active" : "● No proxy — start Capture first");
+        ImGui.TextUnformatted(prxy ? "[>] Proxy active" : "[>] No proxy - start Capture first");
         ImGui.PopStyleColor();
         if (_running)
         {
             ImGui.SameLine(0, 24);
             ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-            ImGui.TextUnformatted("● Macro running…");
+            ImGui.TextUnformatted("[>] Macro running...");
             ImGui.PopStyleColor();
         }
         ImGui.EndChild();
@@ -176,7 +176,7 @@ public class MacroEngineTab : ITab
             ImGui.TextUnformatted(m.Name);
             ImGui.PopStyleColor();
             ImGui.SetCursorPosX(8);
-            UiHelper.MutedLabel($"{m.Steps.Count} steps  ×{m.LoopCount}  {m.CreatedAt:dd/MM}");
+            UiHelper.MutedLabel($"{m.Steps.Count} steps x{m.LoopCount}  {m.CreatedAt:dd/MM}");
 
             ImGui.SetCursorPosY(ImGui.GetCursorPosY() - 40);
             if (ImGui.Selectable($"##mesel{mi}", sel, ImGuiSelectableFlags.None, new Vector2(w - 8, 40)))
@@ -229,7 +229,7 @@ public class MacroEngineTab : ITab
             }
             else
             {
-                UiHelper.WarnButton($"▶ RUN ({m.Steps.Count(s => s.Enabled)} steps)##me_run",
+                UiHelper.WarnButton($"> RUN ({m.Steps.Count(s => s.Enabled)} steps)##me_run",
                     200, 30, () => RunMacro(m));
                 ImGui.SameLine(0, 8);
                 UiHelper.SecondaryButton("Reset##me_rst", 70, 30, () =>
@@ -413,11 +413,11 @@ public class MacroEngineTab : ITab
             // Result indicator
             string resultGlyph = step.LastResult switch
             {
-                MacroStepResult.Sent          => "✓",
-                MacroStepResult.Running       => "●",
-                MacroStepResult.ConditionFail => "✗",
+                MacroStepResult.Sent          => "[OK]",
+                MacroStepResult.Running       => "[>]",
+                MacroStepResult.ConditionFail => "[!!]",
                 MacroStepResult.Error         => "!",
-                MacroStepResult.Skipped       => "–",
+                MacroStepResult.Skipped       => "-",
                 _ => " ",
             };
             var glyphCol = step.LastResult switch
@@ -444,7 +444,7 @@ public class MacroEngineTab : ITab
                 _                => "always",
             };
             string hexPreview = step.HexTemplate.Length > 40
-                ? step.HexTemplate[..37] + "…" : step.HexTemplate;
+                ? step.HexTemplate[..37] + "..." : step.HexTemplate;
 
             ImGui.TextUnformatted(
                 $"[{si+1,-2}] {condLabel,-18} {step.Label,-20} {step.DelayMs}ms  {hexPreview}");
@@ -480,7 +480,7 @@ public class MacroEngineTab : ITab
         if (removeStep >= 0) { m.Steps.RemoveAt(removeStep); _lib.ScheduleSave(); }
 
         if (m.Steps.Count == 0)
-            UiHelper.MutedLabel("  No steps — add steps above or import from Packet Book.");
+            UiHelper.MutedLabel("  No steps - add steps above or import from Packet Book.");
 
         ImGui.EndChild();
     }
@@ -503,7 +503,7 @@ public class MacroEngineTab : ITab
 
         foreach (var s in m.Steps) { s.LastResult = MacroStepResult.Pending; s.LastResponse = ""; }
 
-        _log.Info($"[Macros] Running '{m.Name}' — {snap.Steps.Count} steps × {snap.LoopCount}");
+        _log.Info($"[Macros] Running '{m.Name}' - {snap.Steps.Count} stepsx {snap.LoopCount}");
 
         Task.Run(async () =>
         {
@@ -579,13 +579,13 @@ public class MacroEngineTab : ITab
                         step.LastResult = ok ? MacroStepResult.Sent : MacroStepResult.Error;
                         if (!ok && step.AbortOnFail) break;
 
-                        _log.Info($"[Macros] Step {si+1} '{step.Label}' → {(ok ? "sent" : "FAIL")} {data.Length}b");
+                        _log.Info($"[Macros] Step {si+1} '{step.Label}' -> {(ok ? "sent" : "FAIL")} {data.Length}b");
 
                         if (step.DelayMs > 0) await Task.Delay(step.DelayMs, cts.Token);
                     }
                 }
 
-                _log.Success($"[Macros] '{m.Name}' complete — {snap.LoopCount} loop(s).");
+                _log.Success($"[Macros] '{m.Name}' complete - {snap.LoopCount} loop(s).");
             }
             catch (OperationCanceledException) { _log.Warn($"[Macros] '{m.Name}' cancelled."); }
             catch (Exception ex) { _log.Error($"[Macros] {ex.Message}"); }

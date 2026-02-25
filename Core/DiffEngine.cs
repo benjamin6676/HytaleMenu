@@ -10,7 +10,7 @@ namespace HytaleSecurityTester.Core;
 ///
 /// Capture the same in-game action multiple times varying one value each time
 /// (e.g. drop item 100, drop item 200, drop item 300).
-/// Feed the captures here — the engine diffs byte by byte and shows you
+/// Feed the captures here - the engine diffs byte by byte and shows you
 /// exactly which bytes changed and by how much.
 /// A 4-byte region that increased by 100 each time = the item ID field.
 /// </summary>

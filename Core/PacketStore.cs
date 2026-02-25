@@ -103,7 +103,7 @@ public class PacketStore
                 lock (_lock) { _packets.Clear(); _packets.AddRange(list); }
             }
         }
-        catch { /* corrupt file — start fresh */ }
+        catch { /* corrupt file - start fresh */ }
     }
 }
 

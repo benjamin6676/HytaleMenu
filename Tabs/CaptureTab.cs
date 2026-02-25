@@ -105,7 +105,7 @@ public class CaptureTab : ITab
             if (_config.IsSet)
             {
                 UiHelper.Pill(
-                    $"● {_config.ServerIp}:{_config.ServerPort}",
+                    $"[>] {_config.ServerIp}:{_config.ServerPort}",
                     MenuRenderer.ColAccent, MenuRenderer.ColAccentDim);
                 ImGui.Spacing();
             }
@@ -116,7 +116,7 @@ public class CaptureTab : ITab
             }
 
             ImGui.BeginDisabled(true);
-            string dispIp   = _config.IsSet ? _config.ServerIp  : "— not set —";
+            string dispIp   = _config.IsSet ? _config.ServerIp  : "- not set -";
             int    dispPort = _config.IsSet ? _config.ServerPort : 0;
             ImGui.SetNextItemWidth(190);
             ImGui.InputText("Server IP##csr",  ref dispIp,   64);
@@ -132,7 +132,7 @@ public class CaptureTab : ITab
             if (ImGui.InputInt("Proxy Port##plp", ref _listenPort))
                 _listenPort = Math.Clamp(_listenPort, 1, 65535);
             ImGui.SameLine();
-            UiHelper.MutedLabel("← client connects here");
+            UiHelper.MutedLabel("<- client connects here");
             ImGui.EndDisabled();
         });
 
@@ -158,9 +158,9 @@ public class CaptureTab : ITab
                 ImGui.PopStyleColor(2);
             }
 
-            ModeBtn("UDP  —  Hytale (recommended)", CaptureMode.Udp);
-            ModeBtn("TCP  —  Plain unencrypted",     CaptureMode.Tcp);
-            ModeBtn("TLS  —  HTTPS intercept",       CaptureMode.Tls);
+            ModeBtn("UDP  -  Hytale (recommended)", CaptureMode.Udp);
+            ModeBtn("TCP  -  Plain unencrypted",     CaptureMode.Tcp);
+            ModeBtn("TLS  -  HTTPS intercept",       CaptureMode.Tls);
 
             ImGui.EndDisabled();
 
@@ -182,7 +182,7 @@ public class CaptureTab : ITab
         {
             ImGui.BeginDisabled(!_config.IsSet);
             UiHelper.PrimaryButton(
-                $"▶  Start {_mode} Capture + Copy Address",
+                $">  Start {_mode} Capture + Copy Address",
                 360, 34, () => StartCapture(localIp));
             ImGui.EndDisabled();
 
@@ -218,7 +218,7 @@ public class CaptureTab : ITab
             ImGui.PushStyleColor(ImGuiCol.Text,
                 _tlsIntercepting ? MenuRenderer.ColAccent : MenuRenderer.ColTextMuted);
             ImGui.TextUnformatted(
-                _tlsIntercepting ? "● TLS Active — Decrypting" : "● TLS Inactive");
+                _tlsIntercepting ? "[>] TLS Active - Decrypting" : "[>] TLS Inactive");
             ImGui.PopStyleColor();
             ImGui.SameLine(0, 20);
             UiHelper.MutedLabel(_tlsCertStatus);
@@ -231,10 +231,10 @@ public class CaptureTab : ITab
         bool hasClient = _capture.TotalClients > 0 || _udpProxy.TotalClients > 0;
         bool hasPkts   = pkts.Count > 0;
         string modeStatus = _mode switch {
-            CaptureMode.Udp => _udpProxy.IsRunning   ? $"● PROXY ON (UDP)" : "● PROXY OFF",
-            CaptureMode.Tcp => _capture.IsRunning     ? $"● PROXY ON (TCP)" : "● PROXY OFF",
-            CaptureMode.Tls => _tlsIntercepting       ? $"● PROXY ON (TLS)" : "● PROXY OFF",
-            _               => "● PROXY OFF"
+            CaptureMode.Udp => _udpProxy.IsRunning   ? $"[>] PROXY ON (UDP)" : "[>] PROXY OFF",
+            CaptureMode.Tcp => _capture.IsRunning     ? $"[>] PROXY ON (TCP)" : "[>] PROXY OFF",
+            CaptureMode.Tls => _tlsIntercepting       ? $"[>] PROXY ON (TLS)" : "[>] PROXY OFF",
+            _               => "[>] PROXY OFF"
         };
 
         ImGui.PushStyleColor(ImGuiCol.ChildBg,
@@ -246,23 +246,23 @@ public class CaptureTab : ITab
 
         ImGui.PushStyleColor(ImGuiCol.Text,
             running ? MenuRenderer.ColAccent : MenuRenderer.ColDanger);
-        ImGui.TextUnformatted(running ? $"● PROXY ON ({_mode})" : "● PROXY OFF");
+        ImGui.TextUnformatted(running ? $"[>] PROXY ON ({_mode})" : "[>] PROXY OFF");
         ImGui.PopStyleColor();
 
         ImGui.SameLine(200);
         ImGui.PushStyleColor(ImGuiCol.Text,
             hasClient ? MenuRenderer.ColAccent
                       : (running ? MenuRenderer.ColWarn : MenuRenderer.ColTextMuted));
-        ImGui.TextUnformatted(hasClient ? "● CLIENT CONNECTED"
-                                        : (running ? "● WAITING FOR CLIENT" : "● —"));
+        ImGui.TextUnformatted(hasClient ? "[>] CLIENT CONNECTED"
+                                        : (running ? "[>] WAITING FOR CLIENT" : "[>] -"));
         ImGui.PopStyleColor();
 
         ImGui.SameLine(420);
         ImGui.PushStyleColor(ImGuiCol.Text,
             hasPkts ? MenuRenderer.ColAccent
                     : (hasClient ? MenuRenderer.ColWarn : MenuRenderer.ColTextMuted));
-        ImGui.TextUnformatted(hasPkts ? $"● {pkts.Count} PACKETS"
-                                      : (hasClient ? "● DO SOMETHING IN GAME" : "● —"));
+        ImGui.TextUnformatted(hasPkts ? $"[>] {pkts.Count} PACKETS"
+                                      : (hasClient ? "[>] DO SOMETHING IN GAME" : "[>] -"));
         ImGui.PopStyleColor();
 
         ImGui.EndChild();
@@ -284,9 +284,9 @@ public class CaptureTab : ITab
         ImGui.SetNextItemWidth(200);
         ImGui.InputText("##flt", ref _filterText, 128);
         ImGui.SameLine(0, 10);
-        ImGui.Checkbox("C→S##cs", ref _showClientServer);
+        ImGui.Checkbox("C->S##cs", ref _showClientServer);
         ImGui.SameLine(0, 8);
-        ImGui.Checkbox("S→C##sc", ref _showServerClient);
+        ImGui.Checkbox("S->C##sc", ref _showServerClient);
         ImGui.SameLine(0, 8);
         ImGui.Checkbox("Auto-scroll##as", ref _autoScroll);
         ImGui.SameLine(0, 10);
@@ -298,7 +298,7 @@ public class CaptureTab : ITab
         ImGui.SameLine(0, 20);
         ImGui.BeginDisabled(packets.Count == 0 || _pcapExporting);
         UiHelper.SecondaryButton(
-            _pcapExporting ? "Exporting…" : "⬇ Export PCAP##pcapexp",
+            _pcapExporting ? "Exporting..." : "⬇ Export PCAP##pcapexp",
             140, 20, ExportPcap);
         ImGui.EndDisabled();
         if (_pcapLastPath.Length > 0)
@@ -364,10 +364,10 @@ public class CaptureTab : ITab
             ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColBorder));
 
         // Subtle row background colors by direction
-        var csBg = new Vector4(0.08f, 0.10f, 0.18f, 1f); // dark blue tint = C→S
-        var scBg = new Vector4(0.07f, 0.14f, 0.09f, 1f); // dark green tint = S→C
+        var csBg = new Vector4(0.08f, 0.10f, 0.18f, 1f); // dark blue tint = C->S
+        var scBg = new Vector4(0.07f, 0.14f, 0.09f, 1f); // dark green tint = S->C
 
-        // ImGuiListClipper — only renders visible rows
+        // ImGuiListClipper - only renders visible rows
         ImGui.SetNextWindowScroll(ImGui.GetScrollY() >= ImGui.GetScrollMaxY() - 30 && _autoScroll
             ? new Vector2(-1, float.MaxValue) : new Vector2(-1, -1));
 
@@ -380,7 +380,7 @@ public class CaptureTab : ITab
                 var (globalIdx, p) = filtered[vi];
                 bool cs  = p.Direction == PacketDirection.ClientToServer;
                 var  rowBg = cs ? csBg : scBg;
-                string dir = cs ? "C → S" : "S → C";
+                string dir = cs ? "C -> S" : "S -> C";
 
                 // Draw direction-tinted background
                 var sp = ImGui.GetCursorScreenPos();
@@ -395,7 +395,7 @@ public class CaptureTab : ITab
                 // Comment or preview
                 string annotation = p.Comment.Length > 0
                     ? $"[{p.Comment}]"
-                    : (p.AsciiPreview.Length > 18 ? p.AsciiPreview[..18] + "…" : p.AsciiPreview);
+                    : (p.AsciiPreview.Length > 18 ? p.AsciiPreview[..18] + "..." : p.AsciiPreview);
 
                 ImGui.PushStyleColor(ImGuiCol.Text,
                     p.Comment.Length > 0 ? MenuRenderer.ColWarn
@@ -408,7 +408,7 @@ public class CaptureTab : ITab
 
                 if (clicked) _selectedIndex = globalIdx;
 
-                // Double-click → enter comment mode
+                // Double-click -> enter comment mode
                 if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
                 {
                     _commentingIdx = globalIdx;
@@ -449,15 +449,15 @@ public class CaptureTab : ITab
                     if (ImGui.MenuItem("Send to Diff A") && _diffTab != null)
                     {
                         _diffTab.SetSlotA(p.HexString);
-                        _log.Info($"[Capture] Pkt #{globalIdx + 1} → Diff A.");
+                        _log.Info($"[Capture] Pkt #{globalIdx + 1} -> Diff A.");
                     }
                     if (ImGui.MenuItem("Send to Diff B") && _diffTab != null)
                     {
                         _diffTab.SetSlotB(p.HexString);
-                        _log.Info($"[Capture] Pkt #{globalIdx + 1} → Diff B.");
+                        _log.Info($"[Capture] Pkt #{globalIdx + 1} -> Diff B.");
                     }
                     ImGui.Separator();
-                    if (ImGui.MenuItem("Add Comment…"))
+                    if (ImGui.MenuItem("Add Comment..."))
                     {
                         _commentingIdx = globalIdx;
                         _commentBuf    = p.Comment;
@@ -502,13 +502,13 @@ public class CaptureTab : ITab
             ImGui.Spacing();
 
             UiHelper.StatusRow("Time",      sel.TimestampLabel, true, 80);
-            UiHelper.StatusRow("Direction", cs ? "Client → Server" : "Server → Client", cs, 80);
+            UiHelper.StatusRow("Direction", cs ? "Client -> Server" : "Server -> Client", cs, 80);
             UiHelper.StatusRow("Size",      $"{sel.RawBytes.Length} bytes", true, 80);
 
             if (sel.Comment.Length > 0)
             {
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-                ImGui.TextUnformatted($"  ★ {sel.Comment}");
+                ImGui.TextUnformatted($"  [*] {sel.Comment}");
                 ImGui.PopStyleColor();
             }
 
@@ -541,14 +541,14 @@ public class CaptureTab : ITab
                 if (decompressed != null)
                 {
                     displayBytes = decompressed;
-                    decompLabel  = $"  ← {method} {decompressed.Length}b";
+                    decompLabel  = $"  <- {method} {decompressed.Length}b";
                 }
                 else decompLabel = "  (not compressed)";
             }
             if (decompLabel.Length > 0)
             {
                 ImGui.SameLine(0, 8);
-                ImGui.PushStyleColor(ImGuiCol.Text, decompLabel.Contains("←")
+                ImGui.PushStyleColor(ImGuiCol.Text, decompLabel.Contains("<-")
                     ? MenuRenderer.ColAccent : MenuRenderer.ColTextMuted);
                 ImGui.TextUnformatted(decompLabel);
                 ImGui.PopStyleColor();
@@ -579,15 +579,15 @@ public class CaptureTab : ITab
             });
             if (_diffTab != null)
             {
-                UiHelper.SecondaryButton("→ Diff A##da", -1, 26, () =>
+                UiHelper.SecondaryButton("-> Diff A##da", -1, 26, () =>
                 {
                     _diffTab.SetSlotA(sel.HexString);
-                    _log.Info($"[Capture] Pkt #{_selectedIndex + 1} → Diff A.");
+                    _log.Info($"[Capture] Pkt #{_selectedIndex + 1} -> Diff A.");
                 });
-                UiHelper.SecondaryButton("→ Diff B##db", -1, 26, () =>
+                UiHelper.SecondaryButton("-> Diff B##db", -1, 26, () =>
                 {
                     _diffTab.SetSlotB(sel.HexString);
-                    _log.Info($"[Capture] Pkt #{_selectedIndex + 1} → Diff B.");
+                    _log.Info($"[Capture] Pkt #{_selectedIndex + 1} -> Diff B.");
                 });
             }
             UiHelper.SecondaryButton("Send to Log##stl", -1, 26, () =>
@@ -596,9 +596,9 @@ public class CaptureTab : ITab
         else
         {
             ImGui.SetCursorPosY(h * 0.4f);
-            float tw2 = ImGui.CalcTextSize("← select a packet").X;
+            float tw2 = ImGui.CalcTextSize("<- select a packet").X;
             ImGui.SetCursorPosX((dw - tw2) * 0.5f);
-            UiHelper.MutedLabel("← select a packet");
+            UiHelper.MutedLabel("<- select a packet");
         }
 
         ImGui.EndChild();
@@ -710,7 +710,7 @@ public class CaptureTab : ITab
                         System.Security.Authentication.SslProtocols.Tls12 |
                         System.Security.Authentication.SslProtocols.Tls13,
                 }, ct);
-            _log.Success("[TLS] ✓ Client handshake — decrypting!");
+            _log.Success("[TLS] [OK] Client handshake - decrypting!");
 
             server    = new System.Net.Sockets.TcpClient();
             await server.ConnectAsync(_config.ServerIp, _config.ServerPort, ct);
@@ -725,7 +725,7 @@ public class CaptureTab : ITab
                         System.Security.Authentication.SslProtocols.Tls12 |
                         System.Security.Authentication.SslProtocols.Tls13,
                 }, ct);
-            _log.Success("[TLS] ✓ Server handshake — full intercept active!");
+            _log.Success("[TLS] [OK] Server handshake - full intercept active!");
 
             await Task.WhenAny(
                 TlsPipeAsync(clientSsl, serverSsl, PacketDirection.ClientToServer, ct),
@@ -735,7 +735,7 @@ public class CaptureTab : ITab
         {
             if (ex.Message.Contains("authentication") || ex.Message.Contains("handshake"))
             {
-                _log.Error("[TLS] Handshake failed — game likely pins certificates.");
+                _log.Error("[TLS] Handshake failed - game likely pins certificates.");
                 _log.Warn("[TLS] Switch to UDP mode instead.");
             }
             else _log.Error($"[TLS] {ex.Message}");
@@ -769,7 +769,7 @@ public class CaptureTab : ITab
                     AsciiPreview = PacketCapture.ToAscii(chunk),
                 };
                 _capture.AddPacketExternal(pkt);
-                string d = dir == PacketDirection.ClientToServer ? "C→S" : "S→C";
+                string d = dir == PacketDirection.ClientToServer ? "C->S" : "S->C";
                 _log.Info($"[TLS][{d}] {n}b decrypted | " +
                           $"{pkt.HexString[..Math.Min(48, pkt.HexString.Length)]}");
             }
@@ -841,8 +841,8 @@ public class CaptureTab : ITab
                     $"capture_{DateTime.Now:yyyyMMdd_HHmmss}.pcap");
 
                 int written = PcapWriter.Write(path, packets, srv);
-                _pcapLastPath = $"Saved {written} pkts → {path}";
-                _log.Success($"[Capture] PCAP export: {written} packets → {path}");
+                _pcapLastPath = $"Saved {written} pkts -> {path}";
+                _log.Success($"[Capture] PCAP export: {written} packets -> {path}");
                 AlertBus.Push(AlertBus.Sec_Capture, AlertLevel.Info,
                     $"PCAP exported: {written} packets");
             }
@@ -874,7 +874,7 @@ public class CaptureTab : ITab
             UiHelper.MutedLabel(_entropyOpcode < 0 ? "(all)" : $"0x{_entropyOpcode:X2}");
             ImGui.SameLine(0, 16);
             ImGui.SetNextItemWidth(72);
-            ImGui.Combo("Dir##entdir", ref _entropyDir, new[] { "Both", "C→S", "S→C" }, 3);
+            ImGui.Combo("Dir##entdir", ref _entropyDir, new[] { "Both", "C->S", "S->C" }, 3);
             ImGui.SameLine(0, 8);
             UiHelper.SecondaryButton("Refresh##entref", 80, 22, () => RebuildEntropyCache(packets));
             ImGui.SameLine(0, 8);
@@ -884,7 +884,7 @@ public class CaptureTab : ITab
 
             if (_entropyCache.Count == 0) { UiHelper.MutedLabel("No matching packets."); return; }
 
-            // Shannon entropy bar chart — one bar per packet sample
+            // Shannon entropy bar chart - one bar per packet sample
             float gw  = ImGui.GetContentRegionAvail().X;
             float gh  = 70f;
             var   cp  = ImGui.GetCursorScreenPos();
@@ -930,7 +930,7 @@ public class CaptureTab : ITab
             ImGui.SameLine(0, 0);
             ImGui.SetCursorPosX(gw * 0.55f);
             UiHelper.MutedLabel($"avg:{avg:F2}b  min:{min:F2}b  max:{max:F2}b  " +
-                $"{(avg > 6.5f ? "HIGH entropy — likely encrypted" : avg > 4f ? "Medium entropy" : "Low entropy — plaintext")}");
+                $"{(avg > 6.5f ? "HIGH entropy - likely encrypted" : avg > 4f ? "Medium entropy" : "Low entropy - plaintext")}");
         });
 
         ImGui.Spacing();

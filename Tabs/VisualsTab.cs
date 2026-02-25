@@ -12,18 +12,19 @@ namespace HytaleSecurityTester.Tabs;
 /// automatically discover and register new entity types for the overlay.
 ///
 /// Sections:
-///   OVERLAY CONTROL     — master enable, VP matrix source, registered entities list
-///   DYNAMIC COMPONENT FINDER — define AOB signatures per entity type; scanner
+///   OVERLAY CONTROL     - master enable, VP matrix source, registered entities list
+///   DYNAMIC COMPONENT FINDER - define AOB signatures per entity type; scanner
 ///                              reads Vector3 position at a configurable struct
 ///                              offset from each match and feeds Application.EntityPositions
-///   MANUAL ENTITY EDITOR — hand-add overlay entries for quick testing
+///   MANUAL ENTITY EDITOR - hand-add overlay entries for quick testing
 /// </summary>
 public class VisualsTab : ITab
 {
     public string Title => "  Visuals / ESP  ";
 
     private readonly TestLog     _log;
-    private readonly MemoryReader _reader = new();
+    // Use shared singleton - same attach state as Memory tab
+    private MemoryReader _reader => SharedMemoryReader.Instance;
     private readonly ServerConfig _config;
 
     // ── Overlay master state ──────────────────────────────────────────────
@@ -124,7 +125,7 @@ public class VisualsTab : ITab
         ImGui.EndChild();
         ImGui.SameLine(0, 8);
 
-        // Right column — entity type registry
+        // Right column - entity type registry
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
         ImGui.BeginChild("##visright", new Vector2(rightW, availH), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
@@ -146,14 +147,14 @@ public class VisualsTab : ITab
         bool att = _reader.IsAttached;
         ImGui.PushStyleColor(ImGuiCol.Text, att ? MenuRenderer.ColAccent : MenuRenderer.ColDanger);
         ImGui.TextUnformatted(att
-            ? $"● Memory attached — {_reader.ProcessName} (PID {_reader.Pid})"
-            : "● No memory process — attach below to enable AOB scanning");
+            ? $"[>] Memory attached - {_reader.ProcessName} (PID {_reader.Pid})"
+            : "[>] No memory process - attach below to enable AOB scanning");
         ImGui.PopStyleColor();
 
         ImGui.SameLine(0, 24);
         int cnt = Application.EntityPositions.Count;
         ImGui.PushStyleColor(ImGuiCol.Text, cnt > 0 ? MenuRenderer.ColAccent : MenuRenderer.ColTextMuted);
-        ImGui.TextUnformatted($"● {cnt} overlay entries  |  overlay {(_overlayEnabled ? "ON" : "OFF")}");
+        ImGui.TextUnformatted($"[>] {cnt} overlay entries  |  overlay {(_overlayEnabled ? "ON" : "OFF")}");
         ImGui.PopStyleColor();
 
         ImGui.EndChild();
@@ -180,7 +181,7 @@ public class VisualsTab : ITab
 
             // Screen-space fallback mode
             ImGui.PushStyleColor(ImGuiCol.Text, _screenSpaceMode ? MenuRenderer.ColWarn : MenuRenderer.ColTextMuted);
-            ImGui.Checkbox("Screen-space mode (bypass VP matrix — test drawing engine)##sspacemode", ref _screenSpaceMode);
+            ImGui.Checkbox("Screen-space mode (bypass VP matrix - test drawing engine)##sspacemode", ref _screenSpaceMode);
             Application.ScreenSpaceMode = _screenSpaceMode;
             ImGui.PopStyleColor();
             if (ImGui.IsItemHovered())
@@ -199,7 +200,7 @@ public class VisualsTab : ITab
                     {
                         foreach (var ent in _smartDetect.ActiveEntities.Values)
                         {
-                            string label = ent.IsLocalPlayer ? $"[★] LocalPlayer"
+                            string label = ent.IsLocalPlayer ? $"[[*]] LocalPlayer"
                                 : ent.EntityClass == EntityClass.Player ? $"[P] {(string.IsNullOrEmpty(ent.NameHint) ? ent.EntityId.ToString() : ent.NameHint)}"
                                 : ent.EntityClass == EntityClass.Mob    ? $"[M] {(string.IsNullOrEmpty(ent.NameHint) ? ent.EntityId.ToString() : ent.NameHint)}"
                                 : ent.EntityClass == EntityClass.Item   ? $"[I] {(string.IsNullOrEmpty(ent.NameHint) ? ent.EntityId.ToString() : ent.NameHint)}"
@@ -227,7 +228,7 @@ public class VisualsTab : ITab
             ImGui.Spacing();
 
             // VP matrix config
-            UiHelper.MutedLabel("VP Matrix source (AOB hit + struct offset → float[16]):");
+            UiHelper.MutedLabel("VP Matrix source (AOB hit + struct offset -> float[16]):");
             ImGui.SetNextItemWidth(-1);
             ImGui.InputText("AOB pattern##vpao", ref _vpAobPattern, 256);
 
@@ -294,7 +295,7 @@ public class VisualsTab : ITab
                 var hit = matches.FirstOrDefault(m => m.Address != IntPtr.Zero);
                 if (hit == null || hit.Address == IntPtr.Zero)
                 {
-                    _vpStatus = "Pattern not found — check AOB and module.";
+                    _vpStatus = "Pattern not found - check AOB and module.";
                     return;
                 }
 
@@ -318,7 +319,7 @@ public class VisualsTab : ITab
                     BitConverter.ToSingle(buf, 56), BitConverter.ToSingle(buf, 60));
 
                 Application.ViewProjectionMatrix = m4;
-                _vpStatus = $"OK — matrix applied from {hit.AddressHex} [{hit.Module}]";
+                _vpStatus = $"OK - matrix applied from {hit.AddressHex} [{hit.Module}]";
             }
             catch (Exception ex) { _vpStatus = $"Error: {ex.Message}"; }
             finally { _vpScanning = false; }
@@ -352,7 +353,7 @@ public class VisualsTab : ITab
     private float  _gazeLastUpdateS = 0f;        // elapsed seconds since last resolve
     private bool   _gazeAutoRead    = true;      // auto-read ID from memory at resolved address
 
-    // Camera override — allow manual entry when VP matrix auto-detection isn't set up
+    // Camera override - allow manual entry when VP matrix auto-detection isn't set up
     private string  _gazeCamFwdOverride = "";    // "X,Y,Z"
     private string  _gazeCamPosOverride = "";    // "X,Y,Z"
     private bool    _gazeUseCamOverride = false;
@@ -369,13 +370,13 @@ public class VisualsTab : ITab
             if (_gazeActiveId > 0)
             {
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-                ImGui.TextUnformatted($"  ★ Active Target: [{_gazeActiveId}]  {_gazeActiveLabel}" +
+                ImGui.TextUnformatted($"  [*] Active Target: [{_gazeActiveId}]  {_gazeActiveLabel}" +
                                       $"  (dot={_gazeActiveDot:F3})");
                 ImGui.PopStyleColor();
             }
             else
             {
-                UiHelper.MutedLabel("  No target selected — aim at an entity and resolve.");
+                UiHelper.MutedLabel("  No target selected - aim at an entity and resolve.");
             }
 
             ImGui.Spacing();
@@ -455,7 +456,7 @@ public class VisualsTab : ITab
         {
             // ViewProjectionMatrix:
             // Row 2 (M13,M23,M33,M43) gives the camera's Z-axis (forward in view space).
-            // Row 3 (M14,M24,M34,M44) is the translation row — camera world position.
+            // Row 3 (M14,M24,M34,M44) is the translation row - camera world position.
             var m      = Application.ViewProjectionMatrix;
             camForward = Vector3.Normalize(new Vector3(m.M13, m.M23, m.M33));
             camPos     = new Vector3(-m.M41, -m.M42, -m.M43); // inverse translation
@@ -526,7 +527,7 @@ public class VisualsTab : ITab
             if (_gazeAutoRead && newId > 0)
             {
                 _config.SetTargetItemId(newId, "Gaze Resolver");
-                _log.Info($"[Gaze] Active target → [{newId}] '{bestLabel}'" +
+                _log.Info($"[Gaze] Active target -> [{newId}] '{bestLabel}'" +
                           $"  dot={bestDotV:F3}  pushed to Item Inspector.");
             }
         }
@@ -602,7 +603,7 @@ public class VisualsTab : ITab
                     _log.Warn("[DCF] Stopped.");
                 });
                 ImGui.SameLine(0, 12);
-                UiHelper.WarnText("● Scanning...");
+                UiHelper.WarnText("[>] Scanning...");
             }
             else
             {
@@ -691,7 +692,7 @@ public class VisualsTab : ITab
                             found++;
                         }
 
-                        _dcfStatus = $"[{et.Name}] {matches.Count} AOB hit(s) → {found} position(s) valid";
+                        _dcfStatus = $"[{et.Name}] {matches.Count} AOB hit(s) -> {found} position(s) valid";
                     }
                     catch (Exception ex)
                     {
@@ -701,7 +702,7 @@ public class VisualsTab : ITab
 
                 _dcfFound    = found;
                 _dcfLastRun  = DateTime.Now;
-                _log.Info($"[DCF] Scan complete — {found} entity position(s) registered.");
+                _log.Info($"[DCF] Scan complete - {found} entity position(s) registered.");
 
                 if (_dcfAutoLoop && !cts.Token.IsCancellationRequested)
                     await Task.Delay(_dcfRefreshMs, cts.Token).ContinueWith(_ => { });
@@ -927,7 +928,7 @@ public class VisualsTab : ITab
                     !float.TryParse(_aoKnownY, out float ky) ||
                     !float.TryParse(_aoKnownZ, out float kz))
                 {
-                    _aoFinderResult = "Parse error — enter numbers like 123.4";
+                    _aoFinderResult = "Parse error - enter numbers like 123.4";
                     return;
                 }
                 _aoFinderResult = "Scanning...";
@@ -967,18 +968,18 @@ public class VisualsTab : ITab
 
         UiHelper.SectionBox("OP-CODE MONITOR / PERMISSION SNIFFER", w, 160, () =>
         {
-            UiHelper.MutedLabel("Monitors packets for admin-only op-codes (0x50–0x71).");
+            UiHelper.MutedLabel("Monitors packets for admin-only op-codes (0x50-0x71).");
             UiHelper.MutedLabel("Permission Sniffer: flag bytes that differ between you and known admins.");
             ImGui.Spacing();
 
-            // Show recent admin op-code events (from log — SmartDetect fires event)
+            // Show recent admin op-code events (from log - SmartDetect fires event)
             var perms = _smartDetect.PermissionBits.ToArray()
                 .OrderByDescending(kv => kv.Value.adminBits)
                 .Take(8).ToList();
 
             if (perms.Count == 0)
             {
-                UiHelper.MutedLabel("  No permission data yet — interact with an admin player.");
+                UiHelper.MutedLabel("  No permission data yet - interact with an admin player.");
             }
             else
             {
@@ -991,7 +992,7 @@ public class VisualsTab : ITab
                     ImGui.PushStyleColor(ImGuiCol.Text, diff > 0 ? MenuRenderer.ColWarn : MenuRenderer.ColTextMuted);
                     ImGui.TextUnformatted(
                         $"  {kv.Key,-14} 0x{kv.Value.myBits:X2}       0x{kv.Value.adminBits:X2}" +
-                        $"          {(diff > 0 ? $"★ 0x{diff:X2} → try setting these bits" : "no diff")}");
+                        $"          {(diff > 0 ? $"[*] 0x{diff:X2} -> try setting these bits" : "no diff")}");
                     ImGui.PopStyleColor();
                 }
                 ImGui.EndChild();

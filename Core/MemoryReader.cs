@@ -8,7 +8,7 @@ namespace HytaleSecurityTester.Core;
 /// <summary>
 /// Windows process memory reader.
 ///
-/// Uses ReadProcessMemory via P/Invoke — no injection, no DLL, read-only.
+/// Uses ReadProcessMemory via P/Invoke - no injection, no DLL, read-only.
 /// Works against any running process. Attach to Hytale, then scan for
 /// item structs, entity IDs, inventory data, and arbitrary byte patterns.
 ///
@@ -469,10 +469,10 @@ public class MemoryReader : IDisposable
 
     /// <summary>
     /// Heuristic inventory scan: looks for clusters of int32 values
-    /// that fall in the item ID range (100–9999), preceded or followed
-    /// by small integers (slot index 0–64, stack count 1–999).
+    /// that fall in the item ID range (100-9999), preceded or followed
+    /// by small integers (slot index 0-64, stack count 1-999).
     ///
-    /// This is pattern-matched, not a definitive parse — confirm results
+    /// This is pattern-matched, not a definitive parse - confirm results
     /// by comparing with what Item Inspector sees in packets.
     /// </summary>
     public List<InventoryCandidate> ScanInventory(IProgress<int>? progress = null)
@@ -537,7 +537,7 @@ public class MemoryReader : IDisposable
 
     /// <summary>
     /// Resolves a multi-level pointer chain.
-    /// baseAddress + offsets[0] → dereference → + offsets[1] → dereference → ...
+    /// baseAddress + offsets[0] -> dereference -> + offsets[1] -> dereference -> ...
     ///
     /// Returns the final resolved address, or IntPtr.Zero on failure.
     /// Useful for tracking dynamic game objects whose base pointers are stable
@@ -554,15 +554,15 @@ public class MemoryReader : IDisposable
 
         for (int i = 0; i < offsets.Length; i++)
         {
-            // Dereference — read 8-byte pointer (64-bit process)
+            // Dereference - read 8-byte pointer (64-bit process)
             if (!ReadInt64(addr, out long ptr))
             {
-                sb.AppendLine($"  [offset {i}] FAILED — cannot read at 0x{addr.ToInt64():X16}");
+                sb.AppendLine($"  [offset {i}] FAILED - cannot read at 0x{addr.ToInt64():X16}");
                 trace = sb.ToString();
                 return IntPtr.Zero;
             }
             addr = new IntPtr(ptr);
-            sb.AppendLine($"  → deref = 0x{ptr:X16}");
+            sb.AppendLine($"  -> deref = 0x{ptr:X16}");
 
             // Apply next offset
             addr = IntPtr.Add(addr, offsets[i]);
@@ -576,7 +576,7 @@ public class MemoryReader : IDisposable
     // ── Memory Map ────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Returns a full memory map of the process — all regions with their
+    /// Returns a full memory map of the process - all regions with their
     /// protection, state, and size. Used for the Memory Map UI view.
     /// </summary>
     public List<MemoryMapEntry> GetMemoryMap()
@@ -714,10 +714,10 @@ public class MemoryReader : IDisposable
     /// <summary>
     /// Resolves a symbolic address string to an absolute 64-bit address.
     /// Accepted formats:
-    ///   "0x140001234"                 — raw hex
-    ///   "Hytale.exe+0x1A2B3C"        — module + offset
-    ///   "Hytale.exe+1745844"         — module + decimal offset
-    ///   "Hytale.exe"                 — module base only
+    ///   "0x140001234"                 - raw hex
+    ///   "Hytale.exe+0x1A2B3C"        - module + offset
+    ///   "Hytale.exe+1745844"         - module + decimal offset
+    ///   "Hytale.exe"                 - module base only
     /// </summary>
     public bool TryResolveSymbolicAddress(string input, out long result, out string error)
     {
@@ -802,21 +802,21 @@ public class MemoryReader : IDisposable
             // Dereference
             if (!ReadInt64(addr, out long ptr))
             {
-                lines.Add($"STEP {i + 1}  DEREF  0x{addr.ToInt64():X16}  ← FAILED (unreadable)");
+                lines.Add($"STEP {i + 1}  DEREF  0x{addr.ToInt64():X16}  <- FAILED (unreadable)");
                 lines.Add($"ERROR   Step {i + 1} of {offsets.Length} failed to dereference.");
                 traceLines = lines.ToArray();
                 return IntPtr.Zero;
             }
 
             addr = new IntPtr(ptr);
-            lines.Add($"STEP {i + 1}  DEREF  → 0x{ptr:X16}  ✓");
+            lines.Add($"STEP {i + 1}  DEREF  -> 0x{ptr:X16}  [OK]");
 
             // Apply offset
             addr = IntPtr.Add(addr, offsets[i]);
             lines.Add($"        +OFF   +0x{offsets[i]:X} = 0x{addr.ToInt64():X16}");
         }
 
-        lines.Add($"FINAL   0x{addr.ToInt64():X16}  ✓");
+        lines.Add($"FINAL   0x{addr.ToInt64():X16}  [OK]");
         traceLines = lines.ToArray();
         return addr;
     }
@@ -825,7 +825,7 @@ public class MemoryReader : IDisposable
 
     /// <summary>
     /// Scans a specific module's memory for a pattern.
-    /// Uses ReadOnlySpan&lt;byte&gt; for zero-allocation in-buffer search — far
+    /// Uses ReadOnlySpan&lt;byte&gt; for zero-allocation in-buffer search - far
     /// faster than scanning all regions when you know the target module.
     ///
     /// Pattern format: hex bytes separated by spaces, '??' = wildcard.
@@ -878,7 +878,7 @@ public class MemoryReader : IDisposable
             return IntPtr.Zero;
         }
 
-        // Span-based search — no allocations inside the loop
+        // Span-based search - no allocations inside the loop
         ReadOnlySpan<byte> span = buf.AsSpan();
 
         for (int i = 0; i <= span.Length - pattern.Length; i++)
@@ -1067,7 +1067,7 @@ public class MemoryReader : IDisposable
         public ushort SegCs, SegDs, SegEs, SegFs, SegGs, SegSs;
         public uint  EFlags;
         public ulong Dr0, Dr1, Dr2, Dr3, Dr6, Dr7;
-        // Remaining fields — we only need debug registers, but struct size must be exact
+        // Remaining fields - we only need debug registers, but struct size must be exact
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 128)]
         public byte[] _padding;
     }
@@ -1080,7 +1080,7 @@ public class MemoryReader : IDisposable
     public string SetHardwareBreakpoint(IntPtr watchAddress, int slot = 0)
     {
         if (!IsAttached) return "Not attached.";
-        if (slot < 0 || slot > 3) return "Slot must be 0–3.";
+        if (slot < 0 || slot > 3) return "Slot must be 0-3.";
 
         int set = 0, fail = 0;
         foreach (ProcessThread thread in Process.GetProcessById(_pid).Threads)
@@ -1108,7 +1108,7 @@ public class MemoryReader : IDisposable
 
                 // DR7: enable local breakpoint for slot (bits 0,2,4,6) + write condition (bits 16+)
                 // Condition 01 = write, size 00 = 1-byte, enabled in bits 2*slot (local enable)
-                uint enable = (uint)(1 << (slot * 2));         // L0–L3
+                uint enable = (uint)(1 << (slot * 2));         // L0-L3
                 uint cond   = (uint)(0b01 << (16 + slot * 4)); // write access
                 uint size   = 0;                                // 1-byte width
                 ctx.Dr7 = (ctx.Dr7 & ~(ulong)((0xF << (16 + slot * 4)) | (0x3 << (slot * 2))))
@@ -1121,7 +1121,7 @@ public class MemoryReader : IDisposable
             finally { CloseHandle(hThread); }
         }
 
-        return $"Breakpoint set on {set} thread(s) — {fail} failed. Watch: 0x{watchAddress.ToInt64():X16}";
+        return $"Breakpoint set on {set} thread(s) - {fail} failed. Watch: 0x{watchAddress.ToInt64():X16}";
     }
 
     /// <summary>Clears all hardware breakpoint slots on all threads.</summary>
@@ -1268,7 +1268,7 @@ public class MemoryReader : IDisposable
     /// <summary>
     /// Scan all readable memory regions for a float triplet (x, y, z) within
     /// the given tolerance. Returns addresses where the triplet was found.
-    /// Use this when the game gives you coords from F7 menu — find the address,
+    /// Use this when the game gives you coords from F7 menu - find the address,
     /// then walk pointer chains back to a stable base.
     /// </summary>
     public List<IntPtr> ScanForFloatTriplet(float x, float y, float z, float tolerance = 0.5f)

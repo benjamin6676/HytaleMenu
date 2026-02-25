@@ -38,7 +38,7 @@ public class UdpProxy : IDisposable
     private UdpClient?               _listener;
     private CancellationTokenSource? _cts;
 
-    // clientEndpoint → Session
+    // clientEndpoint -> Session
     private readonly ConcurrentDictionary<string, UdpSession> _sessions = new();
 
     private IPEndPoint _serverEp = new(IPAddress.Loopback, 0);
@@ -66,7 +66,7 @@ public class UdpProxy : IDisposable
             TotalClients  = 0;
             StatusMessage = $"Listening on 0.0.0.0:{listenPort}";
 
-            _log.Success($"[UdpProxy] Started on 0.0.0.0:{listenPort} → {serverIp}:{serverPort}");
+            _log.Success($"[UdpProxy] Started on 0.0.0.0:{listenPort} -> {serverIp}:{serverPort}");
             Task.Run(() => ReceiveLoop(_cts.Token));
         }
         catch (Exception ex)
@@ -182,7 +182,7 @@ public class UdpProxy : IDisposable
                                  $"(total={TotalClients})");
                 }
 
-                // Forward client → server
+                // Forward client -> server
                 byte[] data = result.Buffer;
                 try
                 {
@@ -190,7 +190,7 @@ public class UdpProxy : IDisposable
                 }
                 catch (Exception ex)
                 {
-                    _log.Error($"[UdpProxy] Forward C→S: {ex.Message}");
+                    _log.Error($"[UdpProxy] Forward C->S: {ex.Message}");
                 }
 
                 FirePacket(data, PacketDirection.ClientToServer);
@@ -207,7 +207,7 @@ public class UdpProxy : IDisposable
     }
 
     /// Creates a dedicated server-side socket for a client and starts its
-    /// reverse-direction loop (server → client).
+    /// reverse-direction loop (server -> client).
     private UdpSession CreateSession(IPEndPoint clientEp, CancellationToken ct)
     {
         // Bind to any available local port for talking to the real server
@@ -215,7 +215,7 @@ public class UdpProxy : IDisposable
         var session      = new UdpSession(clientEp, serverSocket,
                                           DateTimeOffset.UtcNow);
 
-        // Start the server→client direction on its own task
+        // Start the server->client direction on its own task
         Task.Run(() => ServerReceiveLoop(session, ct), ct);
         return session;
     }
@@ -236,21 +236,21 @@ public class UdpProxy : IDisposable
                 catch (Exception ex)
                 {
                     if (!ct.IsCancellationRequested)
-                        _log.Error($"[UdpProxy] S→C receive: {ex.Message}");
+                        _log.Error($"[UdpProxy] S->C receive: {ex.Message}");
                     break;
                 }
 
                 byte[] data = result.Buffer;
                 session.LastActivity = DateTimeOffset.UtcNow;
 
-                // Forward server → client
+                // Forward server -> client
                 try
                 {
                     await _listener!.SendAsync(data, data.Length, session.ClientEndpoint);
                 }
                 catch (Exception ex)
                 {
-                    _log.Error($"[UdpProxy] Forward S→C: {ex.Message}");
+                    _log.Error($"[UdpProxy] Forward S->C: {ex.Message}");
                 }
 
                 FirePacket(data, PacketDirection.ServerToClient);
@@ -268,7 +268,7 @@ public class UdpProxy : IDisposable
             session.Dispose();
             StatusMessage = _sessions.Count > 0
                 ? $"Active sessions: {_sessions.Count}"
-                : $"Listening — {TotalClients} total";
+                : $"Listening - {TotalClients} total";
             _log.Info($"[UdpProxy] Session closed: {session.ClientEndpoint}");
         }
     }
@@ -288,7 +288,7 @@ public class UdpProxy : IDisposable
         };
         OnPacket?.Invoke(pkt);
 
-        // Per-packet traffic goes to PacketLog only — keeps TestLog clean
+        // Per-packet traffic goes to PacketLog only - keeps TestLog clean
         _pktLog.Add(dir, data.Length,
             pkt.HexString[..Math.Min(48, pkt.HexString.Length)],
             injected);

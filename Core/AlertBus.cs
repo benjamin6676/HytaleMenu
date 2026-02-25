@@ -6,11 +6,11 @@ namespace HytaleSecurityTester.Core;
 /// Cross-tab notification bus.  Any tab can push an alert; MenuRenderer reads
 /// badge counts and clears them when the user visits the tab.
 ///
-/// Thread-safe — SmartDetectionEngine fires events from a background thread.
+/// Thread-safe - SmartDetectionEngine fires events from a background thread.
 /// </summary>
 public static class AlertBus
 {
-    // Per-tab unread counts  (tab section index → count)
+    // Per-tab unread counts  (tab section index -> count)
     private static readonly ConcurrentDictionary<int, int> _badges = new();
 
     // Recent alerts for the global feed (capped at 100)

@@ -13,11 +13,11 @@ namespace HytaleSecurityTester.Core;
 ///
 /// This lets you map game protocol fields directly to memory locations:
 /// e.g. send a "give 64 diamonds" packet, see which memory address jumps
-/// from 0 to 64 — that's the inventory slot count field.
+/// from 0 to 64 - that's the inventory slot count field.
 ///
 /// Usage:
 ///   1. Add memory addresses to watch via AddWatch()
-///   2. Call Start() — correlator runs on its own background thread
+///   2. Call Start() - correlator runs on its own background thread
 ///   3. Query Results for the list of CorrelationHit records
 ///   4. Call Stop() when done
 /// </summary>
@@ -83,7 +83,7 @@ public class LiveMemoryCorrelator
         _cts             = new CancellationTokenSource();
 
         Task.Run(() => CorrelatorLoop(_cts.Token));
-        _log.Info("[Correlator] Started — monitoring PacketStore + memory.");
+        _log.Info("[Correlator] Started - monitoring PacketStore + memory.");
     }
 
     public void Stop()
@@ -149,8 +149,8 @@ public class LiveMemoryCorrelator
                         }
 
                         _log.Info($"[Correlator] {label} " +
-                                  $"{beforeVal} → {afterVal} (Δ{afterVal - beforeVal:+#;-#;0}) " +
-                                  $"— triggered by '{pkt.Label}'");
+                                  $"{beforeVal} -> {afterVal} (Δ{afterVal - beforeVal:+#;-#;0}) " +
+                                  $"- triggered by '{pkt.Label}'");
                     }
                 }
             }

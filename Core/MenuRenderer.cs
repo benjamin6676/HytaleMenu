@@ -80,6 +80,16 @@ public class MenuRenderer
         _stats   = new ServerStats(_log);
         _tracker = new ResponseTracker();
 
+        // ── Bootstrap global singletons ───────────────────────────────────
+        // GlobalConfig: load config.json (hotkeys + IdNameMap + watchlist)
+        // This is already called by the static ctor, but explicitly syncing
+        // ensures hotkeys are applied before any key events fire.
+        GlobalConfig.Instance.SyncToHotkeyConfig();
+        _log.Info($"[Init] GlobalConfig loaded from {GlobalConfig.ConfigPath}");
+
+        // AutoUpdateHandler: wire the shared log so scan results appear in Log tab
+        AutoUpdateHandler.Instance.Init(_log);
+
         _captureTab = new CaptureTab(_log, _pktLog, _config);
         _captureTab.UdpProxy.OnPacket += _stats.OnPacket;
         _captureTab.UdpProxy.OnPacket += _tracker.Feed;
@@ -114,6 +124,21 @@ public class MenuRenderer
         _protocolMapTab      = new ProtocolMapTab(_log, _captureTab.Capture);
         _macroEngineTab      = new MacroEngineTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config, _store);
         _settingsTab         = new SettingsTab(_log);
+
+        // Attempt auto-attach to HytaleClient in background (non-blocking)
+        Task.Run(() =>
+        {
+            string err = SharedMemoryReader.AutoAttach();
+            if (string.IsNullOrEmpty(err))
+            {
+                _log.Success($"[Init] Auto-attached to {SharedMemoryReader.ProcessName} (PID {SharedMemoryReader.Pid})");
+                AutoUpdateHandler.Instance.CheckVersion();
+            }
+            else
+            {
+                _log.Info($"[Init] Auto-attach: {err}");
+            }
+        });
     }
 
     public void Render()
@@ -191,7 +216,7 @@ public class MenuRenderer
             ImGui.ColorConvertFloat4ToU32(connected ? ColAccentDim : ColDangerDim));
         ImGui.SetCursorPos(new Vector2(10, 59));
         ImGui.PushStyleColor(ImGuiCol.Text, connected ? ColAccent : ColDanger);
-        ImGui.TextUnformatted(connected ? "● " + _config.ServerPort : "● OFFLINE");
+        ImGui.TextUnformatted(connected ? "[>] " + _config.ServerPort : "[>] OFFLINE");
         ImGui.PopStyleColor();
 
         // Separator
@@ -201,7 +226,7 @@ public class MenuRenderer
             ImGui.ColorConvertFloat4ToU32(ColBorder));
         ImGui.SetCursorPosY(87);
 
-        // Nav buttons in scrollable child — prevents vertical clipping on small monitors
+        // Nav buttons in scrollable child - prevents vertical clipping on small monitors
         float navH = totalH - 87 - 30;
         ImGui.BeginChild("##NavScroll", new Vector2(sideW, navH),
             ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar);
@@ -211,12 +236,12 @@ public class MenuRenderer
         {
             bool sel = _selectedSection == i;
 
-            // Capture screen pos BEFORE the button renders — used for background rects
+            // Capture screen pos BEFORE the button renders - used for background rects
             var btnSP = ImGui.GetCursorScreenPos();
 
             if (sel)
             {
-                // Left accent bar — 3px wide strip
+                // Left accent bar - 3px wide strip
                 dl.AddRectFilled(btnSP, btnSP + new Vector2(3, BtnH),
                     ImGui.ColorConvertFloat4ToU32(ColAccent));
                 // Tinted background exactly over button area (no overflow into adjacent rects)
@@ -237,7 +262,7 @@ public class MenuRenderer
             ImGui.PopStyleVar();
             ImGui.PopStyleColor(4);
 
-            // Badge — red dot with count if there are unread alerts for this section
+            // Badge - red dot with count if there are unread alerts for this section
             int badge = AlertBus.GetBadge(i);
             if (badge > 0 && _selectedSection != i)
             {

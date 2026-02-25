@@ -21,7 +21,7 @@ public class PacketTab : ITab
     private int    _hexEditorCursor = -1;   // byte index of highlighted/edited byte
     private string _hexEditorError  = "";
 
-    // Target ID integration — linked from ItemInspector via ServerConfig
+    // Target ID integration - linked from ItemInspector via ServerConfig
     private bool   _hexHighlightTargetId = true;
 
     // ── Malformed ────────────────────────────────────────────────────────
@@ -108,21 +108,21 @@ public class PacketTab : ITab
         ImGui.SetCursorPos(new Vector2(12, 6));
         ImGui.PushStyleColor(ImGuiCol.Text, srv ? MenuRenderer.ColAccent : MenuRenderer.ColDanger);
         ImGui.TextUnformatted(srv
-            ? $"● {_config.ServerIp}:{_config.ServerPort}"
-            : "● No server — set in Dashboard");
+            ? $"[>] {_config.ServerIp}:{_config.ServerPort}"
+            : "[>] No server - set in Dashboard");
         ImGui.PopStyleColor();
         ImGui.SameLine(0, 24);
         ImGui.PushStyleColor(ImGuiCol.Text, anyProxy ? MenuRenderer.ColAccent : MenuRenderer.ColTextMuted);
-        string proxyState = udpRun  ? $"● UDP proxy ({_udpProxy.ActiveSessions} session(s))"
-                          : tcpSes  ? "● TCP session active"
-                          :           "● No proxy — start in Capture tab";
+        string proxyState = udpRun  ? $"[>] UDP proxy ({_udpProxy.ActiveSessions} session(s))"
+                          : tcpSes  ? "[>] TCP session active"
+                          :           "[>] No proxy - start in Capture tab";
         ImGui.TextUnformatted(proxyState);
         ImGui.PopStyleColor();
         if (_config.HasTargetItem)
         {
             ImGui.SameLine(0, 24);
             ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-            ImGui.TextUnformatted($"★ Target ID: {_config.TargetItemId}");
+            ImGui.TextUnformatted($"[*] Target ID: {_config.TargetItemId}");
             ImGui.PopStyleColor();
         }
         ImGui.EndChild();
@@ -250,7 +250,7 @@ public class PacketTab : ITab
             {
                 var data = TryParseHexEditor(_hexEditorInput);
                 if (data == null || data.Length == 0)
-                { _log.Error("[HexEd] Invalid hex — cannot send."); return; }
+                { _log.Error("[HexEd] Invalid hex - cannot send."); return; }
                 if (_autoChecksum) ApplyXorChecksum(data, _checksumOffset);
                 SendRaw(data, "HexEditor");
             });
@@ -263,7 +263,7 @@ public class PacketTab : ITab
         });
 
         ImGui.Spacing();
-        UiHelper.SectionBox("CAPTURED PACKET HEX  ← paste here", w, 0, RenderPasteField);
+        UiHelper.SectionBox("CAPTURED PACKET HEX  <- paste here", w, 0, RenderPasteField);
     }
 
     private void InjectTargetIdAtCursor()
@@ -403,7 +403,7 @@ public class PacketTab : ITab
                     _log.Warn("[Flood] Stopped.");
                 });
                 ImGui.SameLine(0, 10);
-                UiHelper.WarnText("● Flooding...");
+                UiHelper.WarnText("[>] Flooding...");
             }
             else
             {
@@ -429,7 +429,7 @@ public class PacketTab : ITab
         });
 
         ImGui.Spacing();
-        UiHelper.SectionBox("CAPTURED PACKET HEX  ← paste here", w, 0, RenderPasteField);
+        UiHelper.SectionBox("CAPTURED PACKET HEX  <- paste here", w, 0, RenderPasteField);
     }
 
     // ── Sequence ─────────────────────────────────────────────────────────
@@ -477,7 +477,7 @@ public class PacketTab : ITab
 
     private void RenderComboChain(float w)
     {
-        UiHelper.SectionBox("SEQUENCE BUILDER — COMBO CHAIN", w, 0, () =>
+        UiHelper.SectionBox("SEQUENCE BUILDER - COMBO CHAIN", w, 0, () =>
         {
             UiHelper.MutedLabel("Chain multiple hex packets to fire as a single 'Combo' action.");
             UiHelper.MutedLabel("Each step fires after the specified delay. Useful for multi-step exploits.");
@@ -510,7 +510,7 @@ public class PacketTab : ITab
             // Chain display
             if (_comboChain.Count == 0)
             {
-                UiHelper.MutedLabel("No steps yet — add steps above.");
+                UiHelper.MutedLabel("No steps yet - add steps above.");
             }
             else
             {
@@ -529,7 +529,7 @@ public class PacketTab : ITab
                     UiHelper.MutedLabel($"delay: {delay}ms");
                     ImGui.SameLine(0, 12);
                     ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 1f, 0.6f, 1f));
-                    string preview = hex.Length > 60 ? hex[..60] + "…" : hex;
+                    string preview = hex.Length > 60 ? hex[..60] + "..." : hex;
                     ImGui.TextUnformatted(preview);
                     ImGui.PopStyleColor();
                     ImGui.SameLine(ImGui.GetContentRegionAvail().X - 50);
@@ -545,7 +545,7 @@ public class PacketTab : ITab
                 {
                     UiHelper.DangerButton("Abort Combo##cbabort", 130, 30, () => _comboRunning = false);
                     ImGui.SameLine(0, 10);
-                    UiHelper.WarnText("● Combo running...");
+                    UiHelper.WarnText("[>] Combo running...");
                 }
                 else
                 {
@@ -596,7 +596,7 @@ public class PacketTab : ITab
 
     private void RenderPasteField()
     {
-        UiHelper.MutedLabel("Capture tab → click packet → Copy Hex → Ctrl+V here");
+        UiHelper.MutedLabel("Capture tab -> click packet -> Copy Hex -> Ctrl+V here");
         ImGui.SetNextItemWidth(-1);
         ImGui.InputText("##ch", ref _capturedPacket, 4096);
     }
@@ -705,10 +705,10 @@ public class PacketTab : ITab
     private void SendRaw(byte[] data, string lbl)
     {
         if (_udpProxy.IsRunning && _udpProxy.InjectToServer(data))
-        { _log.Success($"[{lbl}] {data.Length}b → UDP proxy."); return; }
+        { _log.Success($"[{lbl}] {data.Length}b -> UDP proxy."); return; }
         bool tcpOk = _capture.InjectToServer(data).GetAwaiter().GetResult();
-        if (tcpOk) { _log.Success($"[{lbl}] {data.Length}b → TCP."); return; }
-        _log.Warn($"[{lbl}] No session — direct UDP.");
+        if (tcpOk) { _log.Success($"[{lbl}] {data.Length}b -> TCP."); return; }
+        _log.Warn($"[{lbl}] No session - direct UDP.");
         try { DirectSend(data); _log.Success($"[{lbl}] {data.Length}b sent."); }
         catch (Exception ex) { _log.Error($"[{lbl}] {ex.Message}"); }
     }

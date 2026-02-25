@@ -12,8 +12,8 @@ namespace HytaleSecurityTester.Tabs;
 ///   - Read raw bytes / int32 / float from any address
 ///   - Scan all readable memory for byte patterns
 ///   - Scan for int32 values in a range (item IDs, entity IDs, counts)
-///   - Rescan to narrow down — do action in-game, rescan, repeat
-///   - Heuristic inventory scan — finds item ID clusters automatically
+///   - Rescan to narrow down - do action in-game, rescan, repeat
+///   - Heuristic inventory scan - finds item ID clusters automatically
 ///
 /// No injection, no DLL. Read-only. Works on any Windows process.
 /// </summary>
@@ -22,7 +22,8 @@ public class MemoryTab : ITab
     public string Title => "  Memory  ";
 
     private readonly TestLog     _log;
-    private readonly MemoryReader _reader = new();
+    // Switch to shared singleton so Settings/AutoUpdateHandler see the same reader
+    private MemoryReader _reader => SharedMemoryReader.Instance;
     private readonly ServerConfig _config;
 
     // ── Sub-tabs ──────────────────────────────────────────────────────────
@@ -115,7 +116,7 @@ public class MemoryTab : ITab
         _log    = log;
         _store  = store;
         _config = config;
-        _correlator = new LiveMemoryCorrelator(log, store, _reader);
+        _correlator = new LiveMemoryCorrelator(log, store, SharedMemoryReader.Instance);
     }
 
     public void Render()
@@ -166,8 +167,8 @@ public class MemoryTab : ITab
 
         ImGui.PushStyleColor(ImGuiCol.Text, att ? MenuRenderer.ColAccent : MenuRenderer.ColDanger);
         ImGui.TextUnformatted(att
-            ? $"● Attached — {_reader.ProcessName} (PID {_reader.Pid})"
-            : "● Not attached — go to Attach tab");
+            ? $"[>] Attached - {_reader.ProcessName} (PID {_reader.Pid})"
+            : "[>] Not attached - go to Attach tab");
         ImGui.PopStyleColor();
 
         if (att)
@@ -182,7 +183,7 @@ public class MemoryTab : ITab
         ImGui.EndChild();
     }
 
-    // ── Sub-tab bar — uses ImGui TabBar for auto-scrolling on overflow ────
+    // ── Sub-tab bar - uses ImGui TabBar for auto-scrolling on overflow ────
 
     private void RenderSubTabBar()
     {
@@ -199,7 +200,7 @@ public class MemoryTab : ITab
                     new Vector4(0.18f, 0.95f, 0.45f, 0.35f));
             }
 
-            // TabItemButton renders a tab that doesn't host child content inside it —
+            // TabItemButton renders a tab that doesn't host child content inside it -
             // we render the content below the entire bar instead.
             if (ImGui.TabItemButton(SubTabs[i] + $"##mst{i}",
                     _subTab == i ? ImGuiTabItemFlags.None : ImGuiTabItemFlags.None))
@@ -258,8 +259,10 @@ public class MemoryTab : ITab
 
                 foreach (var proc in filtered)
                 {
-                    bool isHytale = proc.Name.Contains("Hytale",
-                        StringComparison.OrdinalIgnoreCase);
+                    bool isHytale = proc.Name.Contains("HytaleClient",
+                            StringComparison.OrdinalIgnoreCase)
+                        || proc.Name.Contains("Hytale",
+                            StringComparison.OrdinalIgnoreCase);
                     bool attached = _reader.IsAttached && _reader.Pid == proc.Pid;
 
                     var col = attached  ? MenuRenderer.ColAccent
@@ -275,7 +278,16 @@ public class MemoryTab : ITab
                         {
                             string err = _reader.Attach(proc.Pid);
                             if (string.IsNullOrEmpty(err))
+                            {
                                 _log.Success($"[Memory] Attached to {proc.Name} (PID {proc.Pid})");
+                                // Check build version and auto-scan if needed
+                                Task.Run(() =>
+                                {
+                                    bool changed = AutoUpdateHandler.Instance.CheckVersion();
+                                    if (changed)
+                                        _ = AutoUpdateHandler.Instance.ForceRescanAsync();
+                                });
+                            }
                             else
                                 _log.Error($"[Memory] Attach failed: {err}");
                         }
@@ -294,7 +306,7 @@ public class MemoryTab : ITab
             UiHelper.MutedLabel("Hytale process names to try:");
             ImGui.Spacing();
 
-            foreach (var name in new[] { "Hytale", "hytale", "HytaleClient", "java", "javaw" })
+            foreach (var name in new[] { "HytaleClient", "Hytale", "hytale", "java", "javaw" })
             {
                 UiHelper.SecondaryButton($"Attach to '{name}'##qa{name}", -1, 26, () =>
                 {
@@ -306,7 +318,14 @@ public class MemoryTab : ITab
                     }
                     string err = _reader.Attach(procs[0].Id);
                     if (string.IsNullOrEmpty(err))
+                    {
                         _log.Success($"[Memory] Attached to {name} (PID {procs[0].Id})");
+                        Task.Run(() =>
+                        {
+                            bool changed = AutoUpdateHandler.Instance.CheckVersion();
+                            if (changed) _ = AutoUpdateHandler.Instance.ForceRescanAsync();
+                        });
+                    }
                     else
                         _log.Error($"[Memory] Attach failed: {err}");
                 });
@@ -326,7 +345,14 @@ public class MemoryTab : ITab
                 if (_manualPid <= 0) { _log.Error("[Memory] Enter a valid PID."); return; }
                 string err = _reader.Attach(_manualPid);
                 if (string.IsNullOrEmpty(err))
+                {
                     _log.Success($"[Memory] Attached to PID {_manualPid}");
+                    Task.Run(() =>
+                    {
+                        bool changed = AutoUpdateHandler.Instance.CheckVersion();
+                        if (changed) _ = AutoUpdateHandler.Instance.ForceRescanAsync();
+                    });
+                }
                 else
                     _log.Error($"[Memory] Attach failed: {err}");
             });
@@ -345,7 +371,7 @@ public class MemoryTab : ITab
                 {
                     _processes = procs;
                 }
-                _log.Info($"[Memory] Process list refreshed — {procs.Count} processes.");
+                _log.Info($"[Memory] Process list refreshed - {procs.Count} processes.");
             }
             catch (Exception ex) { _log.Error($"[Memory] Refresh failed: {ex.Message}"); }
             finally { _refreshing = false; }
@@ -464,7 +490,7 @@ public class MemoryTab : ITab
             if (_reader.ReadBytes(new IntPtr(addr), buf))
                 _readResult = buf;
             else
-                _readError = "ReadProcessMemory failed — invalid address or no access.";
+                _readError = "ReadProcessMemory failed - invalid address or no access.";
         }
         catch (Exception ex) { _readError = ex.Message; }
     }
@@ -518,20 +544,20 @@ public class MemoryTab : ITab
                 .Select(t => t == "??" ? (byte?)null : (byte?)Convert.ToByte(t, 16))
                 .ToArray();
         }
-        catch { _log.Error("[Memory] Invalid pattern — use hex bytes like  48 8B ?? 48"); return; }
+        catch { _log.Error("[Memory] Invalid pattern - use hex bytes like  48 8B ?? 48"); return; }
 
         _patternScanning = true;
         _patternResults.Clear();
         _patternProgress = 0;
         int max = _patternMax;
 
-        _log.Info($"[Memory] Pattern scan started — {pattern.Length} bytes...");
+        _log.Info($"[Memory] Pattern scan started - {pattern.Length} bytes...");
         Task.Run(() =>
         {
             var prog = new Progress<int>(v => _patternProgress = v);
             _patternResults = _reader.ScanPattern(pattern, max, prog);
             _patternScanning = false;
-            _log.Success($"[Memory] Pattern scan done — {_patternResults.Count} match(es).");
+            _log.Success($"[Memory] Pattern scan done - {_patternResults.Count} match(es).");
         });
     }
 
@@ -543,10 +569,10 @@ public class MemoryTab : ITab
         {
             UiHelper.MutedLabel("Scan all readable memory for int32 values in a range.");
             UiHelper.MutedLabel("Workflow:");
-            UiHelper.MutedLabel("  1. Initial Scan — finds all addresses with value in [Min,Max]");
+            UiHelper.MutedLabel("  1. Initial Scan - finds all addresses with value in [Min,Max]");
             UiHelper.MutedLabel("  2. Change the value in-game (pick up/drop item, change count)");
             UiHelper.MutedLabel("  3. Enter the new value in New min/max and click Rescan");
-            UiHelper.MutedLabel("  4. Repeat until only 1-2 addresses remain — those are your targets");
+            UiHelper.MutedLabel("  4. Repeat until only 1-2 addresses remain - those are your targets");
             ImGui.Spacing();
 
             ImGui.SetNextItemWidth(110); ImGui.InputInt("Min##vsmin", ref _vsMin);
@@ -597,7 +623,7 @@ public class MemoryTab : ITab
         _vsResults.Clear();
         _vsProgress = 0;
         int min = _vsMin, max = _vsMax;
-        _log.Info($"[Memory] Value scan [{min}–{max}] started...");
+        _log.Info($"[Memory] Value scan [{min}-{max}] started...");
         Task.Run(() =>
         {
             var prog = new Progress<int>(v => _vsProgress = v);
@@ -605,7 +631,7 @@ public class MemoryTab : ITab
             _vsPrevResults = new List<ScanMatch>(_vsResults);
             _vsHasFirst    = true;
             _vsScanning    = false;
-            _log.Success($"[Memory] Initial scan done — {_vsResults.Count} result(s).");
+            _log.Success($"[Memory] Initial scan done - {_vsResults.Count} result(s).");
         });
     }
 
@@ -615,12 +641,12 @@ public class MemoryTab : ITab
         _vsProgress = 0;
         int min = _vsRescanMin, max = _vsRescanMax;
         var prev = new List<ScanMatch>(_vsResults);
-        _log.Info($"[Memory] Rescan [{min}–{max}] across {prev.Count} addresses...");
+        _log.Info($"[Memory] Rescan [{min}-{max}] across {prev.Count} addresses...");
         Task.Run(() =>
         {
             _vsResults  = _reader.RescanInt32(prev, min, max);
             _vsScanning = false;
-            _log.Success($"[Memory] Rescan done — {_vsResults.Count} result(s) remain.");
+            _log.Success($"[Memory] Rescan done - {_vsResults.Count} result(s) remain.");
         });
     }
 
@@ -631,7 +657,7 @@ public class MemoryTab : ITab
         UiHelper.SectionBox("INVENTORY SCAN", w, 90, () =>
         {
             UiHelper.MutedLabel("Heuristic scan: finds clusters of int32 values that look like");
-            UiHelper.MutedLabel("item ID (100–9999) + stack count + slot index in adjacent memory.");
+            UiHelper.MutedLabel("item ID (100-9999) + stack count + slot index in adjacent memory.");
             ImGui.Spacing();
 
             ImGui.BeginDisabled(!_reader.IsAttached || _invScanning);
@@ -743,9 +769,9 @@ public class MemoryTab : ITab
         else
         {
             ImGui.SetCursorPosY(h * 0.4f);
-            float tw = ImGui.CalcTextSize("← select a candidate").X;
+            float tw = ImGui.CalcTextSize("<- select a candidate").X;
             ImGui.SetCursorPosX((detW - tw) * 0.5f);
-            UiHelper.MutedLabel("← select a candidate");
+            UiHelper.MutedLabel("<- select a candidate");
         }
 
         ImGui.EndChild();
@@ -763,7 +789,7 @@ public class MemoryTab : ITab
             var prog = new Progress<int>(v => _invProgress = v);
             _invResults  = _reader.ScanInventory(prog);
             _invScanning = false;
-            _log.Success($"[Memory] Inventory scan done — {_invResults.Count} candidate(s).");
+            _log.Success($"[Memory] Inventory scan done - {_invResults.Count} candidate(s).");
         });
     }
 
@@ -867,9 +893,9 @@ public class MemoryTab : ITab
         else
         {
             ImGui.SetCursorPosY(h * 0.4f);
-            float tw = ImGui.CalcTextSize("← select a result").X;
+            float tw = ImGui.CalcTextSize("<- select a result").X;
             ImGui.SetCursorPosX((detW - tw) * 0.5f);
-            UiHelper.MutedLabel("← select a result");
+            UiHelper.MutedLabel("<- select a result");
         }
 
         ImGui.EndChild();
@@ -882,7 +908,7 @@ public class MemoryTab : ITab
         UiHelper.SectionBox("AOB SIGNATURE SCAN", w, 160, () =>
         {
             UiHelper.MutedLabel("High-performance module scan using ReadOnlySpan. Fast zero-allocation search.");
-            UiHelper.MutedLabel("Pattern: hex bytes with '??' wildcards — e.g.  48 8B ?? 48 89 C3 ?? 00");
+            UiHelper.MutedLabel("Pattern: hex bytes with '??' wildcards - e.g.  48 8B ?? 48 89 C3 ?? 00");
             ImGui.Spacing();
 
             // Load modules
@@ -928,7 +954,7 @@ public class MemoryTab : ITab
 
         if (_aobMatches.Count > 0)
         {
-            UiHelper.SectionBox($"RESULTS — {_aobMatches.Count} match(es)", w,
+            UiHelper.SectionBox($"RESULTS - {_aobMatches.Count} match(es)", w,
                 ImGui.GetContentRegionAvail().Y, () =>
             {
                 foreach (var m in _aobMatches)
@@ -955,7 +981,7 @@ public class MemoryTab : ITab
         ImGui.Spacing();
         if (_aobModules.Count > 0)
         {
-            UiHelper.SectionBox($"LOADED MODULES — {_aobModules.Count}", w, 180, () =>
+            UiHelper.SectionBox($"LOADED MODULES - {_aobModules.Count}", w, 180, () =>
             {
                 ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
                 ImGui.BeginChild("##aobmods", new Vector2(-1, -1), ImGuiChildFlags.Border);
@@ -1104,9 +1130,9 @@ public class MemoryTab : ITab
         else
         {
             ImGui.SetCursorPosY(h * 0.45f);
-            float tw = ImGui.CalcTextSize("← select region").X;
+            float tw = ImGui.CalcTextSize("<- select region").X;
             ImGui.SetCursorPosX((detW - tw) * 0.5f);
-            UiHelper.MutedLabel("← select region");
+            UiHelper.MutedLabel("<- select region");
         }
         ImGui.EndChild();
     }
@@ -1120,7 +1146,7 @@ public class MemoryTab : ITab
             UiHelper.MutedLabel("Resolves multi-level pointer chains. Base supports module+offset syntax.");
             ImGui.Spacing();
 
-            // Base address — accepts "Hytale.exe+0x1A2B3C" or raw hex
+            // Base address - accepts "Hytale.exe+0x1A2B3C" or raw hex
             ImGui.SetNextItemWidth(-1);
             ImGui.InputText("Base  (e.g. Hytale.exe+0x1A2B3C or 0x140001234)##ppbase",
                 ref _ppBase, 128);
@@ -1128,7 +1154,7 @@ public class MemoryTab : ITab
 
             ImGui.SetNextItemWidth(-1);
             ImGui.InputText("Offsets (space-separated hex)##ppoff", ref _ppOffsets, 256);
-            UiHelper.MutedLabel("e.g.  0x8 0x10 0x30   — applied after each dereference step");
+            UiHelper.MutedLabel("e.g.  0x8 0x10 0x30   - applied after each dereference step");
             ImGui.Spacing();
 
             ImGui.SetNextItemWidth(110);
@@ -1140,7 +1166,7 @@ public class MemoryTab : ITab
             UiHelper.PrimaryButton("Resolve + Read##ppres", 140, 28, DoResolvePointerChain);
             ImGui.SameLine(0, 8);
 
-            // Resolve & Watch button — continuously refreshes in background
+            // Resolve & Watch button - continuously refreshes in background
             if (_ppWatching)
             {
                 UiHelper.DangerButton("Stop Watch##ppstopw", 110, 28, () =>
@@ -1151,7 +1177,7 @@ public class MemoryTab : ITab
                 });
                 ImGui.SameLine(0, 10);
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccent);
-                ImGui.TextUnformatted($"▶ {_ppWatchResult}");
+                ImGui.TextUnformatted($"> {_ppWatchResult}");
                 ImGui.PopStyleColor();
             }
             else
@@ -1187,7 +1213,7 @@ public class MemoryTab : ITab
                         col = MenuRenderer.ColDanger;
                     else if (line.Contains("FINAL") || line.StartsWith("BASE"))
                         col = MenuRenderer.ColAccent;
-                    else if (line.Contains("DEREF") && line.Contains("✓"))
+                    else if (line.Contains("DEREF") && line.Contains("[OK]"))
                         col = MenuRenderer.ColBlue;
                     else if (line.Contains("+OFF"))
                         col = MenuRenderer.ColTextMuted;
@@ -1225,7 +1251,7 @@ public class MemoryTab : ITab
 
     private void RenderLocalPlayer(float w)
     {
-        UiHelper.SectionBox("LOCAL PLAYER — EntityID FINDER", w, 0, () =>
+        UiHelper.SectionBox("LOCAL PLAYER - EntityID FINDER", w, 0, () =>
         {
             UiHelper.MutedLabel("Scans process memory for strings near the LocalPlayer struct.");
             UiHelper.MutedLabel("Finds the EntityID field offset by searching for a player-name string");
@@ -1236,7 +1262,7 @@ public class MemoryTab : ITab
             ImGui.SetNextItemWidth(200);
             ImGui.InputText("Your in-game name (optional)##lpname", ref _lpPlayerName, 32);
             ImGui.SameLine(0, 10);
-            UiHelper.MutedLabel("— leave blank to scan all plausible player names");
+            UiHelper.MutedLabel("- leave blank to scan all plausible player names");
             ImGui.Spacing();
 
             ImGui.BeginDisabled(!_reader.IsAttached || _lpScanning);
@@ -1374,7 +1400,7 @@ public class MemoryTab : ITab
                     // Jump to Pointer Path sub-tab and populate the base address
                     _subTab = 7;
                     _ppBase = sel.EntityIdAddrHex;
-                    _log.Success($"[LocalPlayer] EntityID addr {sel.EntityIdAddrHex} → Pointer Path base.");
+                    _log.Success($"[LocalPlayer] EntityID addr {sel.EntityIdAddrHex} -> Pointer Path base.");
                 });
                 ImGui.SameLine(0, 10);
                 UiHelper.SecondaryButton("Copy EntityID##lpcopy", 140, 28, () =>
@@ -1398,12 +1424,12 @@ public class MemoryTab : ITab
                 ImGui.PushStyleColor(ImGuiCol.Text,
                     alreadyPushed ? MenuRenderer.ColAccent : MenuRenderer.ColWarn);
                 if (ImGui.Button(
-                    (alreadyPushed ? "★ Pushed to SmartDetect" : "Push to SmartDetect") + "##lpsdp",
+                    (alreadyPushed ? "[*] Pushed to SmartDetect" : "Push to SmartDetect") + "##lpsdp",
                     new Vector2(220, 28)))
                 {
                     _config.SetLocalPlayerEntityId((uint)sel.EntityId, sel.FoundName);
                     _log.Success($"[LocalPlayer] EntityID {sel.EntityId} " +
-                                 $"({sel.FoundName}) → SmartDetection tagged as LocalPlayer.");
+                                 $"({sel.FoundName}) -> SmartDetection tagged as LocalPlayer.");
                 }
                 ImGui.PopStyleColor(2);
             });
@@ -1416,7 +1442,7 @@ public class MemoryTab : ITab
             UiHelper.MutedLabel("1. Launch Hytale and log in to a world.");
             UiHelper.MutedLabel("2. In the Attach sub-tab, attach to the Hytale process.");
             UiHelper.MutedLabel("3. Enter your exact in-game player name above (optional but recommended).");
-            UiHelper.MutedLabel("4. Click 'Scan for LocalPlayer' — scan takes 5–30 seconds.");
+            UiHelper.MutedLabel("4. Click 'Scan for LocalPlayer' - scan takes 5-30 seconds.");
             UiHelper.MutedLabel("5. The highest-scored row (green) is the most likely EntityID candidate.");
             UiHelper.MutedLabel("6. Click 'Use as Pointer Path Base' to open it in the Pointer Path resolver.");
             UiHelper.MutedLabel("7. Cross-reference the EntityID with what Item Inspector shows in 0x4A packets.");
@@ -1477,11 +1503,11 @@ public class MemoryTab : ITab
 
             if (final == IntPtr.Zero)
             {
-                _ppResult = "FAILED — see trace (step that failed is marked in red)";
+                _ppResult = "FAILED - see trace (step that failed is marked in red)";
                 return;
             }
 
-            _ppResult = $"Resolved → 0x{final.ToInt64():X16}";
+            _ppResult = $"Resolved -> 0x{final.ToInt64():X16}";
             _log.Success($"[PtrPath] {_ppResult}");
 
             var buf = new byte[_ppReadBytes];
@@ -1526,7 +1552,7 @@ public class MemoryTab : ITab
         }
         catch { _ppWatchResult = "Bad offsets"; _ppWatching = false; return; }
 
-        _log.Info($"[PtrPath] Watch started — refreshing every 500ms.");
+        _log.Info($"[PtrPath] Watch started - refreshing every 500ms.");
 
         Task.Run(async () =>
         {
@@ -1537,8 +1563,8 @@ public class MemoryTab : ITab
                     var final = _reader.ResolvePointerChainDetailed(
                         new IntPtr(baseAddr), offsets, out _);
                     _ppWatchResult = final == IntPtr.Zero
-                        ? "UNSTABLE — chain broken"
-                        : $"0x{final.ToInt64():X16}  ✓ stable";
+                        ? "UNSTABLE - chain broken"
+                        : $"0x{final.ToInt64():X16}  [OK] stable";
                 }
                 catch { _ppWatchResult = "Error during watch"; }
                 await Task.Delay(500, cts.Token).ContinueWith(_ => { });
@@ -1618,7 +1644,7 @@ public class MemoryTab : ITab
                 ImGui.TextUnformatted($"  {m.AddressHex,-20} {m.Encoding,-8} {m.Length,-6}");
                 ImGui.PopStyleColor();
                 ImGui.SameLine(0, 6);
-                UiHelper.MutedLabel(m.Value.Length > 80 ? m.Value[..80] + "…" : m.Value);
+                UiHelper.MutedLabel(m.Value.Length > 80 ? m.Value[..80] + "..." : m.Value);
                 ImGui.SameLine(0, 8);
                 ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBg3);
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
@@ -1648,7 +1674,7 @@ public class MemoryTab : ITab
         {
             _ssResults = _reader.ScanStrings(_ssMinLen, _ssMaxLen, 3000, progress);
             _ssScanning = false;
-            _ssStatus = $"Done — {_ssResults.Count} strings found.";
+            _ssStatus = $"Done - {_ssResults.Count} strings found.";
             _log.Success($"[StringScan] {_ssResults.Count} strings found.");
         });
     }
@@ -1694,7 +1720,7 @@ public class MemoryTab : ITab
             else
             {
                 UiHelper.SectionBox($"VTABLE @ 0x{_vtResult.VTableAddress.ToInt64():X16}" +
-                                    $"  —  {_vtResult.Methods.Count} method(s)", w,
+                                    $"  -  {_vtResult.Methods.Count} method(s)", w,
                     ImGui.GetContentRegionAvail().Y, () =>
                 {
                     UiHelper.MutedLabel($"  {"Slot",-6} {"Address",-22} {"Module",-28} {"Offset"}");
@@ -1748,7 +1774,7 @@ public class MemoryTab : ITab
     {
         UiHelper.SectionBox("HARDWARE BREAKPOINT MONITOR", w, 140, () =>
         {
-            UiHelper.MutedLabel("Sets a CPU-level hardware write breakpoint on the target address (DR0–DR3).");
+            UiHelper.MutedLabel("Sets a CPU-level hardware write breakpoint on the target address (DR0-DR3).");
             UiHelper.MutedLabel("Polls all threads for DR6 hit status to log which functions write to that address.");
             ImGui.Spacing();
 
@@ -1791,7 +1817,7 @@ public class MemoryTab : ITab
         if (_bpHits.Count > 0)
         {
             ImGui.Spacing();
-            UiHelper.SectionBox($"HITS — {_bpHits.Count}", w, ImGui.GetContentRegionAvail().Y, () =>
+            UiHelper.SectionBox($"HITS - {_bpHits.Count}", w, ImGui.GetContentRegionAvail().Y, () =>
             {
                 UiHelper.MutedLabel($"  {"Time",-12} {"Thread",-10} {"Slot"}");
                 ImGui.Separator();
@@ -1862,7 +1888,7 @@ public class MemoryTab : ITab
         UiHelper.SectionBox("POINTER TREE VIEW", w, 130, () =>
         {
             UiHelper.MutedLabel("Starting from a base address, dereferences pointer chains to build a tree.");
-            UiHelper.MutedLabel("Visualizes nested memory structures — entities → components → fields.");
+            UiHelper.MutedLabel("Visualizes nested memory structures - entities -> components -> fields.");
             ImGui.Spacing();
 
             ImGui.SetNextItemWidth(260); ImGui.InputText("Root address##ptba", ref _ptBaseAddr, 32);
@@ -1899,7 +1925,7 @@ public class MemoryTab : ITab
         string indent  = new string(' ', depth * 4);
         string addrStr = $"0x{node.Address.ToInt64():X16}";
         string valStr  = node.IsValid
-            ? $"→ 0x{node.DereferencedValue:X16}  [{node.BytePreview}]"
+            ? $"-> 0x{node.DereferencedValue:X16}  [{node.BytePreview}]"
             : "(unreadable)";
 
         bool hasChildren = node.Children.Count > 0;
@@ -2070,7 +2096,7 @@ public class MemoryTab : ITab
                 string offStr  = e.Offsets.Count > 0
                     ? string.Join(",", e.Offsets.Select(o => $"{o:X}"))
                     : "";
-                string valStr  = e.LiveValue.Length > 0 ? e.LiveValue : "—";
+                string valStr  = e.LiveValue.Length > 0 ? e.LiveValue : "-";
 
                 ImGui.TextUnformatted(
                     $"  {e.Description[..Math.Min(30, e.Description.Length)],-32}" +
@@ -2147,7 +2173,7 @@ public class MemoryTab : ITab
             }
             else
             {
-                UiHelper.MutedLabel("Correlator is present — use the correlator UI from its implementation.");
+                UiHelper.MutedLabel("Correlator is present - use the correlator UI from its implementation.");
             }
         });
     }

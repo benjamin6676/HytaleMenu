@@ -8,19 +8,19 @@ using System.Collections.Concurrent;
 namespace HytaleSecurityTester.Tabs;
 
 /// <summary>
-/// Mod Auditor — Universal mod / permission vulnerability scanner.
+/// Mod Auditor - Universal mod / permission vulnerability scanner.
 ///
 /// Sub-tabs:
-///   Claims      — Claim/Zone border visualizer + ESP data + edge-gap detection
-///   Interact    — Universal Interaction Spoofer (Force Interact, Ghost Mode)
-///   Inventory   — Virtual Inventory Sniffer (Open Window, Remote Open)
-///   Entities    — Active Modded Entities, Permission Status, Brute Force IDs
-///   Race        — Race Condition / Burst Send tool
-///   Dialogue    — NPC Dialogue Interceptor (hidden option IDs)
-///   Teleport    — Teleport Hook (override X/Y/Z before packet leaves)
-///   Payload     — Packet Payload Scaler (Area/Radius × slider)
-///   Deps        — Dependency Scanner (mod library fingerprinting)
-///   LagSwitch   — Defer Packets / Lag Switch buffer mode
+///   Claims      - Claim/Zone border visualizer + ESP data + edge-gap detection
+///   Interact    - Universal Interaction Spoofer (Force Interact, Ghost Mode)
+///   Inventory   - Virtual Inventory Sniffer (Open Window, Remote Open)
+///   Entities    - Active Modded Entities, Permission Status, Brute Force IDs
+///   Race        - Race Condition / Burst Send tool
+///   Dialogue    - NPC Dialogue Interceptor (hidden option IDs)
+///   Teleport    - Teleport Hook (override X/Y/Z before packet leaves)
+///   Payload     - Packet Payload Scaler (Area/Radiusx slider)
+///   Deps        - Dependency Scanner (mod library fingerprinting)
+///   LagSwitch   - Defer Packets / Lag Switch buffer mode
 /// </summary>
 public class ModAuditorTab : ITab
 {
@@ -58,7 +58,7 @@ public class ModAuditorTab : ITab
     {
         float w = ImGui.GetContentRegionAvail().X;
 
-        // Background scan — runs every frame when new packets arrive
+        // Background scan - runs every frame when new packets arrive
         int cur = _capture.GetPacketCount();
         if (cur != _lastPktCount)
         {
@@ -66,7 +66,7 @@ public class ModAuditorTab : ITab
             BackgroundScan(_capture.GetPackets());
         }
 
-        // Lag-switch intercept — drains queued packets if timer expired
+        // Lag-switch intercept - drains queued packets if timer expired
         DrainLagBuffer();
 
         // Status bar
@@ -113,16 +113,16 @@ public class ModAuditorTab : ITab
         ImGui.SetCursorPos(new Vector2(12, 6));
 
         ImGui.PushStyleColor(ImGuiCol.Text, srv ? MenuRenderer.ColAccent : MenuRenderer.ColDanger);
-        ImGui.TextUnformatted(srv ? $"● {_config.ServerIp}:{_config.ServerPort}" : "● No server");
+        ImGui.TextUnformatted(srv ? $"[>] {_config.ServerIp}:{_config.ServerPort}" : "[>] No server");
         ImGui.PopStyleColor();
         ImGui.SameLine(0, 20);
         ImGui.PushStyleColor(ImGuiCol.Text, ses ? MenuRenderer.ColAccent : MenuRenderer.ColWarn);
-        ImGui.TextUnformatted(ses ? "● Proxy active" : "● No proxy — start Capture first");
+        ImGui.TextUnformatted(ses ? "[>] Proxy active" : "[>] No proxy - start Capture first");
         ImGui.PopStyleColor();
         ImGui.SameLine(0, 20);
         ImGui.PushStyleColor(ImGuiCol.Text, _lagSwitchActive ? MenuRenderer.ColDanger : MenuRenderer.ColTextMuted);
         ImGui.TextUnformatted(_lagSwitchActive
-            ? $"⚡ LAG BUFFER ON — {_lagQueue.Count} queued"
+            ? $"⚡ LAG BUFFER ON - {_lagQueue.Count} queued"
             : "⚡ Lag buffer off");
         ImGui.PopStyleColor();
         ImGui.SameLine(0, 20);
@@ -133,7 +133,7 @@ public class ModAuditorTab : ITab
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // BACKGROUND SCANNER — runs each frame when packet count changes
+    // BACKGROUND SCANNER - runs each frame when packet count changes
     // ══════════════════════════════════════════════════════════════════════
 
     private void BackgroundScan(List<CapturedPacket> packets)
@@ -171,7 +171,7 @@ public class ModAuditorTab : ITab
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // TAB 0 — CLAIM & BORDER VISUALIZER
+    // TAB 0 - CLAIM & BORDER VISUALIZER
     // ══════════════════════════════════════════════════════════════════════
 
     private readonly List<ClaimZone> _claimZones = new();
@@ -209,7 +209,7 @@ public class ModAuditorTab : ITab
                 float dx = Math.Abs(x1 - x0), dz = Math.Abs(z1 - z0);
                 if (dx < 1f || dz < 1f || dx > 5000f || dz > 5000f) continue;
 
-                // Looks like a claim — find or add
+                // Looks like a claim - find or add
                 var zone = new ClaimZone
                 {
                     Min = new Vector3(Math.Min(x0, x1), Math.Min(y0, y1), Math.Min(z0, z1)),
@@ -226,8 +226,8 @@ public class ModAuditorTab : ITab
                 {
                     _claimZones.Add(zone);
                     _log.Info($"[ModAudit/Claims] Zone #{_claimZones.Count} detected " +
-                              $"({zone.Min.X:F0},{zone.Min.Z:F0})→({zone.Max.X:F0},{zone.Max.Z:F0})" +
-                              (zone.EdgeGaps > 0 ? $"  ⚠ {zone.EdgeGaps} edge gaps!" : ""));
+                              $"({zone.Min.X:F0},{zone.Min.Z:F0})->({zone.Max.X:F0},{zone.Max.Z:F0})" +
+                              (zone.EdgeGaps > 0 ? $"  [!] {zone.EdgeGaps} edge gaps!" : ""));
                 }
                 break; // one claim per packet
             }
@@ -252,8 +252,8 @@ public class ModAuditorTab : ITab
     {
         UiHelper.SectionBox("CLAIM / ZONE SCANNER", w, 0, () =>
         {
-            UiHelper.MutedLabel("Detects protected zone boundaries from S→C packets.");
-            UiHelper.MutedLabel("'Edge Gaps' = boundary not aligned to block grid → MOB collision leakage.");
+            UiHelper.MutedLabel("Detects protected zone boundaries from S->C packets.");
+            UiHelper.MutedLabel("'Edge Gaps' = boundary not aligned to block grid -> MOB collision leakage.");
             ImGui.Spacing();
 
             ImGui.Checkbox("Auto-scan incoming packets##clautoscan", ref _claimAutoScan);
@@ -279,7 +279,7 @@ public class ModAuditorTab : ITab
             UiHelper.SectionBox("DETECTED ZONES", w, 0, () =>
             {
                 UiHelper.MutedLabel("No claim zones detected yet.");
-                UiHelper.MutedLabel("Join a server and walk near claimed areas — zone boundary packets should appear.");
+                UiHelper.MutedLabel("Join a server and walk near claimed areas - zone boundary packets should appear.");
             });
             return;
         }
@@ -289,7 +289,7 @@ public class ModAuditorTab : ITab
         UiHelper.SectionBox($"DETECTED ZONES  ({_claimZones.Count})", w, listH, () =>
         {
             ImGui.SetCursorPosX(8);
-            UiHelper.MutedLabel($"  {"#",-4}  {"Min XZ",-22}  {"Max XZ",-22}  {"W×H×D",-18}  {"Gaps",-6}  {"Opcode"}");
+            UiHelper.MutedLabel($"  {"#",-4}  {"Min XZ",-22}  {"Max XZ",-22}  {"WxHxD",-18}  {"Gaps",-6}  {"Opcode"}");
 
             var dl = ImGui.GetWindowDrawList();
             float lineY = ImGui.GetCursorScreenPos().Y - 2;
@@ -317,12 +317,12 @@ public class ModAuditorTab : ITab
                     ImGui.PushStyleColor(ImGuiCol.Text, col);
 
                     Vector3 size = z.Max - z.Min;
-                    string gapStr = z.EdgeGaps > 0 ? $"⚠ {z.EdgeGaps}" : "—";
+                    string gapStr = z.EdgeGaps > 0 ? $"[!] {z.EdgeGaps}" : "-";
 
                     if (ImGui.Selectable(
                         $"  #{i + 1,-3}  ({z.Min.X:F0},{z.Min.Z:F0}){"",-6}  " +
                         $"({z.Max.X:F0},{z.Max.Z:F0}){"",-6}  " +
-                        $"{size.X:F0}×{size.Y:F0}×{size.Z:F0}{"",-4}  " +
+                        $"{size.X:F0}x{size.Y:F0}x{size.Z:F0}{"",-4}  " +
                         $"{gapStr,-6}  0x{z.Opcode:X2}##clz{i}",
                         sel, ImGuiSelectableFlags.None, new Vector2(0, 24)))
                         _claimSelectedIdx = i;
@@ -344,7 +344,7 @@ public class ModAuditorTab : ITab
             {
                 UiHelper.StatusRow("Min corner",  $"X={z.Min.X:F2}  Y={z.Min.Y:F2}  Z={z.Min.Z:F2}", true, 100);
                 UiHelper.StatusRow("Max corner",  $"X={z.Max.X:F2}  Y={z.Max.Y:F2}  Z={z.Max.Z:F2}", true, 100);
-                UiHelper.StatusRow("Dimensions",  $"{size.X:F2} × {size.Y:F2} × {size.Z:F2} blocks",  true, 100);
+                UiHelper.StatusRow("Dimensions",  $"{size.X:F2}x {size.Y:F2}x {size.Z:F2} blocks",  true, 100);
                 UiHelper.StatusRow("Opcode",      $"0x{z.Opcode:X2}", true, 100);
                 UiHelper.StatusRow("Detected",    z.FoundAt.ToString("HH:mm:ss"),  true, 100);
 
@@ -352,7 +352,7 @@ public class ModAuditorTab : ITab
                 {
                     ImGui.Spacing();
                     ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-                    ImGui.TextUnformatted($"  ⚠  {z.EdgeGaps} edge gap(s) detected — " +
+                    ImGui.TextUnformatted($"  [!]  {z.EdgeGaps} edge gap(s) detected - " +
                         "boundary not on block grid. Test placing blocks along the exact edge.");
                     ImGui.PopStyleColor();
                 }
@@ -416,7 +416,7 @@ public class ModAuditorTab : ITab
                     };
                     _claimZones.Add(zone);
                     _claimSelectedIdx = _claimZones.Count - 1;
-                    _log.Success($"[ModAudit/Claims] Manual parse ok — {zone.Min}→{zone.Max}, gaps={zone.EdgeGaps}");
+                    _log.Success($"[ModAudit/Claims] Manual parse ok - {zone.Min}->{zone.Max}, gaps={zone.EdgeGaps}");
                 }
                 catch (Exception ex) { _log.Error($"[ModAudit/Claims] {ex.Message}"); }
             });
@@ -424,7 +424,7 @@ public class ModAuditorTab : ITab
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // TAB 1 — UNIVERSAL INTERACTION SPOOFER
+    // TAB 1 - UNIVERSAL INTERACTION SPOOFER
     // ══════════════════════════════════════════════════════════════════════
 
     private string _forceInteractCapHex = "";
@@ -440,13 +440,13 @@ public class ModAuditorTab : ITab
 
     private void RenderInteract(float w)
     {
-        UiHelper.SectionBox("FORCE INTERACT — PERMISSION BYPASS SPOOFER", w, 0, () =>
+        UiHelper.SectionBox("FORCE INTERACT - PERMISSION BYPASS SPOOFER", w, 0, () =>
         {
-            UiHelper.MutedLabel("Capture the last C→S interaction packet, mutate Distance or ActionType, and replay.");
+            UiHelper.MutedLabel("Capture the last C->S interaction packet, mutate Distance or ActionType, and replay.");
             UiHelper.MutedLabel("Tests if protected objects only check ActionType or skip distance validation.");
             ImGui.Spacing();
 
-            UiHelper.PrimaryButton("⟳ Capture Last C→S Packet##ficap", 200, 28, () =>
+            UiHelper.PrimaryButton("⟳ Capture Last C->S Packet##ficap", 200, 28, () =>
             {
                 var pkts = _capture.GetPackets();
                 var last = pkts.LastOrDefault(p => p.Direction == PacketDirection.ClientToServer
@@ -457,7 +457,7 @@ public class ModAuditorTab : ITab
                     _forceInteractStatus = $"Captured {last.RawBytes.Length}b opcode=0x{last.RawBytes[0]:X2}";
                     _log.Info($"[ModAudit/Interact] Captured packet: {_forceInteractCapHex}");
                 }
-                else _forceInteractStatus = "No C→S packets yet.";
+                else _forceInteractStatus = "No C->S packets yet.";
             });
 
             ImGui.SameLine(0, 8);
@@ -490,7 +490,7 @@ public class ModAuditorTab : ITab
             _forceInteractActionOffset = Math.Max(0, _forceInteractActionOffset);
             ImGui.SameLine(0, 12);
             ImGui.SetNextItemWidth(150);
-            string[] actionNames = { "0 — Use/Interact", "1 — Open", "2 — Attack", "3 — Sneak+Use", "4 — Secondary" };
+            string[] actionNames = { "0 - Use/Interact", "1 - Open", "2 - Attack", "3 - Sneak+Use", "4 - Secondary" };
             ImGui.Combo("New ActionType##fiact", ref _forceInteractNewAction, actionNames, actionNames.Length);
 
             // Distance mutation
@@ -520,7 +520,7 @@ public class ModAuditorTab : ITab
 
             ImGui.Spacing();
 
-            UiHelper.WarnButton("▶ Force Interact (Mutated Send)##fisend", 240, 32, () =>
+            UiHelper.WarnButton("> Force Interact (Mutated Send)##fisend", 240, 32, () =>
             {
                 if (string.IsNullOrWhiteSpace(_forceInteractCapHex))
                 { _log.Error("[ModAudit/Interact] Capture or paste a packet hex first."); return; }
@@ -528,8 +528,8 @@ public class ModAuditorTab : ITab
                 {
                     byte[] mutated = MutateInteractPacket(HexToBytes(_forceInteractCapHex));
                     SendRaw(mutated);
-                    _forceInteractStatus = $"Sent {mutated.Length}b — action={_forceInteractNewAction} dist={_forceInteractNewDist:F1}";
-                    _log.Success($"[ModAudit/Interact] Force Interact sent — {_forceInteractStatus}");
+                    _forceInteractStatus = $"Sent {mutated.Length}b - action={_forceInteractNewAction} dist={_forceInteractNewDist:F1}";
+                    _log.Success($"[ModAudit/Interact] Force Interact sent - {_forceInteractStatus}");
                 }
                 catch (Exception ex) { _log.Error($"[ModAudit/Interact] {ex.Message}"); }
             });
@@ -542,7 +542,7 @@ public class ModAuditorTab : ITab
         {
             ImGui.PushStyleColor(ImGuiCol.Text, _ghostModeEnabled ? MenuRenderer.ColDanger : MenuRenderer.ColTextMuted);
             ImGui.TextUnformatted(_ghostModeEnabled
-                ? "  ★ GHOST MODE ACTIVE — next right-click will spoof position briefly"
+                ? "  [*] GHOST MODE ACTIVE - next right-click will spoof position briefly"
                 : "  Ghost mode disabled");
             ImGui.PopStyleColor();
             ImGui.Spacing();
@@ -575,10 +575,10 @@ public class ModAuditorTab : ITab
                 UiHelper.MutedLabel("Select a detected claim zone (Claims tab) to auto-aim the ghost position.");
 
             ImGui.Spacing();
-            UiHelper.WarnButton("▶ Fire Ghost Interact Now##ghostfire", 220, 32, () =>
+            UiHelper.WarnButton("> Fire Ghost Interact Now##ghostfire", 220, 32, () =>
             {
                 if (!_claimZones.Any())
-                { _log.Error("[ModAudit/Ghost] No claim zones detected — scan first."); return; }
+                { _log.Error("[ModAudit/Ghost] No claim zones detected - scan first."); return; }
                 if (string.IsNullOrWhiteSpace(_forceInteractCapHex))
                 { _log.Error("[ModAudit/Ghost] Capture an interaction packet first."); return; }
 
@@ -596,7 +596,7 @@ public class ModAuditorTab : ITab
                     await Task.Delay(delay);
                     SendRaw(posSpoof);   // re-send position (snap back)
                     _log.Success($"[ModAudit/Ghost] Ghost interact sequence sent " +
-                                 $"(pos: {spoofPos.X:F2},{spoofPos.Z:F2} → interact → snap-back).");
+                                 $"(pos: {spoofPos.X:F2},{spoofPos.Z:F2} -> interact -> snap-back).");
                 });
             });
         });
@@ -634,7 +634,7 @@ public class ModAuditorTab : ITab
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // TAB 2 — VIRTUAL INVENTORY SNIFFER
+    // TAB 2 - VIRTUAL INVENTORY SNIFFER
     // ══════════════════════════════════════════════════════════════════════
 
     private readonly List<SniffedWindow> _openWindows = new();
@@ -650,8 +650,8 @@ public class ModAuditorTab : ITab
         byte[] b = p.RawBytes;
         if (b.Length < 5) return;
 
-        // Heuristic: opcode in 0x2D–0x35 range (common open-window opcodes)
-        // AND first few bytes encode a small integer (window ID: 1–255)
+        // Heuristic: opcode in 0x2D-0x35 range (common open-window opcodes)
+        // AND first few bytes encode a small integer (window ID: 1-255)
         byte op = b[0];
         if (op < 0x2C || op > 0x40) return;
 
@@ -660,7 +660,7 @@ public class ModAuditorTab : ITab
         if (windowId < 0 || windowId > 512) return;
 
         // Look for non-physical signature: check if we already have a block position in
-        // the packet — physical blocks normally have 3 ints after the window ID (X,Y,Z)
+        // the packet - physical blocks normally have 3 ints after the window ID (X,Y,Z)
         bool hasBlockPos = b.Length >= 13;
         string typeName = op switch
         {
@@ -689,15 +689,15 @@ public class ModAuditorTab : ITab
             SeenAt   = p.Timestamp,
         };
         _openWindows.Add(win);
-        _log.Info($"[ModAudit/Inventory] Window #{windowId} ({typeName}) detected — " +
-                  (hasBlockPos ? "has block pos" : "NO block pos — modded?"));
+        _log.Info($"[ModAudit/Inventory] Window #{windowId} ({typeName}) detected - " +
+                  (hasBlockPos ? "has block pos" : "NO block pos - modded?"));
     }
 
     private void RenderInventory(float w)
     {
         UiHelper.SectionBox("VIRTUAL INVENTORY SNIFFER", w, 0, () =>
         {
-            UiHelper.MutedLabel("Detects 'Open Window' S→C packets — especially those without a physical block position.");
+            UiHelper.MutedLabel("Detects 'Open Window' S->C packets - especially those without a physical block position.");
             UiHelper.MutedLabel("Modded workbenches/forges often skip distance checks once the window is registered.");
             ImGui.Spacing();
             UiHelper.SecondaryButton("⟳ Re-scan##invrescan", 100, 24, () =>
@@ -746,11 +746,11 @@ public class ModAuditorTab : ITab
                             ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColAccentDim));
                     }
 
-                    // Highlight windows without block position in amber — potential modded
+                    // Highlight windows without block position in amber - potential modded
                     Vector4 col = !win.HasBlockPosition ? MenuRenderer.ColWarn : MenuRenderer.ColAccent;
                     ImGui.PushStyleColor(ImGuiCol.Text, col);
 
-                    string blockStr = win.HasBlockPosition ? "Yes" : "⚠ No";
+                    string blockStr = win.HasBlockPosition ? "Yes" : "[!] No";
                     if (ImGui.Selectable(
                         $"  {win.WindowId,-6}  0x{win.Opcode:X2}{"",-4}  {win.TypeName,-22}  {blockStr,-8}  " +
                         $"{win.SeenAt:HH:mm:ss}##inv{i}",
@@ -790,7 +790,7 @@ public class ModAuditorTab : ITab
             ImGui.InputText("Packet hex template##rowhex", ref _remoteOpenHexTemplate, 2048);
 
             ImGui.Spacing();
-            UiHelper.WarnButton("▶ Remote Open Window##rosend", 200, 32, () =>
+            UiHelper.WarnButton("> Remote Open Window##rosend", 200, 32, () =>
             {
                 byte[] pkt;
                 if (!string.IsNullOrWhiteSpace(_remoteOpenHexTemplate))
@@ -800,7 +800,7 @@ public class ModAuditorTab : ITab
                 }
                 else
                 {
-                    // Build a generic "request open window" C→S: [0x0E] [windowId:2]
+                    // Build a generic "request open window" C->S: [0x0E] [windowId:2]
                     pkt = new byte[] { 0x0E, (byte)(_remoteOpenWindowId & 0xFF),
                                               (byte)((_remoteOpenWindowId >> 8) & 0xFF) };
                 }
@@ -808,7 +808,7 @@ public class ModAuditorTab : ITab
                 int count = _remoteOpenCount;
                 int delay = _remoteOpenDelayMs;
                 int wid   = _remoteOpenWindowId;
-                _log.Info($"[ModAudit/Inventory] Remote Open WindowID={wid} × {count}");
+                _log.Info($"[ModAudit/Inventory] Remote Open WindowID={wid}x {count}");
                 Task.Run(async () =>
                 {
                     for (int n = 0; n < count; n++)
@@ -816,14 +816,14 @@ public class ModAuditorTab : ITab
                         SendRaw(pkt);
                         if (delay > 0) await Task.Delay(delay);
                     }
-                    _log.Success($"[ModAudit/Inventory] Remote Open × {count} sent.");
+                    _log.Success($"[ModAudit/Inventory] Remote Openx {count} sent.");
                 });
             });
         });
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // TAB 3 — ACTIVE MODDED ENTITIES + PERMISSION STATUS + BRUTE FORCE
+    // TAB 3 - ACTIVE MODDED ENTITIES + PERMISSION STATUS + BRUTE FORCE
     // ══════════════════════════════════════════════════════════════════════
 
     private readonly List<ModdedEntity> _moddedEntities = new();
@@ -880,7 +880,7 @@ public class ModAuditorTab : ITab
         var found = new List<string>();
         foreach (var flag in _knownPermFlags)
             if (text.Contains(flag)) found.Add(flag);
-        return found.Count > 0 ? string.Join(", ", found) : "—";
+        return found.Count > 0 ? string.Join(", ", found) : "-";
     }
 
     private void RenderEntities(float w)
@@ -893,7 +893,7 @@ public class ModAuditorTab : ITab
                 UiHelper.StatusRow("EntityID",  _playerPermStatus.EntityId.ToString(),    true,  120);
                 UiHelper.StatusRow("Flags seen", _playerPermStatus.PermFlags,              true,  120);
                 UiHelper.StatusRow("IsAdmin",   _playerPermStatus.PermFlags.Contains("admin") ||
-                                                _playerPermStatus.PermFlags.Contains("op") ? "True ★" : "False",
+                                                _playerPermStatus.PermFlags.Contains("op") ? "True [*]" : "False",
                                    _playerPermStatus.PermFlags.Contains("admin") ||
                                    _playerPermStatus.PermFlags.Contains("op"), 120);
                 UiHelper.StatusRow("CanBuild",  _playerPermStatus.PermFlags.Contains("canbuild") ||
@@ -905,7 +905,7 @@ public class ModAuditorTab : ITab
             else
             {
                 UiHelper.MutedLabel("No permission data detected yet.");
-                UiHelper.MutedLabel("Walk around or open GUI elements near claims — permission packets will appear.");
+                UiHelper.MutedLabel("Walk around or open GUI elements near claims - permission packets will appear.");
             }
 
             ImGui.Spacing();
@@ -935,7 +935,7 @@ public class ModAuditorTab : ITab
             if (_moddedEntities.Count == 0)
             {
                 ImGui.SetCursorPosX(12);
-                UiHelper.MutedLabel("None yet — interact with mod entities or trigger permission checks.");
+                UiHelper.MutedLabel("None yet - interact with mod entities or trigger permission checks.");
                 return;
             }
 
@@ -978,7 +978,7 @@ public class ModAuditorTab : ITab
             ImGui.InputInt("±Radius##bfrad", ref _bruteForceRadius);
             _bruteForceRadius = Math.Clamp(_bruteForceRadius, 1, 50);
             ImGui.SameLine(0, 8);
-            UiHelper.MutedLabel($"→ will probe IDs {_bruteForceBaseId} to {_bruteForceBaseId + _bruteForceRadius}");
+            UiHelper.MutedLabel($"-> will probe IDs {_bruteForceBaseId} to {_bruteForceBaseId + _bruteForceRadius}");
 
             if (_bruteForceBaseId == 0 && _moddedEntities.Count > 0)
             {
@@ -996,7 +996,7 @@ public class ModAuditorTab : ITab
             }
             else
             {
-                UiHelper.WarnButton("▶ Brute Force IDs##bfrun", 180, 32, () =>
+                UiHelper.WarnButton("> Brute Force IDs##bfrun", 180, 32, () =>
                 {
                     if (_bruteForceRunning) return;
                     _bruteForceRunning = true;
@@ -1021,7 +1021,7 @@ public class ModAuditorTab : ITab
 
                         await Task.Delay(300);
                         int newPkts = _capture.GetPacketCount() - pktsBefore;
-                        _bruteForceStatus = $"Done — {radius + 1} probes sent, {newPkts} new S→C packets received.";
+                        _bruteForceStatus = $"Done - {radius + 1} probes sent, {newPkts} new S->C packets received.";
                         _log.Success($"[ModAudit/BruteForce] {_bruteForceStatus}");
                         _bruteForceRunning = false;
                     });
@@ -1039,7 +1039,7 @@ public class ModAuditorTab : ITab
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // TAB 4 — RACE CONDITION / BURST SEND
+    // TAB 4 - RACE CONDITION / BURST SEND
     // ══════════════════════════════════════════════════════════════════════
 
     private bool   _burstArmed       = false;
@@ -1055,12 +1055,12 @@ public class ModAuditorTab : ITab
         if (!_burstArmed || _burstRunning || p.RawBytes.Length < 2) return;
         _burstArmed = false;
         _burstCapturedHex = BytesToHex(p.RawBytes, p.RawBytes.Length);
-        _log.Info($"[ModAudit/Race] Burst armed — captured {p.RawBytes.Length}b opcode=0x{p.RawBytes[0]:X2}");
+        _log.Info($"[ModAudit/Race] Burst armed - captured {p.RawBytes.Length}b opcode=0x{p.RawBytes[0]:X2}");
     }
 
     private void RenderRace(float w)
     {
-        UiHelper.SectionBox("RACE CONDITION — BURST SEND TOOL", w, 0, () =>
+        UiHelper.SectionBox("RACE CONDITION - BURST SEND TOOL", w, 0, () =>
         {
             UiHelper.MutedLabel("Arm the interceptor, then perform any action in-game.");
             UiHelper.MutedLabel("The next outgoing packet is captured, then replayed rapidly to stress-test");
@@ -1071,7 +1071,7 @@ public class ModAuditorTab : ITab
             if (_burstArmed)
             {
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-                ImGui.TextUnformatted("  ⚡ ARMED — perform any in-game interaction now...");
+                ImGui.TextUnformatted("  ⚡ ARMED - perform any in-game interaction now...");
                 ImGui.PopStyleColor();
                 ImGui.SameLine(0, 12);
                 UiHelper.DangerButton("Disarm##racedisarm", 80, 24, () => _burstArmed = false);
@@ -1083,7 +1083,7 @@ public class ModAuditorTab : ITab
                     _burstArmed = true;
                     _burstCapturedHex = "";
                     _burstStatus = "";
-                    _log.Info("[ModAudit/Race] Burst interceptor armed — waiting for next C→S packet.");
+                    _log.Info("[ModAudit/Race] Burst interceptor armed - waiting for next C->S packet.");
                 });
             }
 
@@ -1096,7 +1096,7 @@ public class ModAuditorTab : ITab
             if (!string.IsNullOrWhiteSpace(_burstCapturedHex))
             {
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccent);
-                ImGui.TextUnformatted($"  ✓ Packet ready: {_burstCapturedHex[..Math.Min(48, _burstCapturedHex.Length)]}...");
+                ImGui.TextUnformatted($"  [OK] Packet ready: {_burstCapturedHex[..Math.Min(48, _burstCapturedHex.Length)]}...");
                 ImGui.PopStyleColor();
             }
 
@@ -1115,22 +1115,22 @@ public class ModAuditorTab : ITab
             if (_burstRunning)
             {
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-                ImGui.TextUnformatted("  ● Burst in progress...");
+                ImGui.TextUnformatted("  [>] Burst in progress...");
                 ImGui.PopStyleColor();
             }
             else
             {
-                UiHelper.WarnButton($"▶ Burst Send × {_burstCount}##burstsend", 180, 32, () =>
+                UiHelper.WarnButton($"> Burst Sendx {_burstCount}##burstsend", 180, 32, () =>
                 {
                     if (string.IsNullOrWhiteSpace(_burstCapturedHex))
-                    { _log.Error("[ModAudit/Race] No packet — arm interceptor or paste hex first."); return; }
+                    { _log.Error("[ModAudit/Race] No packet - arm interceptor or paste hex first."); return; }
                     try
                     {
                         byte[] pkt   = HexToBytes(_burstCapturedHex);
                         int count    = _burstCount;
                         int delay    = _burstDelayMs;
                         _burstRunning = true;
-                        _log.Info($"[ModAudit/Race] Burst × {count} with {delay}ms gap — {pkt.Length}b each");
+                        _log.Info($"[ModAudit/Race] Burstx {count} with {delay}ms gap - {pkt.Length}b each");
                         Task.Run(async () =>
                         {
                             for (int n = 0; n < count; n++)
@@ -1138,7 +1138,7 @@ public class ModAuditorTab : ITab
                                 SendRaw(pkt);
                                 if (delay > 0) await Task.Delay(delay);
                             }
-                            _burstStatus = $"Burst complete — {count} × {pkt.Length}b at ≥{delay}ms intervals.";
+                            _burstStatus = $"Burst complete - {count}x {pkt.Length}b at ≥{delay}ms intervals.";
                             _log.Success($"[ModAudit/Race] {_burstStatus}");
                             _burstRunning = false;
                         });
@@ -1158,15 +1158,15 @@ public class ModAuditorTab : ITab
             ImGui.Spacing();
             RenderHowTo(
                 "1. Click 'Arm Interceptor'",
-                "2. Open a chest, click an entity, or use a workbench — the FIRST C→S packet is captured",
-                "3. Set burst count (5–20) and delay (1–10ms)",
-                "4. Click 'Burst Send' — if the server processes duplicates, a race condition exists",
-                "Result: double inventory, duplicate loot, double-use — confirms lack of deduplication");
+                "2. Open a chest, click an entity, or use a workbench - the FIRST C->S packet is captured",
+                "3. Set burst count (5-20) and delay (1-10ms)",
+                "4. Click 'Burst Send' - if the server processes duplicates, a race condition exists",
+                "Result: double inventory, duplicate loot, double-use - confirms lack of deduplication");
         });
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // TAB 5 — DIALOGUE INTERCEPTOR
+    // TAB 5 - DIALOGUE INTERCEPTOR
     // ══════════════════════════════════════════════════════════════════════
 
     private readonly List<DialogueOption> _dialogueOptions = new();
@@ -1181,11 +1181,11 @@ public class ModAuditorTab : ITab
         byte[] b = p.RawBytes;
         if (b.Length < 12) return;
 
-        // Heuristic: NPC dialogue usually has opcode in 0x38–0x50
+        // Heuristic: NPC dialogue usually has opcode in 0x38-0x50
         // and a sequence of int16/int32 IDs that represent options
         if (b[0] < 0x38 || b[0] > 0x58) return;
 
-        // Count int16 candidates in range 1–100 (typical option IDs)
+        // Count int16 candidates in range 1-100 (typical option IDs)
         var optIds = new List<int>();
         for (int off = 2; off + 2 <= b.Length; off += 2)
         {
@@ -1223,7 +1223,7 @@ public class ModAuditorTab : ITab
     {
         UiHelper.SectionBox("NPC DIALOGUE INTERCEPTOR", w, 0, () =>
         {
-            UiHelper.MutedLabel("Captures all Option IDs from NPC dialogue packets — including hidden/locked ones.");
+            UiHelper.MutedLabel("Captures all Option IDs from NPC dialogue packets - including hidden/locked ones.");
             UiHelper.MutedLabel("Allows sending any Option ID directly, bypassing game-side UI visibility.");
             ImGui.Spacing();
             UiHelper.SecondaryButton("⟳ Re-scan##diarescan", 100, 24, () =>
@@ -1243,7 +1243,7 @@ public class ModAuditorTab : ITab
         {
             if (_dialogueOptions.Count == 0)
             {
-                UiHelper.MutedLabel("Talk to any NPC — option IDs will appear here automatically.");
+                UiHelper.MutedLabel("Talk to any NPC - option IDs will appear here automatically.");
                 return;
             }
 
@@ -1275,7 +1275,7 @@ public class ModAuditorTab : ITab
                             ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColAccentDim));
                     }
 
-                    string hiddenStr = opt.IsLikelyHidden ? "⚠ Likely" : "No";
+                    string hiddenStr = opt.IsLikelyHidden ? "[!] Likely" : "No";
                     if (ImGui.Selectable(
                         $"  {opt.OptionId,-8}  {opt.NpcEntityId,-10}  0x{opt.Opcode:X2}{"",-4}  " +
                         $"{hiddenStr,-10}  {opt.SeenAt:HH:mm:ss}##dia{i}",
@@ -1306,7 +1306,7 @@ public class ModAuditorTab : ITab
             ImGui.InputText("Packet hex override##diapkt", ref _dialoguePacketHex, 512);
 
             ImGui.Spacing();
-            UiHelper.WarnButton("▶ Send Dialogue Option##diasend", 220, 32, () =>
+            UiHelper.WarnButton("> Send Dialogue Option##diasend", 220, 32, () =>
             {
                 byte[] pkt;
                 if (!string.IsNullOrWhiteSpace(_dialoguePacketHex))
@@ -1330,7 +1330,7 @@ public class ModAuditorTab : ITab
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // TAB 6 — TELEPORT HOOK
+    // TAB 6 - TELEPORT HOOK
     // ══════════════════════════════════════════════════════════════════════
 
     private bool   _teleportArmed    = false;
@@ -1361,7 +1361,7 @@ public class ModAuditorTab : ITab
                     _teleportArmed = false;
                     _teleportCapHex = BytesToHex(b, b.Length);
                     _teleportFloatOff = off;
-                    _teleportStatus = $"Captured {b.Length}b — coords @ offset {off}: X={x:F2} Y={y:F2} Z={z:F2}";
+                    _teleportStatus = $"Captured {b.Length}b - coords @ offset {off}: X={x:F2} Y={y:F2} Z={z:F2}";
                     _log.Info($"[ModAudit/Teleport] Teleport intercepted: {_teleportStatus}");
                     break;
                 }
@@ -1372,7 +1372,7 @@ public class ModAuditorTab : ITab
 
     private void RenderTeleport(float w)
     {
-        UiHelper.SectionBox("TELEPORT HOOK — DESTINATION OVERRIDE", w, 0, () =>
+        UiHelper.SectionBox("TELEPORT HOOK - DESTINATION OVERRIDE", w, 0, () =>
         {
             UiHelper.MutedLabel("Arms an interceptor for the next outgoing teleport/waypoint packet.");
             UiHelper.MutedLabel("The XYZ floats are replaced with your override values before the packet is sent.");
@@ -1381,7 +1381,7 @@ public class ModAuditorTab : ITab
             if (_teleportArmed)
             {
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-                ImGui.TextUnformatted("  ⚡ ARMED — use any waypoint, teleport scroll, or /tp command in-game...");
+                ImGui.TextUnformatted("  ⚡ ARMED - use any waypoint, teleport scroll, or /tp command in-game...");
                 ImGui.PopStyleColor();
                 ImGui.SameLine(0, 12);
                 UiHelper.DangerButton("Disarm##tpdisarm", 80, 24, () => _teleportArmed = false);
@@ -1419,7 +1419,7 @@ public class ModAuditorTab : ITab
             ImGui.InputInt("Float offset##tpfo", ref _teleportFloatOff);
             _teleportFloatOff = Math.Max(0, _teleportFloatOff);
             ImGui.SameLine(0, 8);
-            UiHelper.MutedLabel("Auto-detected from packet — only change if coordinates are wrong.");
+            UiHelper.MutedLabel("Auto-detected from packet - only change if coordinates are wrong.");
 
             ImGui.Spacing();
             ImGui.SetNextItemWidth(-1);
@@ -1427,7 +1427,7 @@ public class ModAuditorTab : ITab
 
             ImGui.Spacing();
 
-            UiHelper.WarnButton("▶ Send with Override Coords##tpsend", 240, 32, () =>
+            UiHelper.WarnButton("> Send with Override Coords##tpsend", 240, 32, () =>
             {
                 if (string.IsNullOrWhiteSpace(_teleportCapHex))
                 { _log.Error("[ModAudit/Teleport] Capture a teleport packet first."); return; }
@@ -1449,7 +1449,7 @@ public class ModAuditorTab : ITab
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // TAB 7 — PACKET PAYLOAD SCALER
+    // TAB 7 - PACKET PAYLOAD SCALER
     // ══════════════════════════════════════════════════════════════════════
 
     private bool   _payloadArmed     = false;
@@ -1465,7 +1465,7 @@ public class ModAuditorTab : ITab
         if (!_payloadArmed || p.RawBytes.Length < 6) return;
         byte[] b = p.RawBytes;
 
-        // Find a float that looks like an "area" or "radius" value (1–500)
+        // Find a float that looks like an "area" or "radius" value (1-500)
         for (int off = 1; off + 4 <= b.Length; off += 1)
         {
             try
@@ -1477,7 +1477,7 @@ public class ModAuditorTab : ITab
                     _payloadCapHex = BytesToHex(b, b.Length);
                     _payloadFloatOff = off;
                     _payloadOrigVal  = v;
-                    _payloadStatus = $"Captured — value @ offset {off}: {v:F2}";
+                    _payloadStatus = $"Captured - value @ offset {off}: {v:F2}";
                     _log.Info($"[ModAudit/Payload] Area/Radius value {v:F2} found at offset {off}");
                     break;
                 }
@@ -1491,13 +1491,13 @@ public class ModAuditorTab : ITab
         UiHelper.SectionBox("PACKET PAYLOAD SCALER", w, 0, () =>
         {
             UiHelper.MutedLabel("Arms an interceptor that catches the next outgoing packet containing an Area/Radius float.");
-            UiHelper.MutedLabel("Scale the value by up to 10× — tests if the server validates the radius server-side.");
+            UiHelper.MutedLabel("Scale the value by up to 10x - tests if the server validates the radius server-side.");
             ImGui.Spacing();
 
             if (_payloadArmed)
             {
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-                ImGui.TextUnformatted("  ⚡ ARMED — trigger any area-effect action in-game...");
+                ImGui.TextUnformatted("  ⚡ ARMED - trigger any area-effect action in-game...");
                 ImGui.PopStyleColor();
                 ImGui.SameLine(0, 12);
                 UiHelper.DangerButton("Disarm##psdisarm", 80, 24, () => _payloadArmed = false);
@@ -1541,7 +1541,7 @@ public class ModAuditorTab : ITab
 
             // Scale slider
             ImGui.SetNextItemWidth(400);
-            ImGui.SliderFloat($"Scale (× original)##psscale", ref _payloadScale, 1.0f, 10.0f, "%.1f×");
+            ImGui.SliderFloat($"Scale (x original)##psscale", ref _payloadScale, 1.0f, 10.0f, "%.1fx");
             if (_payloadOrigVal > 0)
             {
                 float scaled = _payloadOrigVal * _payloadScale;
@@ -1549,7 +1549,7 @@ public class ModAuditorTab : ITab
                 ImGui.PushStyleColor(ImGuiCol.Text,
                     _payloadScale > 3f ? MenuRenderer.ColDanger :
                     _payloadScale > 1.5f ? MenuRenderer.ColWarn : MenuRenderer.ColAccent);
-                ImGui.TextUnformatted($"→ {scaled:F2}");
+                ImGui.TextUnformatted($"-> {scaled:F2}");
                 ImGui.PopStyleColor();
             }
 
@@ -1558,7 +1558,7 @@ public class ModAuditorTab : ITab
             ImGui.InputText("Packet hex##pshex", ref _payloadCapHex, 4096);
 
             ImGui.Spacing();
-            UiHelper.WarnButton("▶ Send Scaled Payload##pssend", 210, 32, () =>
+            UiHelper.WarnButton("> Send Scaled Payload##pssend", 210, 32, () =>
             {
                 if (string.IsNullOrWhiteSpace(_payloadCapHex))
                 { _log.Error("[ModAudit/Payload] Capture a packet first."); return; }
@@ -1572,7 +1572,7 @@ public class ModAuditorTab : ITab
                     float newVal  = origVal * _payloadScale;
                     Array.Copy(BitConverter.GetBytes(newVal), 0, pkt, _payloadFloatOff, 4);
                     SendRaw(pkt);
-                    _log.Success($"[ModAudit/Payload] Sent — {_payloadFieldName}: {origVal:F2} → {newVal:F2} (×{_payloadScale:F1})");
+                    _log.Success($"[ModAudit/Payload] Sent - {_payloadFieldName}: {origVal:F2} -> {newVal:F2} (x{_payloadScale:F1})");
                 }
                 catch (Exception ex) { _log.Error($"[ModAudit/Payload] {ex.Message}"); }
             });
@@ -1580,16 +1580,16 @@ public class ModAuditorTab : ITab
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // TAB 8 — DEPENDENCY SCANNER
+    // TAB 8 - DEPENDENCY SCANNER
     // ══════════════════════════════════════════════════════════════════════
 
     private readonly List<DepEntry> _deps = new();
     private bool _depAutoScan = true;
 
-    // Known mod library fingerprints — opcode + string marker combinations
+    // Known mod library fingerprints - opcode + string marker combinations
     private static readonly (string LibName, byte[] Signature, string Description)[] KnownDeps =
     {
-        ("HytaleAPI",        new byte[]{ 0x01, 0x48, 0x59 }, "Core Hytale API — most mods use this"),
+        ("HytaleAPI",        new byte[]{ 0x01, 0x48, 0x59 }, "Core Hytale API - most mods use this"),
         ("SimpleClaims",     new byte[]{ 0x44, 0x43, 0x4C }, "SimpleClaims land-claim mod (DCL header)"),
         ("CustomStorageLib", new byte[]{ 0x53, 0x54, 0x52 }, "Custom storage mod (STR header)"),
         ("TradeLib",         new byte[]{ 0x54, 0x52, 0x44 }, "Player trade / auction library (TRD)"),
@@ -1629,7 +1629,7 @@ public class ModAuditorTab : ITab
                     FirstSeen   = p.Timestamp,
                     Occurrences = 1,
                 });
-                _log.Info($"[ModAudit/Deps] Library detected: {lib} — {desc}");
+                _log.Info($"[ModAudit/Deps] Library detected: {lib} - {desc}");
             }
             else
             {
@@ -1729,28 +1729,28 @@ public class ModAuditorTab : ITab
             foreach (var d in _deps)
             {
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-                ImGui.TextUnformatted($"  ★ {d.LibName}");
+                ImGui.TextUnformatted($"  [*] {d.LibName}");
                 ImGui.PopStyleColor();
                 string vuln = d.LibName switch
                 {
                     "SimpleClaims"     => "Known: bypass via block-placement at claim corners. Check edge gaps.",
                     "RankAPI"          => "Known: rank integer can be spoofed in handshake header byte.",
                     "ChunkProtector"   => "Known: interaction packets bypass chunk ownership at opcode boundary.",
-                    "CustomStorageLib" => "Known: WindowID re-use attack — test Remote Open in Inventory tab.",
-                    "TradeLib"         => "Known: trade amount is client-side; try Payload Scaler ×10.",
-                    "EconomyLib"       => "Known: economy deltas are signed ints — try sending negative amounts.",
-                    "QuestEngine"      => "Known: hidden option IDs exist — use Dialogue Interceptor tab.",
-                    _                  => "No known CVE — use Interact Spoofer and Brute Force tabs to probe.",
+                    "CustomStorageLib" => "Known: WindowID re-use attack - test Remote Open in Inventory tab.",
+                    "TradeLib"         => "Known: trade amount is client-side; try Payload Scalerx10.",
+                    "EconomyLib"       => "Known: economy deltas are signed ints - try sending negative amounts.",
+                    "QuestEngine"      => "Known: hidden option IDs exist - use Dialogue Interceptor tab.",
+                    _                  => "No known CVE - use Interact Spoofer and Brute Force tabs to probe.",
                 };
                 ImGui.SetCursorPosX(16);
-                UiHelper.MutedLabel($"→ {vuln}");
+                UiHelper.MutedLabel($"-> {vuln}");
                 ImGui.Spacing();
             }
         });
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // TAB 9 — LAG SWITCH / BUFFER MODE
+    // TAB 9 - LAG SWITCH / BUFFER MODE
     // ══════════════════════════════════════════════════════════════════════
 
     private bool   _lagSwitchActive = false;
@@ -1768,7 +1768,7 @@ public class ModAuditorTab : ITab
         if (_seenLagPacketIdx.Contains(pktIndex)) return;
         _seenLagPacketIdx.Add(pktIndex);
         // Note: in production, UdpProxy/PacketCapture would need a "defer" hook.
-        // Here we store and re-send — the original packet still goes through, but
+        // Here we store and re-send - the original packet still goes through, but
         // we also burst-replay all queued packets after the delay, testing server deduplication.
         _lagQueue.Enqueue(new LaggedPacket { Data = p.RawBytes, QueuedAt = DateTime.Now });
         if (_lagReleaseAt == DateTime.MinValue)
@@ -1803,16 +1803,16 @@ public class ModAuditorTab : ITab
 
     private void RenderLagSwitch(float w)
     {
-        UiHelper.SectionBox("LAG SWITCH — PACKET BUFFER MODE", w, 0, () =>
+        UiHelper.SectionBox("LAG SWITCH - PACKET BUFFER MODE", w, 0, () =>
         {
             ImGui.PushStyleColor(ImGuiCol.Text, _lagSwitchActive ? MenuRenderer.ColDanger : MenuRenderer.ColTextMuted);
             ImGui.TextUnformatted(_lagSwitchActive
-                ? "  ⚡ BUFFER ACTIVE — outgoing packets are being queued and burst-replayed"
+                ? "  ⚡ BUFFER ACTIVE - outgoing packets are being queued and burst-replayed"
                 : "  Buffer mode disabled");
             ImGui.PopStyleColor();
             ImGui.Spacing();
 
-            UiHelper.MutedLabel("When enabled: captures a copy of every outgoing C→S packet and re-sends them");
+            UiHelper.MutedLabel("When enabled: captures a copy of every outgoing C->S packet and re-sends them");
             UiHelper.MutedLabel("all at once after the configured delay, simulating a lag spike.");
             UiHelper.MutedLabel("Tests if the server correctly deduplicates / rejects out-of-order action sequences.");
             ImGui.Spacing();
@@ -1833,12 +1833,12 @@ public class ModAuditorTab : ITab
                     _lagQueue.Clear();
                     _lagReleaseAt = DateTime.MinValue;
                     _seenLagPacketIdx.Clear();
-                    _log.Info("[ModAudit/LagSwitch] Buffer disabled — queue cleared.");
+                    _log.Info("[ModAudit/LagSwitch] Buffer disabled - queue cleared.");
                 });
             }
             else
             {
-                UiHelper.WarnButton("▶ Enable Lag Buffer##lagon", 200, 30, () =>
+                UiHelper.WarnButton("> Enable Lag Buffer##lagon", 200, 30, () =>
                 {
                     _lagSwitchActive = true;
                     _lagTotalQueued = 0;
@@ -1846,7 +1846,7 @@ public class ModAuditorTab : ITab
                     _seenLagPacketIdx.Clear();
                     _lagQueue.Clear();
                     _lagReleaseAt = DateTime.MinValue;
-                    _log.Info($"[ModAudit/LagSwitch] Buffer enabled — {_lagBufferMs}ms window.");
+                    _log.Info($"[ModAudit/LagSwitch] Buffer enabled - {_lagBufferMs}ms window.");
                 });
             }
 
@@ -1890,7 +1890,7 @@ public class ModAuditorTab : ITab
                 "1. Start the proxy (Capture tab) and connect to a server",
                 "2. Enable the lag buffer here",
                 "3. Perform rapid actions (pick up items, open chests, attack mobs)",
-                "4. Wait for the buffer window — all packets burst at once",
+                "4. Wait for the buffer window - all packets burst at once",
                 "Result: duplicate items, skipped cooldowns = server validation not timing-aware");
         });
     }
@@ -1902,18 +1902,18 @@ public class ModAuditorTab : ITab
     private void SendRaw(byte[] data)
     {
         if (_udpProxy.IsRunning && _udpProxy.InjectToServer(data))
-        { _log.Info($"[ModAudit] {data.Length}b → UDP proxy."); return; }
+        { _log.Info($"[ModAudit] {data.Length}b -> UDP proxy."); return; }
 
         bool ok = _capture.InjectToServer(data).GetAwaiter().GetResult();
-        if (ok) { _log.Info($"[ModAudit] {data.Length}b → TCP."); return; }
+        if (ok) { _log.Info($"[ModAudit] {data.Length}b -> TCP."); return; }
 
-        _log.Warn("[ModAudit] No live session — sending direct UDP...");
+        _log.Warn("[ModAudit] No live session - sending direct UDP...");
         try
         {
             using var udp = new UdpClient();
             udp.Connect(_config.ServerIp, _config.ServerPort);
             udp.Send(data, data.Length);
-            _log.Info($"[ModAudit] {data.Length}b → direct UDP.");
+            _log.Info($"[ModAudit] {data.Length}b -> direct UDP.");
         }
         catch (Exception ex) { _log.Error($"[ModAudit] Send failed: {ex.Message}"); }
     }
@@ -1922,7 +1922,7 @@ public class ModAuditorTab : ITab
     {
         int take = Math.Min(maxBytes, b.Length);
         return string.Join(" ", b.Take(take).Select(x => $"{x:X2}"))
-               + (b.Length > maxBytes ? "…" : "");
+               + (b.Length > maxBytes ? "..." : "");
     }
 
     private static byte[] HexToBytes(string hex)

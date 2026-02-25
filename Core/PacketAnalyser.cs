@@ -7,10 +7,10 @@ namespace HytaleSecurityTester.Core;
 /// Heuristic packet analyser.
 ///
 /// Key methods:
-///   Analyse()                — full structural parse of one packet
-///   TryDecompress()          — auto-detects and strips zlib/gzip/raw-deflate/LZ4 compression
-///   ScanUint32Identifiers()  — Schema Discovery: score every 4-byte window
-///   AggregateAcrossPackets() — combine discoveries across many packets
+///   Analyse()                - full structural parse of one packet
+///   TryDecompress()          - auto-detects and strips zlib/gzip/raw-deflate/LZ4 compression
+///   ScanUint32Identifiers()  - Schema Discovery: score every 4-byte window
+///   AggregateAcrossPackets() - combine discoveries across many packets
 /// </summary>
 public static class PacketAnalyser
 {
@@ -143,7 +143,7 @@ public static class PacketAnalyser
     /// uint32 value as a potential identifier (Item ID, Entity ID, etc.).
     ///
     /// Scoring factors:
-    ///   · Value range matching known ID bands (item 100–9999, entity 1000–999999)
+    ///   · Value range matching known ID bands (item 100-9999, entity 1000-999999)
     ///   · Byte offset proximity to packet start
     ///   · Adjacent byte context (stack count / slot index neighbours)
     ///   · Recurrence across packets (applied by AggregateAcrossPackets)
@@ -273,10 +273,10 @@ public static class PacketAnalyser
     /// <summary>
     /// Auto-detects and decompresses a packet payload.
     /// Supported formats (detected by magic bytes):
-    ///   · Zlib   — 78 01 / 78 9C / 78 DA / 78 5E
-    ///   · Gzip   — 1F 8B
-    ///   · LZ4 frame — 04 22 4D 18
-    ///   · Raw deflate — fallback attempt when no magic matches
+    ///   · Zlib   - 78 01 / 78 9C / 78 DA / 78 5E
+    ///   · Gzip   - 1F 8B
+    ///   · LZ4 frame - 04 22 4D 18
+    ///   · Raw deflate - fallback attempt when no magic matches
     ///
     /// Returns the decompressed bytes on success, or null if the payload
     /// is not recognised as compressed or decompression fails.
@@ -352,7 +352,7 @@ public static class PacketAnalyser
     /// Minimal managed LZ4 frame decompressor.
     /// Handles the common subset: FLG byte, optional content-size field,
     /// and sequential data blocks. Does not handle block independence or
-    /// partial block checksums — sufficient for typical game protocol payloads.
+    /// partial block checksums - sufficient for typical game protocol payloads.
     /// </summary>
     private static byte[] DecompressLz4Frame(byte[] src)
     {
@@ -545,7 +545,7 @@ public class DiscoveredId
     {
         get
         {
-            if (BoostedToHigh || Confidence == FieldConfidence.High) return "HIGH★";
+            if (BoostedToHigh || Confidence == FieldConfidence.High) return "HIGH[*]";
             return Confidence switch
             {
                 FieldConfidence.Medium => "MED",

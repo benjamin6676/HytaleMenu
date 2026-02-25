@@ -1,7 +1,7 @@
 namespace HytaleSecurityTester.Core;
 
 /// <summary>
-/// Shared server configuration — set once on the Dashboard,
+/// Shared server configuration - set once on the Dashboard,
 /// used everywhere else automatically.
 /// </summary>
 public class ServerConfig
@@ -10,7 +10,7 @@ public class ServerConfig
     public int    ServerPort { get; set; } = 5520;
     public bool   IsSet      => !string.IsNullOrWhiteSpace(ServerIp) && ServerPort > 0;
 
-    // ── Target item — set from Item Inspector, consumed by Dupe Methods ───
+    // ── Target item - set from Item Inspector, consumed by Dupe Methods ───
     /// The item ID currently targeted for dupe testing.
     public int    TargetItemId     { get; private set; } = 0;
     /// Where the current TargetItemId came from (e.g. "Item Inspector", "Manual")
@@ -18,7 +18,7 @@ public class ServerConfig
     /// True when TargetItemId has been set at least once
     public bool   HasTargetItem    => TargetItemId > 0;
 
-    // ── Local Player EntityID — set from MemoryTab LocalPlayer scanner ────
+    // ── Local Player EntityID - set from MemoryTab LocalPlayer scanner ────
     /// The EntityID of the local player found via memory scanning.
     /// SmartDetectionEngine uses this to label the matching entity "LocalPlayer".
     public uint   LocalPlayerEntityId     { get; private set; } = 0;

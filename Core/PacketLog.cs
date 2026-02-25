@@ -4,7 +4,7 @@ namespace HytaleSecurityTester.Core;
 /// Separate ring-buffer log exclusively for raw packet traffic.
 /// Keeps the general TestLog clean for test results, errors, and dupe output.
 ///
-/// Holds the last N packet log lines in memory — old lines are dropped
+/// Holds the last N packet log lines in memory - old lines are dropped
 /// automatically so it never grows unbounded even under heavy traffic.
 /// </summary>
 public class PacketLog
@@ -60,7 +60,7 @@ public class PacketLogEntry
     public bool            Injected   { get; set; }
 
     public string DirectionLabel =>
-        Direction == PacketDirection.ClientToServer ? "C→S" : "S→C";
+        Direction == PacketDirection.ClientToServer ? "C->S" : "S->C";
     public string TimeLabel =>
         Timestamp.ToString("HH:mm:ss.fff");
 }

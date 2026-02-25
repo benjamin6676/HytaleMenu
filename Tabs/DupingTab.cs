@@ -112,16 +112,16 @@ public class DupingTab : ITab
         ImGui.PopStyleColor();
         ImGui.SetCursorPos(new Vector2(12, 6));
         ImGui.PushStyleColor(ImGuiCol.Text, srv   ? MenuRenderer.ColAccent : MenuRenderer.ColDanger);
-        ImGui.TextUnformatted(srv ? $"● {_config.ServerIp}:{_config.ServerPort}" : "● No server");
+        ImGui.TextUnformatted(srv ? $"[>] {_config.ServerIp}:{_config.ServerPort}" : "[>] No server");
         ImGui.PopStyleColor();
         ImGui.SameLine(0, 24);
         ImGui.PushStyleColor(ImGuiCol.Text, proxy ? MenuRenderer.ColAccent : MenuRenderer.ColWarn);
-        ImGui.TextUnformatted(proxy ? "● Proxy active" : "● No proxy — start Capture tab");
+        ImGui.TextUnformatted(proxy ? "[>] Proxy active" : "[>] No proxy - start Capture tab");
         ImGui.PopStyleColor();
         ImGui.SameLine(0, 24);
         bool anyRunning = _raceRunning || _tradeRunning || _containerRunning || _sweepRunning;
         ImGui.PushStyleColor(ImGuiCol.Text, anyRunning ? MenuRenderer.ColWarn : MenuRenderer.ColTextMuted);
-        ImGui.TextUnformatted(anyRunning ? "● TEST RUNNING" : "● Idle");
+        ImGui.TextUnformatted(anyRunning ? "[>] TEST RUNNING" : "[>] Idle");
         ImGui.PopStyleColor();
         ImGui.EndChild();
     }
@@ -141,7 +141,7 @@ public class DupingTab : ITab
             if (_itemIdFromInspector && _config.HasTargetItem && _config.TargetItemId == _itemId)
             {
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-                ImGui.TextUnformatted($"★ from {_config.TargetItemSource}");
+                ImGui.TextUnformatted($"[*] from {_config.TargetItemSource}");
                 ImGui.PopStyleColor();
                 ImGui.SameLine(0, 10);
                 UiHelper.SecondaryButton("✕##clrtgt", 26, 22, () =>
@@ -152,7 +152,7 @@ public class DupingTab : ITab
             }
             else
             {
-                UiHelper.MutedLabel("← set via Item Inspector or enter manually");
+                UiHelper.MutedLabel("<- set via Item Inspector or enter manually");
             }
 
             ImGui.SameLine(0, 16);
@@ -207,7 +207,7 @@ public class DupingTab : ITab
             {
                 UiHelper.DangerButton("STOP##drstop", 100, 30, () =>
                 { _raceCts?.Cancel(); _raceRunning = false; _log.Warn("[DropRace] Stopped."); });
-                ImGui.SameLine(0, 12); UiHelper.WarnText("● Running...");
+                ImGui.SameLine(0, 12); UiHelper.WarnText("[>] Running...");
             }
             else UiHelper.WarnButton("RUN DROP RACE##drrun", 180, 30, RunDropRace);
         });
@@ -231,7 +231,7 @@ public class DupingTab : ITab
         int threads  = _raceThreads;
         int iters    = _raceIter;
 
-        _log.Info($"[DropRace] {threads} threads \u00d7 {iters} iters — high-precision timer active.");
+        _log.Info($"[DropRace] {threads} threads \u00d7 {iters} iters - high-precision timer active.");
 
         // High-precision synchronised launch: all threads spin-wait on a shared
         // start tick so Drop + Pickup packets fire within a few microseconds of each other.
@@ -242,7 +242,7 @@ public class DupingTab : ITab
 
             var tasks = Enumerable.Range(0, threads).Select(_ => Task.Run(() =>
             {
-                // Spin until the shared start tick — gives microsecond-precision alignment
+                // Spin until the shared start tick - gives microsecond-precision alignment
                 while (Stopwatch.GetTimestamp() < startTick)
                     System.Threading.Thread.SpinWait(1);
 
@@ -444,7 +444,7 @@ public class DupingTab : ITab
             ImGui.SameLine(0, 12);
             UiHelper.SecondaryButton("Spam Inventory Update##rbinvspam", 200, 28, RunInventoryUpdateSpam);
             ImGui.SameLine(0, 10);
-            UiHelper.MutedLabel("← floods inventory-save packets before suspected crash to trigger rollback");
+            UiHelper.MutedLabel("<- floods inventory-save packets before suspected crash to trigger rollback");
         });
         ImGui.Spacing();
         RenderHowTo("1. Start UDP proxy in Capture tab",
@@ -479,7 +479,7 @@ public class DupingTab : ITab
     /// </summary>
     private void RunInventoryUpdateSpam()
     {
-        _log.Info("[Rollback] Spamming Inventory Update packets (0x1F × 200)...");
+        _log.Info("[Rollback] Spamming Inventory Update packets (0x1Fx 200)...");
         Task.Run(async () =>
         {
             // 0x1F is a heuristic guess for Hytale's inventory-save opcode.
@@ -498,7 +498,7 @@ public class DupingTab : ITab
                 long target = sw.ElapsedTicks + Stopwatch.Frequency / 1000;
                 while (sw.ElapsedTicks < target) System.Threading.Thread.SpinWait(10);
             }
-            _log.Warn("[Rollback] Inventory spam complete — now kill proxy or disconnect.");
+            _log.Warn("[Rollback] Inventory spam complete - now kill proxy or disconnect.");
         });
     }
 
@@ -535,7 +535,7 @@ public class DupingTab : ITab
             if (_sweepRunning)
             {
                 UiHelper.DangerButton("STOP##swstop", 80, 28, () => { _sweepRunning = false; });
-                ImGui.SameLine(0, 12); UiHelper.WarnText("● Sweeping...");
+                ImGui.SameLine(0, 12); UiHelper.WarnText("[>] Sweeping...");
             }
             else UiHelper.WarnButton("RUN TIMING SWEEP##swrun", 180, 28, RunTimingSweep);
         });
@@ -608,7 +608,7 @@ public class DupingTab : ITab
     // Histogram: latency buckets in µs (0-1, 1-5, 5-20, 20-100, 100-500, 500+)
     private readonly int[] _burstBuckets  = new int[6];
     private static readonly string[] BucketLabels =
-        { "<1µs", "1–5µs", "5–20µs", "20–100µs", "100–500µs", "500µs+" };
+        { "<1µs", "1-5µs", "5-20µs", "20-100µs", "100-500µs", "500µs+" };
 
     // ── Latency Emulator ──────────────────────────────────────────────────
     private bool   _latencyEnabled  = false;
@@ -616,12 +616,12 @@ public class DupingTab : ITab
     private string _latStage2Hex    = "";   // exploit packet (state change during auth gap)
     private int    _latPropDelayMs  = 80;   // plugin propagation delay to emulate (ms)
     private int    _latJitterMs     = 20;   // ±jitter added to propagation delay
-    private int    _latRepeat       = 10;   // how many stage1→delay→stage2 cycles to run
+    private int    _latRepeat       = 10;   // how many stage1->delay->stage2 cycles to run
     private int    _latStage2Burst  = 5;    // how many stage2 packets per cycle
     private int    _latCooldownMs   = 200;  // ms between cycles
     private bool   _latRunning      = false;
     private int    _latIteration    = 0;
-    private int    _latStage        = 0;    // 1 or 2 — which stage is currently executing
+    private int    _latStage        = 0;    // 1 or 2 - which stage is currently executing
     private CancellationTokenSource? _latCts;
 
     private void RenderBurstTest(float w)
@@ -737,10 +737,10 @@ public class DupingTab : ITab
                 _burstCts?.Cancel();
                 _burstRunning = false;
                 _burstEndTicks = DateTime.UtcNow.Ticks;
-                _log.Warn($"[Burst] Stopped — {_burstSent:N0} sent, {_burstErrors} errors.");
+                _log.Warn($"[Burst] Stopped - {_burstSent:N0} sent, {_burstErrors} errors.");
             });
             ImGui.SameLine(0, 12);
-            UiHelper.WarnText("● BURST RUNNING — monitor server for state corruption...");
+            UiHelper.WarnText("[>] BURST RUNNING - monitor server for state corruption...");
         }
         else
         {
@@ -779,8 +779,8 @@ public class DupingTab : ITab
 
             float hw = (w - 18) / 3f;
 
-            // Stage 1 — trigger packet (container open / permission check initiator)
-            UiHelper.SectionBox("STAGE 1 — TRIGGER", hw, 100, () =>
+            // Stage 1 - trigger packet (container open / permission check initiator)
+            UiHelper.SectionBox("STAGE 1 - TRIGGER", hw, 100, () =>
             {
                 UiHelper.MutedLabel("Initiates async auth check.");
                 ImGui.SetNextItemWidth(-1); ImGui.InputText("##lts1", ref _latStage1Hex, 512);
@@ -800,8 +800,8 @@ public class DupingTab : ITab
             });
             ImGui.SameLine(0, 6);
 
-            // Stage 2 — state-change packet (the privileged action)
-            UiHelper.SectionBox("STAGE 2 — EXPLOIT", hw, 100, () =>
+            // Stage 2 - state-change packet (the privileged action)
+            UiHelper.SectionBox("STAGE 2 - EXPLOIT", hw, 100, () =>
             {
                 UiHelper.MutedLabel("Action during auth gap.");
                 ImGui.SetNextItemWidth(-1); ImGui.InputText("##lts2", ref _latStage2Hex, 512);
@@ -830,26 +830,26 @@ public class DupingTab : ITab
                     _log.Warn("[Latency] Emulator stopped.");
                 });
                 ImGui.SameLine(0, 8);
-                UiHelper.WarnText($"● Iteration {_latIteration}/{_latRepeat}  —  stage {_latStage}");
+                UiHelper.WarnText($"[>] Iteration {_latIteration}/{_latRepeat}  -  stage {_latStage}");
             }
             else
             {
                 UiHelper.WarnButton("RUN LATENCY EMULATOR##latrun", 200, 28, RunLatencyEmulator);
                 ImGui.SameLine(0, 8);
-                UiHelper.MutedLabel("Send Stage1 → wait PropDelay → burst Stage2 × N");
+                UiHelper.MutedLabel("Send Stage1 -> wait PropDelay -> burst Stage2x N");
             }
         });
 
         ImGui.Spacing();
         RenderHowTo(
             "Burst Test: capture a state-changing packet, paste into Packet 1, set Count+Threads, click Run",
-            "  → Watch for: duplicate items, negative balances, state desync under load",
+            "  -> Watch for: duplicate items, negative balances, state desync under load",
             "Latency Emulator: enable it, paste the 'container open' packet into Stage 1",
-            "  → Set PropDelay to the measured RTT of the auth plugin (e.g. 80ms for SimpleClaims)",
-            "  → Paste the privileged action (e.g. container move) into Stage 2, burst=10",
-            "  → Run: tool sends Stage1, waits PropDelay±jitter, then floods Stage2",
-            "  → If Stage2 succeeds during the async gap → Async Auth bypass documented",
-            "  → Increase burst count or reduce jitter to maximise window coverage"
+            "  -> Set PropDelay to the measured RTT of the auth plugin (e.g. 80ms for SimpleClaims)",
+            "  -> Paste the privileged action (e.g. container move) into Stage 2, burst=10",
+            "  -> Run: tool sends Stage1, waits PropDelay±jitter, then floods Stage2",
+            "  -> If Stage2 succeeds during the async gap -> Async Auth bypass documented",
+            "  -> Increase burst count or reduce jitter to maximise window coverage"
         );
     }
 
@@ -886,7 +886,7 @@ public class DupingTab : ITab
         int delayUs     = _burstDelayUs;
         int batchSize   = _burstBatchSize;
 
-        _log.Info($"[Burst] Starting — {count} × {templates.Count} template(s), " +
+        _log.Info($"[Burst] Starting - {count}x {templates.Count} template(s), " +
                   $"{threads} threads, {delayUs}µs inter-send delay.");
 
         Task.Run(() =>
@@ -946,7 +946,7 @@ public class DupingTab : ITab
             _burstRunning  = false;
             _burstEndTicks = DateTime.UtcNow.Ticks;
             long ms = (_burstEndTicks - _burstStartTicks) / TimeSpan.TicksPerMillisecond;
-            _log.Success($"[Burst] Complete — {_burstSent:N0} sent, {_burstErrors} errors, " +
+            _log.Success($"[Burst] Complete - {_burstSent:N0} sent, {_burstErrors} errors, " +
                          $"{ms}ms elapsed ({(_burstSent / Math.Max(1.0, ms / 1000.0)):N0} pkt/s).");
         });
     }
@@ -975,8 +975,8 @@ public class DupingTab : ITab
         int burst      = _latStage2Burst;
         int cooldown   = _latCooldownMs;
 
-        _log.Info($"[Latency] Starting async-auth emulator — " +
-                  $"{repeat} cycles, PropDelay={propDelay}±{jitter}ms, Stage2×{burst}");
+        _log.Info($"[Latency] Starting async-auth emulator - " +
+                  $"{repeat} cycles, PropDelay={propDelay}±{jitter}ms, Stage2x{burst}");
 
         Task.Run(async () =>
         {
@@ -991,7 +991,7 @@ public class DupingTab : ITab
                 try { SendRaw(s1!); }
                 catch { error++; }
 
-                _log.Info($"[Latency] Cycle {i+1}/{repeat} — Stage 1 sent, waiting {propDelay}±{jitter}ms");
+                _log.Info($"[Latency] Cycle {i+1}/{repeat} - Stage 1 sent, waiting {propDelay}±{jitter}ms");
 
                 // ── Propagation delay with jitter ─────────────────────────
                 int delay = jitter > 0
@@ -1010,7 +1010,7 @@ public class DupingTab : ITab
                     try { SendRaw(s2!); sentThisCycle++; success++; }
                     catch { error++; }
                 }
-                _log.Info($"[Latency] Cycle {i+1} — Stage 2 ×{sentThisCycle} sent during gap.");
+                _log.Info($"[Latency] Cycle {i+1} - Stage 2x{sentThisCycle} sent during gap.");
 
                 // ── Cooldown between cycles ────────────────────────────────
                 if (cooldown > 0 && i < repeat - 1)
@@ -1019,7 +1019,7 @@ public class DupingTab : ITab
 
             _latRunning = false;
             _latStage   = 0;
-            _log.Success($"[Latency] Complete — {repeat} cycles, Stage2 sent {success}× " +
+            _log.Success($"[Latency] Complete - {repeat} cycles, Stage2 sent {success}x " +
                          $"({error} errors). Check server for auth bypass evidence.");
         });
     }

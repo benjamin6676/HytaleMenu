@@ -66,13 +66,13 @@ public class ConnectionTab : ITab
         UiHelper.WarnButton("Run Connection Tests", 200, 34, () =>
         {
             if (!_config.IsSet)
-            { _log.Error("[Conn] No server set — go to Dashboard first."); return; }
+            { _log.Error("[Conn] No server set - go to Dashboard first."); return; }
 
             _log.Info($"[Conn] Testing {_config.ServerIp}:{_config.ServerPort}");
-            if (_handshakeTamper) _log.Warn("[Conn] Handshake tamper — stub");
-            if (_authBypass)      _log.Warn("[Conn] Auth bypass — stub");
-            if (_sessionHijack)   _log.Warn($"[Conn] Hijack session {_fakeSessionId} — stub");
-            if (_timeoutTest)     _log.Warn($"[Conn] Timeout {_timeoutMs}ms — stub");
+            if (_handshakeTamper) _log.Warn("[Conn] Handshake tamper - stub");
+            if (_authBypass)      _log.Warn("[Conn] Auth bypass - stub");
+            if (_sessionHijack)   _log.Warn($"[Conn] Hijack session {_fakeSessionId} - stub");
+            if (_timeoutTest)     _log.Warn($"[Conn] Timeout {_timeoutMs}ms - stub");
             _log.Success("[Conn] Tests dispatched.");
         });
 
@@ -80,7 +80,7 @@ public class ConnectionTab : ITab
         ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
         ImGui.TextUnformatted(
             _config.IsSet
-                ? $"→ {_config.ServerIp}:{_config.ServerPort}"
+                ? $"-> {_config.ServerIp}:{_config.ServerPort}"
                 : "Set server in Dashboard first");
         ImGui.PopStyleColor();
     }

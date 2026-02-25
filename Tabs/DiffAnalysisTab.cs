@@ -15,7 +15,7 @@ namespace HytaleSecurityTester.Tabs;
 ///      (e.g. drop item ID 100, then drop item ID 200, then 300)
 ///   2. Capture each packet via the Capture tab
 ///   3. Come here, paste each packet hex with a label
-///   4. Click Analyse — the tool diffs all captures and highlights which bytes
+///   4. Click Analyse - the tool diffs all captures and highlights which bytes
 ///      changed and by how much
 ///   5. A 4-byte region that increased by 100 each time = that's the item ID field
 ///   6. Save your findings to the Packet Book for use in other tabs
@@ -28,7 +28,7 @@ public class DiffAnalysisTab : ITab
     private readonly PacketStore _store;
     private readonly PacketCapture _capture;
 
-    // Capture slots — up to 8
+    // Capture slots - up to 8
     private readonly List<DiffSlot> _slots = new();
     private int _maxSlots = 8;
 
@@ -50,7 +50,7 @@ public class DiffAnalysisTab : ITab
         _slots.Add(new DiffSlot { Label = "Capture C" });
     }
 
-    // ── Public API — called from CaptureTab right-click menu ─────────────
+    // ── Public API - called from CaptureTab right-click menu ─────────────
 
     /// <summary>Sets slot 0 (Diff A) hex from an external packet.</summary>
     public void SetSlotA(string hexString)
@@ -100,7 +100,7 @@ public class DiffAnalysisTab : ITab
         ImGui.SameLine();
         UiHelper.MutedLabel("Do the same action in-game changing ONE value each time (e.g. drop item 100, then 200, then 300).");
         ImGui.SetCursorPos(new Vector2(12, 24));
-        UiHelper.MutedLabel("Capture each result → paste hex below → click Analyse. Changed bytes = the field you varied.");
+        UiHelper.MutedLabel("Capture each result -> paste hex below -> click Analyse. Changed bytes = the field you varied.");
         ImGui.EndChild();
     }
 
@@ -143,7 +143,7 @@ public class DiffAnalysisTab : ITab
             // Delete slot button (only if > 2 slots)
             if (_slots.Count > 2)
             {
-                UiHelper.DangerButton($"×##sldel{i}", 24, 22, () =>
+                UiHelper.DangerButton($"x##sldel{i}", 24, 22, () =>
                 { _slots.RemoveAt(i); _multiResult = null; });
             }
 
@@ -173,7 +173,7 @@ public class DiffAnalysisTab : ITab
                     foreach (var (pkt, idx) in pkts.Select((p, idx) => (p, idx)).TakeLast(20))
                     {
                         bool cs = pkt.Direction == PacketDirection.ClientToServer;
-                        string lbl = $"#{idx+1} {(cs?"C→S":"S→C")} 0x{(pkt.RawBytes.Length > 0 ? pkt.RawBytes[0].ToString("X2") : "??")} {pkt.RawBytes.Length}b";
+                        string lbl = $"#{idx+1} {(cs?"C->S":"S->C")} 0x{(pkt.RawBytes.Length > 0 ? pkt.RawBytes[0].ToString("X2") : "??")} {pkt.RawBytes.Length}b";
                         if (ImGui.Selectable(lbl))
                         {
                             slot.Hex   = pkt.HexString;
@@ -222,12 +222,12 @@ public class DiffAnalysisTab : ITab
         bool canAnalyse = populated >= 2;
 
         ImGui.BeginDisabled(!canAnalyse);
-        UiHelper.PrimaryButton($"▶  Analyse {populated} Packets##analyse", 200, 32, RunAnalysis);
+        UiHelper.PrimaryButton($">  Analyse {populated} Packets##analyse", 200, 32, RunAnalysis);
         ImGui.EndDisabled();
 
         ImGui.SameLine(0, 16);
         UiHelper.MutedLabel(canAnalyse
-            ? $"{populated} packets ready — click Analyse"
+            ? $"{populated} packets ready - click Analyse"
             : "Populate at least 2 slots to analyse.");
 
         ImGui.SameLine(0, 24);
@@ -318,7 +318,7 @@ public class DiffAnalysisTab : ITab
                 int count = i - start;
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
                 ImGui.Selectable(
-                    $"  {start:X4}  Fixed ({count}b)    —       Header/padding                    " +
+                    $"  {start:X4}  Fixed ({count}b)    -       Header/padding                    " +
                     $"{string.Join(" ", _multiResult.Fields.Skip(start).Take(Math.Min(count, 6)).Select(f => $"{f.FixedVal:X2}"))}..." +
                     $"##fmf{start}",
                     false, ImGuiSelectableFlags.None, new Vector2(0, 18));
@@ -367,9 +367,9 @@ public class DiffAnalysisTab : ITab
         else
         {
             ImGui.SetCursorPosY(h * 0.4f);
-            float tw = ImGui.CalcTextSize("← select a variable field").X;
+            float tw = ImGui.CalcTextSize("<- select a variable field").X;
             ImGui.SetCursorPosX((detW - tw) * 0.5f);
-            UiHelper.MutedLabel("← select a variable field");
+            UiHelper.MutedLabel("<- select a variable field");
         }
         ImGui.EndChild();
     }
@@ -434,7 +434,7 @@ public class DiffAnalysisTab : ITab
                 ImGui.Spacing();
                 UiHelper.MutedLabel($"  Delta between captures: {string.Join(", ", deltas)}");
                 if (consistent && deltas[0] != 0)
-                    UiHelper.AccentText($"  ✓ Consistent delta of {deltas[0]} — this field tracks your test variable.");
+                    UiHelper.AccentText($"  [OK] Consistent delta of {deltas[0]} - this field tracks your test variable.");
             }
         }
 
@@ -613,7 +613,7 @@ public class DiffAnalysisTab : ITab
         try
         {
             var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"# Diff Analysis Export — {DateTime.Now:yyyy-MM-dd HH:mm}");
+            sb.AppendLine($"# Diff Analysis Export - {DateTime.Now:yyyy-MM-dd HH:mm}");
             sb.AppendLine($"# {_multiResult.Summary}");
             sb.AppendLine();
             sb.AppendLine("Offset\tFixed\tHint\tValues");

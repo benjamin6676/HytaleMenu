@@ -30,7 +30,7 @@ public sealed class Application : IDisposable
         _window.Update  += OnUpdate;
         _window.Render  += OnRender;
         _window.Resize  += OnResize;
-        // NOTE: Do NOT hook Closing — Silk.NET fires it from inside the render loop
+        // NOTE: Do NOT hook Closing - Silk.NET fires it from inside the render loop
         // and disposing there crashes with "Cannot call Reset inside the render loop".
     }
 
@@ -58,7 +58,7 @@ public sealed class Application : IDisposable
     {
         // Fix: Parsec / remote-desktop sends Key.Unknown for unmapped keys.
         // Passing Unknown to ImGui triggers NotImplementedException in
-        // TranslateInputKeyToImGuiKey — drop it here before it reaches ImGui.
+        // TranslateInputKeyToImGuiKey - drop it here before it reaches ImGui.
         if (key == Key.Unknown) return;
 
         bool ctrl = keyboard.IsKeyPressed(Key.ControlLeft)
@@ -164,7 +164,7 @@ public sealed class Application : IDisposable
 
     /// <summary>
     /// Projects a world-space position to 2D screen coordinates using the
-    /// 4×4 view-projection matrix. Returns false if the point is behind
+    /// 4x4 view-projection matrix. Returns false if the point is behind
     /// the camera (clip-space W ≤ 0).
     /// </summary>
     public static bool WorldToScreen(Vector3 worldPos, Vector2 screenSize,
@@ -249,12 +249,11 @@ public sealed class Application : IDisposable
 
     public void Dispose()
     {
-        // Intentionally empty.
-        // Silk.NET's IWindow.Run() fully owns the lifecycle of the window, GL context,
-        // input, and ImGui controller. Calling Dispose on any of them after Run() returns
-        // (or worse, from the Closing callback which fires inside the render loop) triggers
-        // "Cannot call Reset inside the render loop" (InvalidOperationException).
-        // The OS reclaims all GPU/handle resources when the process exits anyway.
+        // Save config.json before the process exits (flush any pending debounce)
+        try { GlobalConfig.Instance.SaveNow(); } catch { }
+
+        // Intentionally not disposing Silk.NET resources here.
+        // See comment below for explanation.
         _imgui = null;
         _input = null;
         _gl    = null;

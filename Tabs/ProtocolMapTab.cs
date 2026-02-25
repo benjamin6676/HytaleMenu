@@ -10,7 +10,7 @@ namespace HytaleSecurityTester.Tabs;
 ///
 /// Keeps a persistent, annotated map of every opcode seen or manually added.
 /// For each opcode you document:
-///   - Human name, direction (C→S / S→C / both)
+///   - Human name, direction (C->S / S->C / both)
 ///   - Understanding status (Unknown / Partial / Confirmed)
 ///   - Field annotations (byte offset, type, meaning)
 ///   - Free-form notes
@@ -49,7 +49,7 @@ public class ProtocolMapTab : ITab
     private string _newName    = "";
 
     private static readonly string[] StatusLabels = { "All", "Unknown", "Partial", "Confirmed" };
-    private static readonly string[] DirLabels    = { "All", "C→S", "S→C" };
+    private static readonly string[] DirLabels    = { "All", "C->S", "S->C" };
     private static readonly string[] FieldTypes   = { "byte", "int16", "int32", "float", "string(utf8)", "string(ascii)", "bool", "bytes" };
 
     // ─────────────────────────────────────────────────────────────────────
@@ -73,7 +73,7 @@ public class ProtocolMapTab : ITab
         float detW  = w - listW - 10;
         float h     = ImGui.GetContentRegionAvail().Y;
 
-        // Left — opcode list
+        // Left - opcode list
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
         ImGui.BeginChild("##pm_list", new Vector2(listW, h), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
@@ -82,7 +82,7 @@ public class ProtocolMapTab : ITab
 
         ImGui.SameLine(0, 10);
 
-        // Right — detail pane
+        // Right - detail pane
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg1);
         ImGui.BeginChild("##pm_det", new Vector2(detW, h), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
@@ -91,7 +91,7 @@ public class ProtocolMapTab : ITab
         else
         {
             ImGui.SetCursorPosY(h * 0.4f);
-            UiHelper.MutedLabel("   ← select an opcode to annotate");
+            UiHelper.MutedLabel("   <- select an opcode to annotate");
         }
         ImGui.EndChild();
     }
@@ -126,7 +126,7 @@ public class ProtocolMapTab : ITab
         int confirmed = _map.Entries.Values.Count(e => e.Status == OpcodeStatus.Confirmed);
         ImGui.SameLine(0, 16);
         ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
-        ImGui.TextUnformatted($"Total:{_map.Entries.Count}  ✓{confirmed}  ?{unknown}");
+        ImGui.TextUnformatted($"Total:{_map.Entries.Count}  [OK]{confirmed}  ?{unknown}");
         ImGui.PopStyleColor();
 
         // Export
@@ -146,7 +146,7 @@ public class ProtocolMapTab : ITab
         _newOpcode = Math.Clamp(_newOpcode, 0, 255);
         ImGui.SameLine(0, 4);
         ImGui.SetNextItemWidth(48);
-        ImGui.Combo("##pmnewdir", ref _newDir, new[] { "C→S", "S→C", "Both" }, 3);
+        ImGui.Combo("##pmnewdir", ref _newDir, new[] { "C->S", "S->C", "Both" }, 3);
         ImGui.SameLine(0, 4);
         ImGui.SetNextItemWidth(90); ImGui.InputText("##pmnewname", ref _newName, 32);
         ImGui.SameLine(0, 4);
@@ -212,13 +212,13 @@ public class ProtocolMapTab : ITab
 
             ImGui.SetCursorPosX(6);
             ImGui.PushStyleColor(ImGuiCol.Text, statusCol);
-            string statusGlyph = e.Status == OpcodeStatus.Confirmed ? "✓"
+            string statusGlyph = e.Status == OpcodeStatus.Confirmed ? "[OK]"
                                : e.Status == OpcodeStatus.Partial   ? "~" : "?";
             ImGui.TextUnformatted(statusGlyph);
             ImGui.PopStyleColor();
             ImGui.SameLine(0, 4);
             ImGui.PushStyleColor(ImGuiCol.Text, dirCol);
-            string dirStr = e.Direction == ProtoDirection.CS ? "→" : e.Direction == ProtoDirection.SC ? "←" : "↔";
+            string dirStr = e.Direction == ProtoDirection.CS ? "->" : e.Direction == ProtoDirection.SC ? "<-" : "↔";
             ImGui.TextUnformatted(dirStr);
             ImGui.PopStyleColor();
             ImGui.SameLine(0, 4);
@@ -228,7 +228,7 @@ public class ProtocolMapTab : ITab
             ImGui.SameLine(0, 6);
             ImGui.PushStyleColor(ImGuiCol.Text, sel ? MenuRenderer.ColText : MenuRenderer.ColTextMuted);
             string nameDisplay = e.Name.Length > 0 ? e.Name : "(unnamed)";
-            if (nameDisplay.Length > 22) nameDisplay = nameDisplay[..19] + "…";
+            if (nameDisplay.Length > 22) nameDisplay = nameDisplay[..19] + "...";
             ImGui.TextUnformatted(nameDisplay);
             ImGui.PopStyleColor();
 
@@ -240,7 +240,7 @@ public class ProtocolMapTab : ITab
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
                 ImGui.SetCursorPosX(w - 46);
                 ImGui.SetCursorPosY(ImGui.GetCursorPosY() - lineH);
-                ImGui.TextUnformatted($"×{Math.Min(e.SeenCount, 9999)}");
+                ImGui.TextUnformatted($"x{Math.Min(e.SeenCount, 9999)}");
                 ImGui.PopStyleColor();
                 ImGui.SetCursorPosY(ImGui.GetCursorPosY() + lineH - 6);
             }
@@ -274,7 +274,7 @@ public class ProtocolMapTab : ITab
         ImGui.TextUnformatted(e.Name.Length > 0 ? e.Name.ToUpper() : "(UNNAMED OPCODE)");
         ImGui.PopStyleColor();
         ImGui.SameLine(0, 10);
-        UiHelper.MutedLabel($"seen ×{e.SeenCount}  last {(e.LastSeen == DateTime.MinValue ? "never" : e.LastSeen.ToString("HH:mm:ss"))}");
+        UiHelper.MutedLabel($"seenx{e.SeenCount}  last {(e.LastSeen == DateTime.MinValue ? "never" : e.LastSeen.ToString("HH:mm:ss"))}");
 
         ImGui.Spacing();
 
@@ -290,7 +290,7 @@ public class ProtocolMapTab : ITab
         ImGui.SameLine(0, 12);
         int dir = (int)e.Direction;
         ImGui.SetNextItemWidth(80);
-        if (ImGui.Combo("Dir##pmddir", ref dir, new[] { "C→S", "S→C", "Both" }, 3))
+        if (ImGui.Combo("Dir##pmddir", ref dir, new[] { "C->S", "S->C", "Both" }, 3))
         {
             e.Direction = (ProtoDirection)dir;
             _map.Save();
@@ -443,7 +443,7 @@ public class ProtocolMapTab : ITab
             // If unknown opcode seen for first time, fire alert
             if (entry.SeenCount == 1 && entry.Status == OpcodeStatus.Unknown)
                 AlertBus.Push(AlertBus.Sec_ProtoMap, AlertLevel.Info,
-                    $"New opcode 0x{op:X2} ({(dir == ProtoDirection.CS ? "C→S" : "S→C")})");
+                    $"New opcode 0x{op:X2} ({(dir == ProtoDirection.CS ? "C->S" : "S->C")})");
         }
 
         _lastPktCount = pkts.Count;
@@ -467,7 +467,7 @@ public class ProtocolMapTab : ITab
     private ref int FieldTypeIndex(ref string current)
     {
         // ImGui.Combo needs an int ref; we maintain a local shadow
-        // This is a workaround — we use a fixed storage slot
+        // This is a workaround - we use a fixed storage slot
         _ftIdx = Array.IndexOf(FieldTypes, current);
         if (_ftIdx < 0) _ftIdx = 0;
         return ref _ftIdx;

@@ -9,7 +9,7 @@ namespace HytaleSecurityTester.Core;
 /// </summary>
 public static class UiHelper
 {
-    // ── Section box — the main panel container used on every tab ──────────
+    // ── Section box - the main panel container used on every tab ──────────
 
     /// <summary>
     /// Bordered section box. Pass h=0 to auto-size to content height (no clipping).
@@ -37,7 +37,7 @@ public static class UiHelper
                    new Vector2(p0.X + w  - 12, lp.Y - 2),
                    ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColBorder));
 
-        // Accent left stripe — drawn after EndChild when we know final height
+        // Accent left stripe - drawn after EndChild when we know final height
         ImGui.SetCursorPosX(12);
         ImGui.Spacing();
 
@@ -56,7 +56,7 @@ public static class UiHelper
 
     // ── Buttons ───────────────────────────────────────────────────────────
 
-    /// Green — primary positive action
+    /// Green - primary positive action
     public static void PrimaryButton(string label, float w, float h, Action action)
     {
         ImGui.PushStyleColor(ImGuiCol.Button,
@@ -70,7 +70,7 @@ public static class UiHelper
         ImGui.PopStyleColor(4);
     }
 
-    /// Neutral — secondary / utility action
+    /// Neutral - secondary / utility action
     public static void SecondaryButton(string label, float w, float h, Action action)
     {
         ImGui.PushStyleColor(ImGuiCol.Button,        MenuRenderer.ColBg3);
@@ -83,7 +83,7 @@ public static class UiHelper
         ImGui.PopStyleColor(4);
     }
 
-    /// Red — destructive / stop action
+    /// Red - destructive / stop action
     public static void DangerButton(string label, float w, float h, Action action)
     {
         ImGui.PushStyleColor(ImGuiCol.Button,        MenuRenderer.ColDangerDim);
@@ -96,7 +96,7 @@ public static class UiHelper
         ImGui.PopStyleColor(4);
     }
 
-    /// Amber — exploit / test action (use for anything that sends packets)
+    /// Amber - exploit / test action (use for anything that sends packets)
     public static void WarnButton(string label, float w, float h, Action action)
     {
         ImGui.PushStyleColor(ImGuiCol.Button,        MenuRenderer.ColWarnDim);
@@ -109,7 +109,7 @@ public static class UiHelper
         ImGui.PopStyleColor(4);
     }
 
-    /// Blue — informational action
+    /// Blue - informational action
     public static void BlueButton(string label, float w, float h, Action action)
     {
         ImGui.PushStyleColor(ImGuiCol.Button,        MenuRenderer.ColBlueDim);
@@ -152,7 +152,7 @@ public static class UiHelper
         ImGui.PopStyleColor();
     }
 
-    // ── Status row — label + value side by side ───────────────────────────
+    // ── Status row - label + value side by side ───────────────────────────
 
     public static void StatusRow(string label, string value, bool ok, float labelW = 90)
     {

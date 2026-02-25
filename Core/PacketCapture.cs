@@ -34,7 +34,7 @@ public class PacketCapture
         lock (_packetsLock) return new List<CapturedPacket>(_packets);
     }
 
-    /// <summary>Returns packet count without copying the list — cheap to call every frame.</summary>
+    /// <summary>Returns packet count without copying the list - cheap to call every frame.</summary>
     public int GetPacketCount()
     {
         lock (_packetsLock) return _packets.Count;
@@ -72,7 +72,7 @@ public class PacketCapture
             StatusMessage = $"Listening on 0.0.0.0:{listenPort}";
             TotalClients  = 0;
 
-            _log.Success($"[Capture] Proxy on 0.0.0.0:{listenPort} → {targetIp}:{targetPort}");
+            _log.Success($"[Capture] Proxy on 0.0.0.0:{listenPort} -> {targetIp}:{targetPort}");
             Task.Run(() => ListenLoop(targetIp, targetPort, _cts.Token));
         }
         catch (Exception ex)
@@ -158,7 +158,7 @@ public class PacketCapture
             ActiveSessions = Math.Max(0, ActiveSessions - 1);
             StatusMessage  = ActiveSessions > 0
                 ? $"Active: {ActiveSessions}"
-                : $"Listening — {TotalClients} total";
+                : $"Listening - {TotalClients} total";
 
             if (serverStream != null)
                 lock (_sessionsLock) _serverStreams.Remove(serverStream);
@@ -245,7 +245,7 @@ public class CapturedPacket
     public uint MarkerColor { get; set; } = 0xFF800080;
 
     public string DirectionLabel =>
-        Direction == PacketDirection.ClientToServer ? "C→S" : "S→C";
+        Direction == PacketDirection.ClientToServer ? "C->S" : "S->C";
     public string TimestampLabel =>
         Timestamp.ToString("HH:mm:ss.fff");
 }

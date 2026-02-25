@@ -3,17 +3,17 @@ using System.Collections.Concurrent;
 namespace HytaleSecurityTester.Core;
 
 /// <summary>
-/// Response Tracker — correlates injected/test packets with the server's
+/// Response Tracker - correlates injected/test packets with the server's
 /// subsequent responses.
 ///
 /// How it works:
 ///   1. When you send a test packet, call RecordSend(tag, data)
-///   2. Feed every server→client packet into Feed(packet)
+///   2. Feed every server->client packet into Feed(packet)
 ///   3. The tracker captures all server packets within the response window
 ///      and associates them with your send
 ///   4. Call GetResults() to see what the server said after each test
 ///
-/// This turns the tool from "fires blind" into "fires and listens" —
+/// This turns the tool from "fires blind" into "fires and listens" -
 /// you can see immediately whether the server accepted, denied, or
 /// ignored each test packet.
 /// </summary>
@@ -53,7 +53,7 @@ public class ResponseTracker
         return id;
     }
 
-    /// Feed every server→client packet here
+    /// Feed every server->client packet here
     public void Feed(CapturedPacket pkt)
     {
         if (pkt.Direction != PacketDirection.ServerToClient) return;
@@ -118,7 +118,7 @@ public class ResponseTracker
         if (p.Responses.Count == 0)
         {
             record.Outcome = ResponseOutcome.NoResponse;
-            record.Summary = "No server response — server may have ignored or silently accepted.";
+            record.Summary = "No server response - server may have ignored or silently accepted.";
         }
         else
         {
@@ -145,7 +145,7 @@ public class ResponseTracker
             if (IsKickPacket(r))     return ResponseOutcome.Kicked;
         }
 
-        // Got responses but couldn't classify — likely accepted
+        // Got responses but couldn't classify - likely accepted
         return ResponseOutcome.AcceptedUnknown;
     }
 
@@ -187,11 +187,11 @@ public class ResponseTracker
         sb.Append($"{r.ResponseCount} response packet(s). ");
         sb.Append(r.Outcome switch
         {
-            ResponseOutcome.Accepted        => "✓ Server appears to have ACCEPTED the packet.",
-            ResponseOutcome.AcceptedUnknown => "? Server responded — outcome unclear.",
-            ResponseOutcome.Denied          => "✗ Server DENIED / returned error.",
-            ResponseOutcome.Kicked          => "⚠ Server sent a KICK / disconnect packet!",
-            ResponseOutcome.NoResponse      => "— No response received.",
+            ResponseOutcome.Accepted        => "[OK] Server appears to have ACCEPTED the packet.",
+            ResponseOutcome.AcceptedUnknown => "? Server responded - outcome unclear.",
+            ResponseOutcome.Denied          => "[!!] Server DENIED / returned error.",
+            ResponseOutcome.Kicked          => "[!] Server sent a KICK / disconnect packet!",
+            ResponseOutcome.NoResponse      => "- No response received.",
             _ => ""
         });
         if (r.Responses.Count > 0)

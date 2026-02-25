@@ -5,7 +5,7 @@ using System.Numerics;
 namespace HytaleSecurityTester.Tabs;
 
 /// <summary>
-/// Packet Book — your personal library of identified and labelled packets.
+/// Packet Book - your personal library of identified and labelled packets.
 ///
 /// Once you know what a packet does (from Capture + Item Inspector), save it
 /// here. Then replay, edit, or send it directly from this tab without
@@ -68,7 +68,7 @@ public class PacketBookTab : ITab
             var dl2 = ImGui.GetWindowDrawList();
             var p2  = ImGui.GetItemRectMin();
             dl2.AddText(p2 + new Vector2(6, 3),
-                ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColTextMuted), "Search…");
+                ImGui.ColorConvertFloat4ToU32(MenuRenderer.ColTextMuted), "Search...");
         }
         ImGui.Spacing();
         ImGui.SetNextItemWidth(listW - 16);
@@ -108,9 +108,9 @@ public class PacketBookTab : ITab
             ImGui.SetCursorPosX(12);
             UiHelper.MutedLabel("No saved packets yet.");
             ImGui.SetCursorPosX(12);
-            UiHelper.MutedLabel("Capture packets → Item Inspector");
+            UiHelper.MutedLabel("Capture packets -> Item Inspector");
             ImGui.SetCursorPosX(12);
-            UiHelper.MutedLabel("→ Save to Packet Book.");
+            UiHelper.MutedLabel("-> Save to Packet Book.");
         }
 
         var dl = ImGui.GetWindowDrawList();
@@ -144,7 +144,7 @@ public class PacketBookTab : ITab
             ImGui.PopStyleColor();
             ImGui.SetCursorPosX(12);
             UiHelper.MutedLabel(
-                $"{pkt.Direction.ToString()[..1]}→  {pkt.ToBytes().Length}b  " +
+                $"{pkt.Direction.ToString()[..1]}->  {pkt.ToBytes().Length}b  " +
                 $"saved {pkt.SavedAt:HH:mm dd/MM}");
             if (pkt.Tags.Count > 0)
             {
@@ -163,7 +163,7 @@ public class PacketBookTab : ITab
             {
                 ImGui.SetCursorPosX(12);
                 UiHelper.MutedLabel(pkt.Notes.Length > 36
-                    ? pkt.Notes[..33] + "…" : pkt.Notes);
+                    ? pkt.Notes[..33] + "..." : pkt.Notes);
             }
 
             // Invisible selectable over the block
@@ -193,9 +193,9 @@ public class PacketBookTab : ITab
         else
         {
             ImGui.SetCursorPosY(h * 0.4f);
-            float tw = ImGui.CalcTextSize("← select a saved packet").X;
+            float tw = ImGui.CalcTextSize("<- select a saved packet").X;
             ImGui.SetCursorPosX((detW - tw) * 0.5f);
-            UiHelper.MutedLabel("← select a saved packet");
+            UiHelper.MutedLabel("<- select a saved packet");
         }
 
         ImGui.EndChild();
@@ -212,7 +212,7 @@ public class PacketBookTab : ITab
         ImGui.Spacing();
 
         bool cs = pkt.Direction == PacketDirection.ClientToServer;
-        UiHelper.StatusRow("Direction", cs ? "Client → Server" : "Server → Client", cs,  90);
+        UiHelper.StatusRow("Direction", cs ? "Client -> Server" : "Server -> Client", cs,  90);
         UiHelper.StatusRow("Size",      $"{data.Length} bytes", true, 90);
         if (data.Length > 0)
             UiHelper.StatusRow("Packet ID", $"0x{data[0]:X2}", true, 90);
@@ -362,7 +362,7 @@ public class PacketBookTab : ITab
 
         UiHelper.WarnButton("Send Once##pbsend1", 110, 28, () => DoSend(data, pkt.Label, 1, 0));
         ImGui.SameLine(0, 8);
-        UiHelper.WarnButton($"Replay ×{_replayCount}##pbsendN", 120, 28,
+        UiHelper.WarnButton($"Replayx{_replayCount}##pbsendN", 120, 28,
             () => DoSend(data, pkt.Label, _replayCount, _replayDelay));
         ImGui.Spacing();
         UiHelper.MutedLabel("Uses UDP proxy if active, otherwise direct UDP.");
@@ -371,7 +371,7 @@ public class PacketBookTab : ITab
     private void DoSend(byte[] data, string label, int count, int delayMs)
     {
         if (data.Length == 0) { _log.Error($"[Book] '{label}' is empty."); return; }
-        _log.Info($"[Book] Sending '{label}' ×{count}...");
+        _log.Info($"[Book] Sending '{label}'x{count}...");
         Task.Run(async () =>
         {
             int sent = 0;

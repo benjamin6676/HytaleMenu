@@ -156,7 +156,7 @@ public class ServerStats
             catch
             {
                 sw.Stop();
-                // No reply is normal for game UDP — record the RTT anyway
+                // No reply is normal for game UDP - record the RTT anyway
                 RecordPing(sw.Elapsed.TotalMilliseconds);
             }
         }
@@ -183,12 +183,12 @@ public class ServerStats
         {
             try
             {
-                // ip-api.com — free, no API key needed, returns JSON
+                // ip-api.com - free, no API key needed, returns JSON
                 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
                 string url = $"http://ip-api.com/json/{ip}?fields=status,country,regionName,city,isp,org,as,lat,lon,timezone";
                 string json = await http.GetStringAsync(url);
 
-                // Simple manual parse — no Newtonsoft/System.Text.Json needed
+                // Simple manual parse - no Newtonsoft/System.Text.Json needed
                 GeoData = new GeoInfo
                 {
                     Ip       = ip,
@@ -201,7 +201,7 @@ public class ServerStats
                     Lat      = double.TryParse(Extract(json, "lat"), out double lat) ? lat : 0,
                     Lon      = double.TryParse(Extract(json, "lon"), out double lon) ? lon : 0,
                 };
-                _log.Success($"[GeoIP] {ip} → {GeoData.City}, {GeoData.Country} ({GeoData.Isp})");
+                _log.Success($"[GeoIP] {ip} -> {GeoData.City}, {GeoData.Country} ({GeoData.Isp})");
             }
             catch (Exception ex)
             {
@@ -239,13 +239,13 @@ public class ServerStats
             var results = new List<NetworkConnection>();
             try
             {
-                // Use .NET's built-in network info — works on Windows without any external tools
+                // Use .NET's built-in network info - works on Windows without any external tools
                 var ipProps = System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties();
 
                 // UDP endpoints
                 foreach (var ep in ipProps.GetActiveUdpListeners())
                 {
-                    // We want remote connections, not local listeners — skip
+                    // We want remote connections, not local listeners - skip
                 }
 
                 // For actual UDP connections we need to cross-reference with
@@ -462,7 +462,7 @@ public class ServerFingerprint
             if (allNonPrintable && pkt.RawBytes.Length > 8)
                 HasEncryption = true;
 
-            // Detect compression — zlib magic bytes
+            // Detect compression - zlib magic bytes
             if (pkt.RawBytes.Length >= 2 &&
                 ((pkt.RawBytes[0] == 0x78 && pkt.RawBytes[1] == 0x9C) ||
                  (pkt.RawBytes[0] == 0x78 && pkt.RawBytes[1] == 0xDA)))

@@ -9,7 +9,7 @@ namespace HytaleSecurityTester.Tabs;
 ///
 /// Every time you fire a test packet from ANY tab, this tab captures what
 /// the server sends back and tells you whether it accepted, denied, or
-/// ignored the packet — so you're never testing blind.
+/// ignored the packet - so you're never testing blind.
 ///
 /// Features:
 ///   - Live response feed with outcome classification
@@ -102,7 +102,7 @@ public class ResponseAnalyserTab : ITab
 
         ImGui.SetCursorPos(new Vector2(12, 7));
         ImGui.PushStyleColor(ImGuiCol.Text, _tracking ? MenuRenderer.ColAccent : MenuRenderer.ColDanger);
-        ImGui.TextUnformatted(_tracking ? "● Tracking active" : "● Tracking paused");
+        ImGui.TextUnformatted(_tracking ? "[>] Tracking active" : "[>] Tracking paused");
         ImGui.PopStyleColor();
 
         ImGui.SameLine(0, 16);
@@ -248,7 +248,7 @@ public class ResponseAnalyserTab : ITab
         int count = _testCount, delay = _testDelayMs;
         string tag = _testTag;
 
-        _log.Info($"[RA] Firing '{tag}' ×{count} with response tracking...");
+        _log.Info($"[RA] Firing '{tag}'x{count} with response tracking...");
 
         Task.Run(async () =>
         {
@@ -308,11 +308,11 @@ public class ResponseAnalyserTab : ITab
             var col = OutcomeColor(r.Outcome);
             string outcomeStr = r.Outcome switch
             {
-                ResponseOutcome.Accepted        => "✓ ACCEPTED",
+                ResponseOutcome.Accepted        => "[OK] ACCEPTED",
                 ResponseOutcome.AcceptedUnknown => "? ACCEPTED?",
-                ResponseOutcome.Denied          => "✗ DENIED",
-                ResponseOutcome.NoResponse      => "— NO REPLY",
-                ResponseOutcome.Kicked          => "⚠ KICKED",
+                ResponseOutcome.Denied          => "[!!] DENIED",
+                ResponseOutcome.NoResponse      => "- NO REPLY",
+                ResponseOutcome.Kicked          => "[!] KICKED",
                 _                               => "?"
             };
 
@@ -349,9 +349,9 @@ public class ResponseAnalyserTab : ITab
         else
         {
             ImGui.SetCursorPosY((h - 30) * 0.4f);
-            float tw = ImGui.CalcTextSize("← select a response").X;
+            float tw = ImGui.CalcTextSize("<- select a response").X;
             ImGui.SetCursorPosX((detW - tw) * 0.5f);
-            UiHelper.MutedLabel("← select a response");
+            UiHelper.MutedLabel("<- select a response");
         }
 
         ImGui.EndChild();
@@ -397,19 +397,19 @@ public class ResponseAnalyserTab : ITab
         {
             ResponseOutcome.Accepted =>
                 (MenuRenderer.ColAccent, MenuRenderer.ColAccentDim,
-                 "✓  SERVER ACCEPTED THIS PACKET"),
+                 "[OK]  SERVER ACCEPTED THIS PACKET"),
             ResponseOutcome.AcceptedUnknown =>
                 (MenuRenderer.ColWarn, MenuRenderer.ColWarnDim,
-                 "?  SERVER RESPONDED — OUTCOME UNCLEAR"),
+                 "?  SERVER RESPONDED - OUTCOME UNCLEAR"),
             ResponseOutcome.Denied =>
                 (MenuRenderer.ColDanger, MenuRenderer.ColDangerDim,
-                 "✗  SERVER DENIED / RETURNED ERROR"),
+                 "[!!]  SERVER DENIED / RETURNED ERROR"),
             ResponseOutcome.Kicked =>
                 (MenuRenderer.ColWarn, MenuRenderer.ColWarnDim,
-                 "⚠  SERVER SENT A KICK / DISCONNECT"),
+                 "[!]  SERVER SENT A KICK / DISCONNECT"),
             _ =>
                 (MenuRenderer.ColTextMuted, MenuRenderer.ColBg2,
-                 "—  NO RESPONSE FROM SERVER"),
+                 "-  NO RESPONSE FROM SERVER"),
         };
 
         ImGui.PushStyleColor(ImGuiCol.ChildBg, bannerBg);
@@ -519,5 +519,5 @@ public class ResponseAnalyserTab : ITab
     }
 
     private static string Truncate(string s, int max) =>
-        s.Length <= max ? s : s[..max] + "…";
+        s.Length <= max ? s : s[..max] + "...";
 }

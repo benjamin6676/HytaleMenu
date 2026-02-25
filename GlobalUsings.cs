@@ -1,6 +1,6 @@
 // ── Global Using Directives ───────────────────────────────────────────────────
 // This file is automatically included by every .cs file in the project.
-// Adding a using here fixes it everywhere — no need to touch individual files.
+// Adding a using here fixes it everywhere - no need to touch individual files.
 
 global using System;
 global using System.Collections.Generic;

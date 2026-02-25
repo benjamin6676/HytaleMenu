@@ -7,7 +7,7 @@ namespace HytaleSecurityTester.Core;
 /// The output can be opened directly in Wireshark, tcpdump, or any other
 /// pcap-compatible analyser.
 ///
-/// Link-layer type: LINKTYPE_RAW (101) — raw UDP/IP payload without Ethernet header.
+/// Link-layer type: LINKTYPE_RAW (101) - raw UDP/IP payload without Ethernet header.
 /// </summary>
 public static class PcapWriter
 {

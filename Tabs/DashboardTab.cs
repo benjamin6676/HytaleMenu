@@ -18,7 +18,7 @@ public class DashboardTab : ITab
     private string _inputIp   = "149.56.241.73";
     private int    _inputPort = 5520;
 
-    // IP Presets — user can save frequently used server IPs
+    // IP Presets - user can save frequently used server IPs
     private List<(string Label, string Ip, int Port)> _presets = new()
     {
         ("Hytide", "149.56.241.73", 5520),
@@ -86,7 +86,7 @@ public class DashboardTab : ITab
 
         ImGui.SetCursorPos(new Vector2(14, 8));
         ImGui.PushStyleColor(ImGuiCol.Text, connected ? MenuRenderer.ColAccent : MenuRenderer.ColDanger);
-        ImGui.TextUnformatted(connected ? "● CONNECTED" : "● NOT CONFIGURED");
+        ImGui.TextUnformatted(connected ? "[>] CONNECTED" : "[>] NOT CONFIGURED");
         ImGui.PopStyleColor();
 
         if (connected)
@@ -106,7 +106,7 @@ public class DashboardTab : ITab
                         : ping < 150 ? MenuRenderer.ColWarn
                         : MenuRenderer.ColDanger;
             ImGui.PushStyleColor(ImGuiCol.Text, pingCol);
-            ImGui.TextUnformatted(ping < 0 ? "ping: —" : $"ping: {ping:F0}ms");
+            ImGui.TextUnformatted(ping < 0 ? "ping: -" : $"ping: {ping:F0}ms");
             ImGui.PopStyleColor();
 
             ImGui.SetCursorPos(new Vector2(14, 28));
@@ -200,7 +200,7 @@ public class DashboardTab : ITab
             UiHelper.PrimaryButton("Set Active Server", -1, 32, () =>
             {
                 _config.Set(_inputIp, _inputPort);
-                _log.Success($"[Config] Server → {_inputIp}:{_inputPort}");
+                _log.Success($"[Config] Server -> {_inputIp}:{_inputPort}");
                 StartPingLoop();
                 _stats.LookupGeo(_inputIp);
             });
@@ -262,7 +262,7 @@ public class DashboardTab : ITab
                     else
                     {
                         ImGui.SameLine(0, 8);
-                        UiHelper.AccentText("← active");
+                        UiHelper.AccentText("<- active");
                     }
                 }
             }
@@ -319,10 +319,10 @@ public class DashboardTab : ITab
             double min  = _stats.MinPingMs;
             double max  = _stats.MaxPingMs;
 
-            UiHelper.StatusRow("Last",    last < 0 ? "—" : $"{last:F0}ms", last >= 0, 60);
-            UiHelper.StatusRow("Average", avg  < 0 ? "—" : $"{avg:F0}ms",  avg  >= 0, 60);
-            UiHelper.StatusRow("Min",     min  < 0 ? "—" : $"{min:F0}ms",  true,      60);
-            UiHelper.StatusRow("Max",     max  < 0 ? "—" : $"{max:F0}ms",  max < 200, 60);
+            UiHelper.StatusRow("Last",    last < 0 ? "-" : $"{last:F0}ms", last >= 0, 60);
+            UiHelper.StatusRow("Average", avg  < 0 ? "-" : $"{avg:F0}ms",  avg  >= 0, 60);
+            UiHelper.StatusRow("Min",     min  < 0 ? "-" : $"{min:F0}ms",  true,      60);
+            UiHelper.StatusRow("Max",     max  < 0 ? "-" : $"{max:F0}ms",  max < 200, 60);
             UiHelper.StatusRow("Samples", $"{_stats.PingHistory.Count}", true, 60);
             ImGui.Spacing();
             UiHelper.StatusRow("Uptime", FormatUptime(_stats.Uptime), _config.IsSet, 60);
@@ -386,7 +386,7 @@ public class DashboardTab : ITab
         // Packet ID frequency table
         float idW = (w - 12) * 0.5f;
 
-        UiHelper.SectionBox("CLIENT→SERVER PACKET IDs SEEN", idW, 160, () =>
+        UiHelper.SectionBox("CLIENT->SERVER PACKET IDs SEEN", idW, 160, () =>
         {
             var ids = _stats.PacketIdCountsCs
                 .OrderByDescending(kv => kv.Value).Take(10).ToList();
@@ -396,7 +396,7 @@ public class DashboardTab : ITab
                 UiHelper.MutedLabel($"  0x{kv.Key:X2}");
                 ImGui.SameLine(60);
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColBlue);
-                ImGui.TextUnformatted($"{kv.Value,6}×");
+                ImGui.TextUnformatted($"{kv.Value,6}x");
                 ImGui.PopStyleColor();
                 ImGui.SameLine(110);
                 UiHelper.MutedLabel(PacketAnalyser.Analyse(
@@ -407,7 +407,7 @@ public class DashboardTab : ITab
 
         ImGui.SameLine(0, 12);
 
-        UiHelper.SectionBox("SERVER→CLIENT PACKET IDs SEEN", idW, 160, () =>
+        UiHelper.SectionBox("SERVER->CLIENT PACKET IDs SEEN", idW, 160, () =>
         {
             var ids = _stats.PacketIdCountsSc
                 .OrderByDescending(kv => kv.Value).Take(10).ToList();
@@ -417,7 +417,7 @@ public class DashboardTab : ITab
                 UiHelper.MutedLabel($"  0x{kv.Key:X2}");
                 ImGui.SameLine(60);
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccent);
-                ImGui.TextUnformatted($"{kv.Value,6}×");
+                ImGui.TextUnformatted($"{kv.Value,6}x");
                 ImGui.PopStyleColor();
                 ImGui.SameLine(110);
                 UiHelper.MutedLabel(PacketAnalyser.Analyse(
@@ -444,7 +444,7 @@ public class DashboardTab : ITab
                 fp.KeepAliveMs > 0 ? $"~{fp.KeepAliveMs}ms interval" : "Not measured yet",
                 fp.KeepAliveMs > 0, 120);
             UiHelper.StatusRow("Avg response",
-                fp.AvgResponseMs > 0 ? $"{fp.AvgResponseMs}ms" : "—",
+                fp.AvgResponseMs > 0 ? $"{fp.AvgResponseMs}ms" : "-",
                 fp.AvgResponseMs > 0, 120);
             ImGui.Spacing();
             if (!string.IsNullOrEmpty(fp.Notes))
@@ -565,7 +565,7 @@ public class DashboardTab : ITab
                 System.Threading.Thread.Sleep(1500);
                 var conns = _stats.ActiveConnections;
                 if (conns.Count == 0)
-                { _log.Warn("[AutoDetect] None found — be connected in game first."); return; }
+                { _log.Warn("[AutoDetect] None found - be connected in game first."); return; }
 
                 var best = conns
                     .OrderByDescending(c => c.RemotePort == 5520 ? 100 : 0)
@@ -623,7 +623,7 @@ public class DashboardTab : ITab
                 var ips = Dns.GetHostAddresses(host);
                 var ip  = ips.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork)
                           ?? ips.FirstOrDefault();
-                if (ip != null) { _inputIp = ip.ToString(); _log.Success($"[DNS] {host} → {_inputIp}"); }
+                if (ip != null) { _inputIp = ip.ToString(); _log.Success($"[DNS] {host} -> {_inputIp}"); }
                 else _log.Error($"[DNS] Could not resolve {host}");
             }
             catch (Exception ex) { _log.Error($"[DNS] {ex.Message}"); }
@@ -643,7 +643,7 @@ public class DashboardTab : ITab
                 _scanResults = await _stats.ScanPorts(_config.ServerIp,
                     _config.ServerPort, _scanRange);
                 int replied = _scanResults.Count(r => r.Responded);
-                _log.Success($"[Ports] Scan done — {replied} ports replied.");
+                _log.Success($"[Ports] Scan done - {replied} ports replied.");
             }
             catch (Exception ex) { _log.Error($"[Ports] {ex.Message}"); }
             finally { _scanning = false; }
@@ -663,7 +663,7 @@ public class DashboardTab : ITab
         {
             if (feed.Count == 0)
             {
-                UiHelper.MutedLabel("No alerts yet — run tests in other tabs.");
+                UiHelper.MutedLabel("No alerts yet - run tests in other tabs.");
                 UiHelper.MutedLabel("Claims, admin opcodes, privilege probes and new");
                 UiHelper.MutedLabel("protocol opcodes all push alerts here.");
                 return;
@@ -747,7 +747,7 @@ public class DashboardTab : ITab
             UiHelper.SecondaryButton("Copy Report to Clipboard##tsrpt", -1, 28, () =>
             {
                 var sb = new System.Text.StringBuilder();
-                sb.AppendLine($"# HytaleSecurityTester — Threat Report");
+                sb.AppendLine($"# HytaleSecurityTester - Threat Report");
                 sb.AppendLine($"# Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
                 sb.AppendLine($"# Server: {(_config.IsSet ? $"{_config.ServerIp}:{_config.ServerPort}" : "not set")}");
                 sb.AppendLine();
@@ -771,7 +771,7 @@ public class DashboardTab : ITab
 
     private static string FormatUptime(TimeSpan t)
     {
-        if (t.TotalSeconds < 1) return "—";
+        if (t.TotalSeconds < 1) return "-";
         if (t.TotalMinutes < 1) return $"{t.Seconds}s";
         if (t.TotalHours   < 1) return $"{t.Minutes}m {t.Seconds}s";
         return $"{(int)t.TotalHours}h {t.Minutes}m";

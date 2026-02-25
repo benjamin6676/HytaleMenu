@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 namespace HytaleSecurityTester.Core;
 
 /// <summary>
-/// Smart Detection Engine — runs on a background thread.
+/// Smart Detection Engine - runs on a background thread.
 /// All output collections are thread-safe (ConcurrentDictionary or lock-guarded).
 /// </summary>
 public class SmartDetectionEngine : IDisposable
@@ -45,12 +45,12 @@ public class SmartDetectionEngine : IDisposable
     public int    ForceScanProgress => _forceScanProgress;
 
     // ── Op-code monitor ───────────────────────────────────────────────────
-    // Op-codes we treat as "admin only" — fire event when seen outbound from server
+    // Op-codes we treat as "admin only" - fire event when seen outbound from server
     private static readonly HashSet<byte> AdminOpCodes = new()
     { 0x50, 0x51, 0x52, 0x60, 0x61, 0x70, 0x71 };
     public event Action<byte, byte[]>? OnAdminOpCodeDetected;
 
-    // Permission-bit sniffer: id → (myBits, adminBits)
+    // Permission-bit sniffer: id -> (myBits, adminBits)
     public ConcurrentDictionary<uint, (byte myBits, byte adminBits)> PermissionBits { get; }
     = new ConcurrentDictionary<uint, (byte myBits, byte adminBits)>();
 
@@ -76,14 +76,14 @@ public class SmartDetectionEngine : IDisposable
     //
     // Priority 1: Hytale namespace strings  hytale:iron_sword
     // Priority 2: Snake_case identifiers with at least one _  iron_sword / oak_log
-    // Priority 3: Camel/PascalCase player names  3–16 alphanumeric, no dots
+    // Priority 3: Camel/PascalCase player names  3-16 alphanumeric, no dots
     //
     // Explicitly rejected:
-    //   • Strings with dots (p.fc, y.d, e.5, m.r0) — these are fragments
-    //   • All-digit strings
-    //   • Single-char-variety strings ("aaaa")
-    //   • Strings shorter than 4 chars (unless namespace-prefixed)
-    //   • Strings containing only uppercase (likely hex junk)
+    //   - Strings with dots (p.fc, y.d, e.5, m.r0) - these are fragments
+    //   - All-digit strings
+    //   - Single-char-variety strings ("aaaa")
+    //   - Strings shorter than 4 chars (unless namespace-prefixed)
+    //   - Strings containing only uppercase (likely hex junk)
     private static readonly Regex ItemNameRx =
         new(@"(?:hytale:[a-z][a-z0-9_]{2,31})|(?:[a-z][a-z0-9]{1,6}_[a-z0-9_]{2,24})|(?:[A-Za-z][A-Za-z0-9]{2,15})",
             RegexOptions.Compiled);
@@ -134,7 +134,7 @@ public class SmartDetectionEngine : IDisposable
             {
                 _log.Error($"[SmartDetect] Error: {ex.Message}");
             }
-            Thread.Sleep(300); // was 150ms — halve CPU use on idle
+            Thread.Sleep(300); // was 150ms - halve CPU use on idle
         }
         _log.Info("[SmartDetect] Background engine stopped.");
     }
@@ -164,7 +164,7 @@ public class SmartDetectionEngine : IDisposable
                 if (dropId >= 100 && dropId <= 9_999)
                 {
                     OnLootDropDetected?.Invoke(dropId, data);
-                    _log.Success($"[SmartDetect] ★ Loot-drop captured! Item ID {dropId} in 0x{data[0]:X2}");
+                    _log.Success($"[SmartDetect] [*] Loot-drop captured! Item ID {dropId} in 0x{data[0]:X2}");
                 }
             }
         }
@@ -216,7 +216,7 @@ public class SmartDetectionEngine : IDisposable
             try
             {
                 int total = allPackets.Count;
-                _log.Info($"[SmartDetect] Force scan started — {total} packets");
+                _log.Info($"[SmartDetect] Force scan started - {total} packets");
 
                 for (int i = 0; i < total; i++)
                 {
@@ -232,7 +232,7 @@ public class SmartDetectionEngine : IDisposable
                     }
                 }
 
-                _forceScanStatus   = $"Complete — {Pkt4AEntities.Count} entities, " +
+                _forceScanStatus   = $"Complete - {Pkt4AEntities.Count} entities, " +
                                      $"{ConfirmedItems.Count} items, {ActiveEntities.Count} tracked";
                 _forceScanProgress = 100;
                 _log.Success($"[SmartDetect] Force scan complete. " +
@@ -272,10 +272,10 @@ public class SmartDetectionEngine : IDisposable
                     if (i % 1000 == 0)
                     {
                         _forceScanProgress = (i * 100) / total;
-                        _forceScanStatus   = $"0x4A scan: {i}/{total} — found {Pkt4AEntities.Count} entities";
+                        _forceScanStatus   = $"0x4A scan: {i}/{total} - found {Pkt4AEntities.Count} entities";
                     }
                 }
-                _forceScanStatus   = $"0x4A scan done — {Pkt4AEntities.Count} entities from {found} matching packets";
+                _forceScanStatus   = $"0x4A scan done - {Pkt4AEntities.Count} entities from {found} matching packets";
                 _forceScanProgress = 100;
                 _log.Success($"[SmartDetect] 0x4A scan complete: {Pkt4AEntities.Count} entities.");
             }
@@ -303,10 +303,10 @@ public class SmartDetectionEngine : IDisposable
                     if (i % 1000 == 0)
                     {
                         _forceScanProgress = (i * 100) / total;
-                        _forceScanStatus   = $"Seq scan: {i}/{total} — {ConfirmedItems.Count} items";
+                        _forceScanStatus   = $"Seq scan: {i}/{total} - {ConfirmedItems.Count} items";
                     }
                 }
-                _forceScanStatus   = $"Seq scan done — {ConfirmedItems.Count} confirmed items";
+                _forceScanStatus   = $"Seq scan done - {ConfirmedItems.Count} confirmed items";
                 _forceScanProgress = 100;
                 _log.Success($"[SmartDetect] Sequence scan complete: {ConfirmedItems.Count} items.");
             }
@@ -318,14 +318,14 @@ public class SmartDetectionEngine : IDisposable
     public void ArmLootDropListener()
     {
         _lootDropArmed = true;
-        _log.Info("[SmartDetect] Loot-drop listener ARMED — next Drop/Use packet will be captured.");
+        _log.Info("[SmartDetect] Loot-drop listener ARMED - next Drop/Use packet will be captured.");
     }
 
     // ── 0x4A parser (both endianness + fallback) ──────────────────────────
 
     private void Process0x4A(byte[] data, DateTime ts, bool bigEndian)
     {
-        // Read 4-byte entity ID — try both byte orders
+        // Read 4-byte entity ID - try both byte orders
         uint primaryId = bigEndian
             ? (uint)(data[1] << 24 | data[2] << 16 | data[3] << 8 | data[4])
             : BitConverter.ToUInt32(data, 1);
@@ -355,7 +355,7 @@ public class SmartDetectionEngine : IDisposable
             if (m.Success)
             {
                 IdNameMap[primaryId] = m.Value;
-                _log.Info($"[SmartDetect] 0x4A name: {primaryId} → '{m.Value}'");
+                _log.Info($"[SmartDetect] 0x4A name: {primaryId} -> '{m.Value}'");
             }
         }
     }
@@ -506,13 +506,13 @@ public class SmartDetectionEngine : IDisposable
             0x21 => "Entity Attack (0x21)",
             0x22 => "Entity Use (0x22)",
             0x06 => "Use Item (0x06)",
-            _    => $"C→S 0x{pktId:X2}",
+            _    => $"C->S 0x{pktId:X2}",
         };
         if (_suggestedTargetId != candidateId)
         {
             _suggestedTargetId = candidateId;
             _suggestedSource   = src;
-            _log.Info($"[SmartDetect] Mirror → {candidateId} from {src}");
+            _log.Info($"[SmartDetect] Mirror -> {candidateId} from {src}");
         }
     }
 
@@ -522,11 +522,11 @@ public class SmartDetectionEngine : IDisposable
     {
         if (data.Length < 13) return;
 
-        // Try multiple layout offsets — Hytale may not always have ID at byte 1
+        // Try multiple layout offsets - Hytale may not always have ID at byte 1
         for (int idOff = 1; idOff <= Math.Min(5, data.Length - 16); idOff++)
         {
             uint candidate = BitConverter.ToUInt32(data, idOff);
-            // Widen range — also try BE
+            // Widen range - also try BE
             if (candidate == 0 || candidate > 16_000_000)
             {
                 candidate = (uint)(data[idOff] << 24 | data[idOff+1] << 16 |
@@ -596,7 +596,7 @@ public class SmartDetectionEngine : IDisposable
             EntityClassifications[candidate] = cls;
 
         bool isLocalPlayer = _config.HasLocalPlayer && _config.LocalPlayerEntityId == candidate;
-        string nameHint    = isLocalPlayer ? "★ LocalPlayer"
+        string nameHint    = isLocalPlayer ? "[*] LocalPlayer"
                            : IdNameMap.TryGetValue(candidate, out var nm) ? nm : "";
 
         var entry = ActiveEntities.AddOrUpdate(candidate,
@@ -661,7 +661,7 @@ public class SmartDetectionEngine : IDisposable
 
     private static string BuildEspLabel(uint id, string name, EntityClass cls, bool isLocal)
     {
-        string prefix = isLocal ? "[★]" : cls switch
+        string prefix = isLocal ? "[[*]]" : cls switch
         {
             EntityClass.Player => "[P]",
             EntityClass.Mob    => "[M]",
@@ -682,19 +682,19 @@ public class SmartDetectionEngine : IDisposable
     {
         if (cs)
         {
-            // C→S movement packets → player
+            // C->S movement packets -> player
             if (opCode == 0x02 || opCode == 0x03 || opCode == 0x04A) return EntityClass.Player;
-            // C→S inventory actions → item
+            // C->S inventory actions -> item
             if (opCode == 0x09 || opCode == 0x0E || opCode == 0x07 || opCode == 0x08)
                 return EntityClass.Item;
         }
         else
         {
-            // S→C entity update → could be player or mob, lean player if small
+            // S->C entity update -> could be player or mob, lean player if small
             if (opCode == 0x03) return len < 50 ? EntityClass.Player : EntityClass.Mob;
-            // S→C inventory update → item
+            // S->C inventory update -> item
             if (opCode == 0x04 || opCode == 0x22) return EntityClass.Item;
-            // S→C player spawn → player
+            // S->C player spawn -> player
             if (opCode == 0x02) return EntityClass.Player;
         }
         return EntityClass.Unknown;
@@ -731,12 +731,12 @@ public class SmartDetectionEngine : IDisposable
             if ((id < 100 || id > 9_999) && (id < 1_000 || id > 4_000_000)) continue;
             if (IdNameMap.ContainsKey(id)) continue;
 
-            int winStart = Math.Max(0, i - 16);
-            int winEnd   = Math.Min(data.Length, i + 4 + 16);
+            int winStart = Math.Max(0, i - 64);
+            int winEnd   = Math.Min(data.Length, i + 4 + 64);
             string window = Encoding.UTF8.GetString(data, winStart, winEnd - winStart)
                 .Replace("\0", " ");
 
-            // Walk matches in priority order — prefer Hytale-namespace first
+            // Walk matches in priority order - prefer Hytale-namespace first
             Match? best = null;
             foreach (Match m in ItemNameRx.Matches(window))
             {
@@ -759,7 +759,7 @@ public class SmartDetectionEngine : IDisposable
                 _store.Save(bookLabel,
                     $"Auto-named: ID {id} found with string '{name}' (within 16 bytes)",
                     BitConverter.GetBytes(id), PacketDirection.ServerToClient);
-                _log.Success($"[SmartDetect] Auto-named: {id} → '{name}' → Book.");
+                _log.Success($"[SmartDetect] Auto-named: {id} -> '{name}' -> Book.");
             }
         }
     }
@@ -837,13 +837,13 @@ public class SmartDetectionEngine : IDisposable
             var item = kv.Value;
             if (item.PacketCount < 3 || _autoPinned.ContainsKey(item.ItemId)) continue;
 
-            // Smart auto-pin filter — skip anonymous items with no interesting metadata
+            // Smart auto-pin filter - skip anonymous items with no interesting metadata
             bool hasName     = !string.IsNullOrEmpty(item.NameHint);
             bool hasSlot     = item.SlotIndex > 0;
             bool hasRareStack = item.StackSize > 1 && item.StackSize != 64;
 
             if (!hasName && !hasSlot && !hasRareStack)
-                continue; // skip — generic noise
+                continue; // skip - generic noise
 
             _autoPinned[item.ItemId] = true;
 
@@ -857,7 +857,7 @@ public class SmartDetectionEngine : IDisposable
                 _store.Save(label,
                     $"Auto-pinned Item ID {item.ItemId}" +
                     (string.IsNullOrEmpty(item.NameHint) ? "" : $" ({item.NameHint})") +
-                    $" — stack ×{item.StackSize}, slot {item.SlotIndex}",
+                    $" - stackx{item.StackSize}, slot {item.SlotIndex}",
                     payload, PacketDirection.ServerToClient);
                 _log.Success($"[SmartDetect] Auto-pinned {item.ItemId}" +
                              $"{(string.IsNullOrEmpty(item.NameHint) ? "" : $" ({item.NameHint})")}");
@@ -934,7 +934,7 @@ public class SmartDetectionEngine : IDisposable
     {
         _forcePinned4A.Clear();
         _forcePinnedEntities.Clear();
-        _log.Info("[SmartDetect] Force-pins cleared — entries will now expire normally.");
+        _log.Info("[SmartDetect] Force-pins cleared - entries will now expire normally.");
     }
 
     public void DismissSuggestion() => _suggestedTargetId = 0;
@@ -972,7 +972,7 @@ public class TrackedEntity
     public float       Z            { get; set; }
     public DateTime    FirstSeen    { get; set; }
     public DateTime    LastSeen     { get; set; }
-    /// <summary>Wall-clock time this entry was last updated — used for purge so
+    /// <summary>Wall-clock time this entry was last updated - used for purge so
     /// force-scanned entities (with old packet timestamps) don't get immediately purged.</summary>
     public DateTime    RegisteredAt { get; set; }
     public int         UpdateCount  { get; set; }
@@ -982,7 +982,7 @@ public class TrackedEntity
     public bool        IsLocalPlayer { get; set; }
     public EntityClass EntityClass  { get; set; } = EntityClass.Unknown;
 
-    public string ClassLabel => IsLocalPlayer  ? "★ LocalPlayer"
+    public string ClassLabel => IsLocalPlayer  ? "[*] LocalPlayer"
                              : EntityClass == EntityClass.Player ? "PLAYER"
                              : EntityClass == EntityClass.Mob    ? "MOB"
                              : EntityClass == EntityClass.Item   ? "ITEM"
