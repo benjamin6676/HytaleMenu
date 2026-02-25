@@ -203,7 +203,7 @@ public class VisualsTab : ITab
                                 : ent.EntityClass == EntityClass.Player ? $"[P] {(string.IsNullOrEmpty(ent.NameHint) ? ent.EntityId.ToString() : ent.NameHint)}"
                                 : ent.EntityClass == EntityClass.Mob    ? $"[M] {(string.IsNullOrEmpty(ent.NameHint) ? ent.EntityId.ToString() : ent.NameHint)}"
                                 : ent.EntityClass == EntityClass.Item   ? $"[I] {(string.IsNullOrEmpty(ent.NameHint) ? ent.EntityId.ToString() : ent.NameHint)}"
-                                : $"[?] {ent.EntityId}";
+                                : $"[E] {ent.EntityId}";  // [E] = unclassified entity
 
                             bool exists = Application.EntityPositions.Any(e => e.Label == label);
                             if (!exists)

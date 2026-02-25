@@ -56,9 +56,15 @@ public sealed class Application : IDisposable
 
     private void OnKeyDown(IKeyboard keyboard, Key key, int scancode)
     {
+        // Fix: Parsec / remote-desktop sends Key.Unknown for unmapped keys.
+        // Passing Unknown to ImGui triggers NotImplementedException in
+        // TranslateInputKeyToImGuiKey — drop it here before it reaches ImGui.
+        if (key == Key.Unknown) return;
+
         bool ctrl = keyboard.IsKeyPressed(Key.ControlLeft)
                  || keyboard.IsKeyPressed(Key.ControlRight);
 
+        // ── Paste intercept ──────────────────────────────────────────────
         if (key == Key.V && ctrl)
         {
             string text = GetClipboardText();
@@ -66,6 +72,17 @@ public sealed class Application : IDisposable
                 foreach (char c in text)
                     ImGui.GetIO().AddInputCharacter(c);
         }
+
+        // ── Global hotkey dispatch ───────────────────────────────────────
+        // Panic hotkey: instantly close the application
+        if (key == GlobalHotkeyConfig.Instance.PanicHotkey)
+        {
+            _window?.Close();
+            return;
+        }
+
+        // Capture key binding if Settings tab is waiting for input
+        GlobalHotkeyConfig.Instance.TryCapture(key);
     }
 
     private static string GetClipboardText()

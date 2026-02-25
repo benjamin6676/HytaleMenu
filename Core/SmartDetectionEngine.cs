@@ -72,8 +72,21 @@ public class SmartDetectionEngine : IDisposable
     private readonly ConcurrentDictionary<uint, bool> _forcePinned4A       = new();
     private readonly ConcurrentDictionary<uint, bool> _forcePinnedEntities = new();
 
+    // ── Name-detection regexes ─────────────────────────────────────────────
+    //
+    // Priority 1: Hytale namespace strings  hytale:iron_sword
+    // Priority 2: Snake_case identifiers with at least one _  iron_sword / oak_log
+    // Priority 3: Camel/PascalCase player names  3–16 alphanumeric, no dots
+    //
+    // Explicitly rejected:
+    //   • Strings with dots (p.fc, y.d, e.5, m.r0) — these are fragments
+    //   • All-digit strings
+    //   • Single-char-variety strings ("aaaa")
+    //   • Strings shorter than 4 chars (unless namespace-prefixed)
+    //   • Strings containing only uppercase (likely hex junk)
     private static readonly Regex ItemNameRx =
-        new(@"[a-z][a-z0-9_]*_[a-z0-9_]+|[a-z][a-z0-9_]{4,31}", RegexOptions.Compiled);
+        new(@"(?:hytale:[a-z][a-z0-9_]{2,31})|(?:[a-z][a-z0-9]{1,6}_[a-z0-9_]{2,24})|(?:[A-Za-z][A-Za-z0-9]{2,15})",
+            RegexOptions.Compiled);
 
     // ─────────────────────────────────────────────────────────────────────
 
@@ -689,6 +702,27 @@ public class SmartDetectionEngine : IDisposable
 
     // ── Auto-naming ───────────────────────────────────────────────────────
 
+    // Secondary junk-filter: tokens that look like fragment artefacts
+    private static readonly Regex JunkRx =
+        new(@"\.", RegexOptions.Compiled);  // dots = serialisation fragment
+
+    private static bool IsHighQualityName(string s)
+    {
+        if (s.Length < 3) return false;
+        if (s.All(char.IsDigit)) return false;
+        if (s.Distinct().Count() < 2) return false;
+        if (JunkRx.IsMatch(s)) return false;
+        // Must have at least one letter
+        if (!s.Any(char.IsLetter)) return false;
+        // Hytale-namespace: always accept
+        if (s.StartsWith("hytale:", StringComparison.Ordinal)) return true;
+        // Must be at least 4 chars unless it contains _
+        if (s.Length < 4 && !s.Contains('_')) return false;
+        // All-uppercase short strings are likely hex junk
+        if (s.Length <= 6 && s.All(c => char.IsUpper(c) || char.IsDigit(c))) return false;
+        return true;
+    }
+
     private void ProcessAutoNaming(byte[] data)
     {
         for (int i = 1; i + 4 <= data.Length; i++)
@@ -702,22 +736,30 @@ public class SmartDetectionEngine : IDisposable
             string window = Encoding.UTF8.GetString(data, winStart, winEnd - winStart)
                 .Replace("\0", " ");
 
+            // Walk matches in priority order — prefer Hytale-namespace first
+            Match? best = null;
             foreach (Match m in ItemNameRx.Matches(window))
             {
                 string candidate = m.Value;
-                if (candidate.Length < 3 || candidate.All(char.IsDigit)) continue;
-                if (candidate.Distinct().Count() < 2) continue;
-
-                IdNameMap[id] = candidate;
-                string bookLabel = $"Schema:{id}={candidate}";
-                if (_store.Get(bookLabel) == null)
+                if (!IsHighQualityName(candidate)) continue;
+                // Prefer hytale: prefix over anything else
+                if (best == null || candidate.StartsWith("hytale:"))
                 {
-                    _store.Save(bookLabel,
-                        $"Auto-named: ID {id} found with string '{candidate}' (within 16 bytes)",
-                        BitConverter.GetBytes(id), PacketDirection.ServerToClient);
-                    _log.Success($"[SmartDetect] Auto-named: {id} → '{candidate}' → Book.");
+                    best = m;
+                    if (candidate.StartsWith("hytale:")) break;
                 }
-                break;
+            }
+
+            if (best == null) continue;
+            string name = best.Value;
+            IdNameMap[id] = name;
+            string bookLabel = $"Schema:{id}={name}";
+            if (_store.Get(bookLabel) == null)
+            {
+                _store.Save(bookLabel,
+                    $"Auto-named: ID {id} found with string '{name}' (within 16 bytes)",
+                    BitConverter.GetBytes(id), PacketDirection.ServerToClient);
+                _log.Success($"[SmartDetect] Auto-named: {id} → '{name}' → Book.");
             }
         }
     }
@@ -780,6 +822,13 @@ public class SmartDetectionEngine : IDisposable
     }
 
     // ── Auto-pin high-confidence items ────────────────────────────────────
+    //
+    // Smart filter: skip items with no resolved name and no interesting metadata.
+    // This prevents the Book from filling up with thousands of generic anonymous IDs.
+    // An item qualifies for auto-pin when:
+    //   a) it has a resolved name in IdNameMap, OR
+    //   b) it has a non-zero slot index (not in slot 0) which implies real inventory,  OR
+    //   c) its stack count is unusual (>1 and non-default values like 64)
 
     private void AutoPinHighConfidenceItems()
     {
@@ -787,6 +836,15 @@ public class SmartDetectionEngine : IDisposable
         {
             var item = kv.Value;
             if (item.PacketCount < 3 || _autoPinned.ContainsKey(item.ItemId)) continue;
+
+            // Smart auto-pin filter — skip anonymous items with no interesting metadata
+            bool hasName     = !string.IsNullOrEmpty(item.NameHint);
+            bool hasSlot     = item.SlotIndex > 0;
+            bool hasRareStack = item.StackSize > 1 && item.StackSize != 64;
+
+            if (!hasName && !hasSlot && !hasRareStack)
+                continue; // skip — generic noise
+
             _autoPinned[item.ItemId] = true;
 
             string label = $"AutoPin:{item.ItemId}";

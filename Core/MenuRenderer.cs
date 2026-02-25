@@ -28,14 +28,11 @@ public class MenuRenderer
     private readonly SmartDetectionEngine _smartDetect;
     private readonly ProtocolMapTab       _protocolMapTab;
     private readonly MacroEngineTab       _macroEngineTab;
+    private readonly SettingsTab          _settingsTab;
 
     private int _selectedSection = 0;
 
-    // 9 sidebar sections (merged from 13)
-    // Dashboard absorbs: Log
-    // Packets absorbs:   Response Analyser
-    // Capture absorbs:   Diff Analysis
-    // Connection tab removed (its features live in Dashboard > Connection sub-tab)
+    // 13 sidebar sections
     private static readonly (string Icon, string Short, string Full)[] Sections = {
         ("⌂", "Dashboard",  "Dashboard"),
         ("⚡", "Packets",    "Packet Exploiting"),
@@ -49,6 +46,7 @@ public class MenuRenderer
         ("👁️", "Visuals",  "Visuals / ESP"),
         ("⊞", "Proto Map",  "Protocol Map"),
         ("⟳", "Macros",    "Macro Engine"),
+        ("⚙", "Settings",  "Settings"),
     };
 
     // Palette
@@ -115,6 +113,7 @@ public class MenuRenderer
         _visualsTab          = new VisualsTab(_log, _config, _smartDetect);
         _protocolMapTab      = new ProtocolMapTab(_log, _captureTab.Capture);
         _macroEngineTab      = new MacroEngineTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config, _store);
+        _settingsTab         = new SettingsTab(_log);
     }
 
     public void Render()
@@ -322,6 +321,7 @@ public class MenuRenderer
             case 9:  _visualsTab.Render();         break;
             case 10: _protocolMapTab.Render();     break;
             case 11: _macroEngineTab.Render();     break;
+            case 12: _settingsTab.Render();        break;
         }
     }
 
