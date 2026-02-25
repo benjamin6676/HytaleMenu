@@ -29,15 +29,15 @@ public class SettingsTab : ITab
     private float _flashTimer = 0f;
 
     // Pattern editor state
-    private string   _editKey        = "";   // which signature we're editing
-    private string   _editPattern    = "";   // text field content
-    private string   _editMsg        = "";   // feedback after save/reset
+    private string _editKey = "";   // which signature we're editing
+    private string _editPattern = "";   // text field content
+    private string _editMsg = "";   // feedback after save/reset
 
     // Auto-discover state
-    private string   _discoverKey     = "";   // which sig is being discovered
-    private bool     _discoverRunning = false;
+    private string _discoverKey = "";   // which sig is being discovered
+    private bool _discoverRunning = false;
     private List<PatternCandidate> _discoverResults = new();
-    private string   _discoverStatus  = "";   // progress/result message
+    private string _discoverStatus = "";   // progress/result message
 
     public SettingsTab(TestLog log) { _log = log; }
 
@@ -65,8 +65,8 @@ public class SettingsTab : ITab
 
         switch (_subTab)
         {
-            case 0: RenderKeybinds(w);        break;
-            case 1: RenderMemorySettings(w);  break;
+            case 0: RenderKeybinds(w); break;
+            case 1: RenderMemorySettings(w); break;
             case 2: RenderDisplaySettings(w); break;
         }
     }
@@ -124,18 +124,18 @@ public class SettingsTab : ITab
         ImGui.SetCursorPosY(48);
         ImGui.Spacing();
 
-        RenderKeyRow("Menu Toggle",   0, cfg.MenuToggleHotkey, "Show/hide the overlay.", cfg);
-        RenderKeyRow("Marker",        1, cfg.MarkerHotkey,     "Place a position marker on ESP.", cfg);
-        RenderKeyRow("Lock Target",   2, cfg.LockHotkey,       "Lock hovered item as dupe target.", cfg);
-        RenderKeyRow("Panic (Close)", 3, cfg.PanicHotkey,      "Instantly close the application.", cfg);
+        RenderKeyRow("Menu Toggle", 0, cfg.MenuToggleHotkey, "Show/hide the overlay.", cfg);
+        RenderKeyRow("Marker", 1, cfg.MarkerHotkey, "Place a position marker on ESP.", cfg);
+        RenderKeyRow("Lock Target", 2, cfg.LockHotkey, "Lock hovered item as dupe target.", cfg);
+        RenderKeyRow("Panic (Close)", 3, cfg.PanicHotkey, "Instantly close the application.", cfg);
 
         ImGui.Spacing(); ImGui.Spacing();
         ImGui.SetCursorPosX(10);
 
         // Reset to Defaults
-        ImGui.PushStyleColor(ImGuiCol.Button,        MenuRenderer.ColDanger with { W = 0.28f });
+        ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColDanger with { W = 0.28f });
         ImGui.PushStyleColor(ImGuiCol.ButtonHovered, MenuRenderer.ColDanger with { W = 0.45f });
-        ImGui.PushStyleColor(ImGuiCol.ButtonActive,  MenuRenderer.ColDanger with { W = 0.65f });
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, MenuRenderer.ColDanger with { W = 0.65f });
         if (ImGui.Button("Reset to Defaults##kbdreset", new Vector2(160, 26)))
         {
             cfg.ResetDefaults();
@@ -167,20 +167,20 @@ public class SettingsTab : ITab
         {
             // Amber pulse during capture mode
             float pulse = 0.35f + 0.20f * MathF.Abs(MathF.Sin(_flashTimer * 4.5f));
-            ImGui.PushStyleColor(ImGuiCol.Button,        MenuRenderer.ColWarn with { W = pulse });
+            ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColWarn with { W = pulse });
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, MenuRenderer.ColWarn with { W = pulse + 0.15f });
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive,  MenuRenderer.ColWarn with { W = 0.80f });
-            ImGui.PushStyleColor(ImGuiCol.Text,          MenuRenderer.ColWarn);
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, MenuRenderer.ColWarn with { W = 0.80f });
+            ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
             if (ImGui.Button($"[ PRESS ANY KEY... ]##kbr{slot}", new Vector2(200, 26)))
                 cfg.CancelCapture();
             ImGui.PopStyleColor(4);
         }
         else
         {
-            ImGui.PushStyleColor(ImGuiCol.Button,        MenuRenderer.ColBg3);
+            ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBg3);
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, MenuRenderer.ColAccentDim);
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive,  MenuRenderer.ColAccent with { W = 0.30f });
-            ImGui.PushStyleColor(ImGuiCol.Text,          MenuRenderer.ColAccent);
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, MenuRenderer.ColAccent with { W = 0.30f });
+            ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccent);
             if (ImGui.Button($"[ {GlobalHotkeyConfig.KeyLabel(currentKey),-16} ]##kbr{slot}",
                              new Vector2(200, 26)))
                 cfg.BeginCapture(slot);
@@ -201,7 +201,7 @@ public class SettingsTab : ITab
 
     private void RenderMemorySettings(float w)
     {
-        var au  = AutoUpdateHandler.Instance;
+        var au = AutoUpdateHandler.Instance;
         bool att = SharedMemoryReader.IsAttached;
 
         // ── Attach + build status box ──────────────────────────────────────
@@ -246,9 +246,9 @@ public class SettingsTab : ITab
             ImGui.TextUnformatted("[!] Build changed since last run - re-scan recommended.");
             ImGui.PopStyleColor();
             ImGui.SameLine(0, 8);
-            ImGui.PushStyleColor(ImGuiCol.Button,        MenuRenderer.ColWarnDim);
+            ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColWarnDim);
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, MenuRenderer.ColWarn with { W = 0.30f });
-            ImGui.PushStyleColor(ImGuiCol.Text,          MenuRenderer.ColWarn);
+            ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
             if (ImGui.Button("Dismiss##dismisswarn", new Vector2(70, 20)))
                 au.DismissUpdateWarning();
             ImGui.PopStyleColor(3);
@@ -280,13 +280,13 @@ public class SettingsTab : ITab
 
         float col = 12f;
         ImGui.SetCursorPos(new Vector2(col, 24));
-        RenderAddrRow("EntityList",  au.EntityListAddr);
+        RenderAddrRow("EntityList", au.EntityListAddr);
         ImGui.SetCursorPosX(col);
         RenderAddrRow("LocalPlayer", au.LocalPlayerAddr);
         ImGui.SetCursorPosX(col);
-        RenderAddrRow("ItemList",    au.ItemListAddr);
+        RenderAddrRow("ItemList", au.ItemListAddr);
         ImGui.SetCursorPosX(col);
-        RenderAddrRow("HoverID",     au.HoverIdAddr);
+        RenderAddrRow("HoverID", au.HoverIdAddr);
 
         ImGui.EndChild();
         ImGui.Spacing();
@@ -381,15 +381,15 @@ public class SettingsTab : ITab
 
         ImGui.SetCursorPos(new Vector2(10, 38));
 
-        float btnW  = 80f;
-        float entW  = w - 20 - btnW - 4;
+        float btnW = 80f;
+        float entW = w - 20 - btnW - 4;
 
         // One row per signature
         foreach (var sigName in au.SignatureNames)
         {
             string effective = au.GetEffectivePattern(sigName);
-            string builtin   = au.GetBuiltInPattern(sigName);
-            bool   custom    = au.UserSignatures.ContainsKey(sigName);
+            string builtin = au.GetBuiltInPattern(sigName);
+            bool custom = au.UserSignatures.ContainsKey(sigName);
 
             // Label
             ImGui.SetCursorPosX(10);
@@ -410,9 +410,9 @@ public class SettingsTab : ITab
                 ImGui.SameLine(0, 4);
 
                 // Save button
-                ImGui.PushStyleColor(ImGuiCol.Button,        MenuRenderer.ColAccentDim);
+                ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColAccentDim);
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, MenuRenderer.ColAccent with { W = 0.35f });
-                ImGui.PushStyleColor(ImGuiCol.Text,          MenuRenderer.ColAccent);
+                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccent);
                 if (ImGui.Button($"Save##patsave_{sigName}", new Vector2(48, 20)))
                 {
                     au.SetUserPattern(sigName, _editPattern);
@@ -425,9 +425,9 @@ public class SettingsTab : ITab
                 // Reset to built-in
                 if (!string.IsNullOrEmpty(builtin))
                 {
-                    ImGui.PushStyleColor(ImGuiCol.Button,        MenuRenderer.ColDanger with { W = 0.22f });
+                    ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColDanger with { W = 0.22f });
                     ImGui.PushStyleColor(ImGuiCol.ButtonHovered, MenuRenderer.ColDanger with { W = 0.38f });
-                    ImGui.PushStyleColor(ImGuiCol.Text,          MenuRenderer.ColDanger);
+                    ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColDanger);
                     if (ImGui.Button($"Reset##patreset_{sigName}", new Vector2(46, 20)))
                     {
                         au.SetUserPattern(sigName, "");  // clears override
@@ -439,8 +439,8 @@ public class SettingsTab : ITab
                 }
 
                 // Cancel
-                ImGui.PushStyleColor(ImGuiCol.Button,        MenuRenderer.ColBg3);
-                ImGui.PushStyleColor(ImGuiCol.Text,          MenuRenderer.ColTextMuted);
+                ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBg3);
+                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
                 if (ImGui.Button($"Cancel##patcancel_{sigName}", new Vector2(50, 20)))
                     _editKey = "";
                 ImGui.PopStyleColor(2);
@@ -455,14 +455,14 @@ public class SettingsTab : ITab
                 ImGui.PopStyleColor();
                 ImGui.SameLine(0, 6);
 
-                ImGui.PushStyleColor(ImGuiCol.Button,        MenuRenderer.ColBg3);
+                ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBg3);
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, MenuRenderer.ColAccentDim);
-                ImGui.PushStyleColor(ImGuiCol.Text,          MenuRenderer.ColAccent);
+                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccent);
                 if (ImGui.Button($"Edit##patedit_{sigName}", new Vector2(40, 18)))
                 {
-                    _editKey     = sigName;
+                    _editKey = sigName;
                     _editPattern = effective;
-                    _editMsg     = "";
+                    _editMsg = "";
                 }
                 ImGui.PopStyleColor(3);
 
@@ -470,17 +470,17 @@ public class SettingsTab : ITab
                 ImGui.SameLine(0, 4);
                 bool discovering = _discoverKey == sigName && _discoverRunning;
                 if (discovering) ImGui.BeginDisabled();
-                ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.08f, 0.25f, 0.12f, 1f));
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.08f, 0.25f, 0.12f, 1f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.08f, 0.25f, 0.12f, 0.6f));
-                ImGui.PushStyleColor(ImGuiCol.Text,          MenuRenderer.ColAccent);
+                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccent);
                 if (ImGui.Button($"{(discovering ? "..." : "[*] Discover")}##padis_{sigName}",
                     new Vector2(discovering ? 28 : 90, 18)))
                 {
-                    _discoverKey     = sigName;
+                    _discoverKey = sigName;
                     _discoverResults.Clear();
-                    _discoverStatus  = "Scanning...";
+                    _discoverStatus = "Scanning...";
                     _discoverRunning = true;
-                    _editMsg         = "";
+                    _editMsg = "";
 
                     var reader = SharedMemoryReader.Instance;
                     Task.Run(() =>
@@ -488,7 +488,7 @@ public class SettingsTab : ITab
                         var results = AutoUpdateHandler.Instance
                                           .AutoDiscoverCandidates(sigName, reader);
                         _discoverResults = results;
-                        _discoverStatus  = results.Count > 0
+                        _discoverStatus = results.Count > 0
                             ? $"{results.Count} candidate(s) found - click 'Use This' to apply"
                             : "No candidates found. Game must be running.";
                         _discoverRunning = false;
@@ -509,8 +509,9 @@ public class SettingsTab : ITab
             ImGui.PopStyleColor();
         }
 
-            }
-        }
+    }
+}
+
 
         // Feedback message
         if (!string.IsNullOrEmpty(_editMsg))

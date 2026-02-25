@@ -464,7 +464,9 @@ public class ItemInspectorTab : ITab
                     UiHelper.MutedLabel($"{(ent.IsDynamic ? "Dynamic - player/mob" : "Static - world object")}");
                     UiHelper.MutedLabel($"Pos: ({ent.X:F1}, {ent.Y:F1}, {ent.Z:F1})");
                     UiHelper.MutedLabel($"Updates: {ent.UpdateCount}  Δmax: {ent.MaxDelta:F2}m");
-                    UiHelper.MutedLabel($"Last: {ent.LastSeen:HH:mm:ss}");
+                    var lastSeenField = typeof(HytaleSecurityTester.Core.TrackedEntity).GetField("LastSeen", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                    var lastSeenVal = (DateTime?)lastSeenField?.GetValue(ent) ?? DateTime.Now;
+                    UiHelper.MutedLabel($"Last: {lastSeenVal:HH:mm:ss}");
                     if (!string.IsNullOrEmpty(ent.NameHint))
                         UiHelper.MutedLabel($"Name: {ent.NameHint}");
                     ImGui.EndTooltip();
@@ -495,14 +497,14 @@ public class ItemInspectorTab : ITab
 
         // ── Delta Watcher - Static vs Dynamic classification ──────────────
         var delta = _smart.DeltaClassifications.ToArray();
-        if (delta.Count > 0)
+        if (delta.Length > 0)
         {
             ImGui.SetCursorPosX(4);
             ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccentMid);
-            ImGui.TextUnformatted($"DELTA WATCHER  ({delta.Count})");
+            ImGui.TextUnformatted($"DELTA WATCHER  ({delta.Length})");
             ImGui.PopStyleColor();
 
-            float deltaH = Math.Clamp(delta.Count * 18f + 8f, 40f, 130f);
+            float deltaH = Math.Clamp(delta.Length * 18f + 8f, 40f, 130f);
             ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg0);
             ImGui.BeginChild("##sddelta", new Vector2(w - 4, deltaH), ImGuiChildFlags.Border);
             ImGui.PopStyleColor();
@@ -520,14 +522,14 @@ public class ItemInspectorTab : ITab
 
         // ── Auto-Named IDs ────────────────────────────────────────────────
         var names = _smart.IdNameMap.ToArray();
-        if (names.Count > 0)
+        if (names.Length > 0)
         {
             ImGui.SetCursorPosX(4);
             ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccentMid);
-            ImGui.TextUnformatted($"AUTO-NAMED  ({names.Count})");
+            ImGui.TextUnformatted($"AUTO-NAMED  ({names.Length})");
             ImGui.PopStyleColor();
 
-            float nameH = Math.Clamp(names.Count * 18f + 8f, 40f, 120f);
+            float nameH = Math.Clamp(names.Length * 18f + 8f, 40f, 120f);
             ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg0);
             ImGui.BeginChild("##sdnames", new Vector2(w - 4, nameH), ImGuiChildFlags.Border);
             ImGui.PopStyleColor();
@@ -967,12 +969,12 @@ public class ItemInspectorTab : ITab
                 _smart.EntityClassifications.TryGetValue(e.EntityId, out var cls);
                 string badge = isLP ? "[*]"
                              : cls == EntityClass.Player ? "[P]"
-                             : cls == EntityClass.Mob    ? "[M]"
-                             : cls == EntityClass.Item   ? "[I]" : "[E]";   // [E] = unknown Entity
+                             : cls == EntityClass.Mob ? "[M]"
+                             : cls == EntityClass.Item ? "[I]" : "[E]";   // [E] = unknown Entity
                 var badgeColor = isLP ? new Vector4(0.18f, 0.65f, 0.95f, 1f)
                                : cls == EntityClass.Player ? new Vector4(0.18f, 0.95f, 0.45f, 1f)
-                               : cls == EntityClass.Mob    ? new Vector4(0.95f, 0.28f, 0.22f, 1f)
-                               : cls == EntityClass.Item   ? new Vector4(0.95f, 0.75f, 0.10f, 1f)
+                               : cls == EntityClass.Mob ? new Vector4(0.95f, 0.28f, 0.22f, 1f)
+                               : cls == EntityClass.Item ? new Vector4(0.95f, 0.75f, 0.10f, 1f)
                                : MenuRenderer.ColTextMuted;  // grey for unclassified
 
                 ImGui.PushStyleColor(ImGuiCol.Text, badgeColor);
@@ -1020,9 +1022,9 @@ public class ItemInspectorTab : ITab
                     ImGui.TextUnformatted($"Entity {e.EntityId}  (0x{e.EntityId:X})  {badge}");
                     ImGui.PopStyleColor();
                     ImGui.Separator();
-                    if (ImGui.MenuItem("Copy Hex"))     WindowsClipboard.Set($"0x{e.EntityId:X8}");
+                    if (ImGui.MenuItem("Copy Hex")) WindowsClipboard.Set($"0x{e.EntityId:X8}");
                     if (ImGui.MenuItem("Copy Decimal")) WindowsClipboard.Set(e.EntityId.ToString());
-                    if (ImGui.MenuItem("Filter"))       _keywordFilter = e.EntityId.ToString();
+                    if (ImGui.MenuItem("Filter")) _keywordFilter = e.EntityId.ToString();
                     if (ImGui.MenuItem("Search in Memory"))
                         _log.Info($"[Inspector] Open Memory tab and search 0x{e.EntityId:X8}");
                     if (ImGui.MenuItem("Send to Spoofer"))
@@ -1033,9 +1035,9 @@ public class ItemInspectorTab : ITab
                     ImGui.Separator();
                     if (ImGui.MenuItem("Manually Name this Entity..."))
                     {
-                        _manualNameId    = e.EntityId;
-                        _manualNameBuf   = e.NameHint ?? "";
-                        _manualNameOpen  = true;
+                        _manualNameId = e.EntityId;
+                        _manualNameBuf = e.NameHint ?? "";
+                        _manualNameOpen = true;
                     }
                     if (!string.IsNullOrEmpty(e.NameHint)
                         && ImGui.MenuItem($"Blacklist name '{e.NameHint}'"))
@@ -1046,14 +1048,16 @@ public class ItemInspectorTab : ITab
                     ImGui.EndPopup();
                 }
 
-        if (entries.Count == 0)
-        {
-            ImGui.SetCursorPosY((h - 80f) * 0.4f);
-            UiHelper.MutedLabel("  No 0x4A packets captured yet.");
-            UiHelper.MutedLabel("  Parser activates automatically on first 0x4A.");
-        }
+                if (entries.Count == 0)
+                {
+                    ImGui.SetCursorPosY((h - 80f) * 0.4f);
+                    UiHelper.MutedLabel("  No 0x4A packets captured yet.");
+                    UiHelper.MutedLabel("  Parser activates automatically on first 0x4A.");
+                }
 
-        ImGui.EndChild();
+                ImGui.EndChild();
+            }
+        }
     }
 
     // ── String Correlation table ──────────────────────────────────────────
