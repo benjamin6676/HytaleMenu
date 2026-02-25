@@ -40,7 +40,7 @@ public class PrivilegeTab : ITab
 
     // ── Auto-fill ──────────────────────────────────────────────────────────
     private ContextSnapshot?     _lastFill    = null;
-    private string               _fillStatus  = "Click ⟳ to auto-fill from captured packets";
+    private string               _fillStatus  = "Click [~] to auto-fill from captured packets";
     private List<AdminCandidate> _adminList   = new();
     private int                  _adminLastPkt = 0;
     private DateTime             _adminScanTime = DateTime.MinValue;
@@ -233,7 +233,7 @@ public class PrivilegeTab : ITab
         ImGui.PopStyleColor();
         ImGui.SameLine();
         ImGui.SetCursorPosX(w - 28);
-        UiHelper.SecondaryButton("⟳##admscan", 22, 18, () =>
+        UiHelper.SecondaryButton("[~]##admscan", 22, 18, () =>
         {
             _adminList    = BuildAdminCandidates(_capture.GetPackets());
             _adminScanTime = DateTime.Now;
@@ -1362,7 +1362,7 @@ public class PrivilegeTab : ITab
 
         ImGui.Spacing();
         RenderHowTo(
-            "1. Auto-fill item ID from Item Inspector (⟳ button) or enter manually",
+            "1. Auto-fill item ID from Item Inspector ([~] button) or enter manually",
             "2. Set target Player ID (yourself = 0, admin target = use sidebar)",
             "3. Try 'Try ALL Methods' - this fires every known spawn technique",
             "4. ANY method that puts the item in inventory = server-side vulnerability",
@@ -1725,7 +1725,7 @@ public class PrivilegeTab : ITab
         ImGui.PopStyleColor();
         ImGui.SetCursorPos(new Vector2(8, 5));
 
-        UiHelper.SecondaryButton("⟳ Auto-fill IDs from packets##privafbtn", 210, 22, () =>
+        UiHelper.SecondaryButton("[~] Auto-fill IDs from packets##privafbtn", 210, 22, () =>
         {
             _lastFill = ContextFiller.Fill(_capture, _udpProxy);
             if (_lastFill.HasItem)   _giItemId = _lastFill.ItemId!.Value;
@@ -1870,12 +1870,12 @@ public class PrivilegeTab : ITab
         return s.Replace("{target}", t);
     }
 
-    /// Inline ⟳ auto-fill button (18x20) for beside input fields
+    /// Inline [~] auto-fill button (18x20) for beside input fields
     private void InlineAutoFill(string id, Action fill)
     {
         ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBg3);
         ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
-        if (ImGui.Button("⟳" + id, new Vector2(22, 22))) fill();
+        if (ImGui.Button("[~]" + id, new Vector2(22, 22))) fill();
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("Auto-fill from captured packets");
         ImGui.PopStyleColor(2);
         ImGui.SameLine(0, 8);
@@ -2101,7 +2101,7 @@ public class PrivilegeTab : ITab
             ImGui.SameLine(0, 4);
             ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBg3);
             ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColDanger);
-            if (ImGui.Button($"✕##crtdel{i}", new Vector2(24, 20)))
+            if (ImGui.Button($"[x]##crtdel{i}", new Vector2(24, 20)))
             {
                 _probes.RemoveAt(i);
                 if (_crtEditIdx == i) _crtEditIdx = -1;

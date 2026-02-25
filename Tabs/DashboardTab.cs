@@ -190,7 +190,7 @@ public class DashboardTab : ITab
             ImGui.SameLine(0, 4);
             if (_presets.Count > 1)
             {
-                UiHelper.DangerButton("✕ Last##pdel", 66, 22, () =>
+                UiHelper.DangerButton("[x] Last##pdel", 66, 22, () =>
                 {
                     _presets.RemoveAt(_presets.Count - 1);
                 });
@@ -209,7 +209,7 @@ public class DashboardTab : ITab
 
             ImGui.BeginDisabled(_detecting);
             UiHelper.SecondaryButton(
-                _detecting ? "Detecting..." : "⚡  Auto-Detect from Game",
+                _detecting ? "Detecting..." : "[!]  Auto-Detect from Game",
                 -1, 28, AutoDetect);
             ImGui.EndDisabled();
             ImGui.Spacing();

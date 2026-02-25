@@ -16,6 +16,7 @@ public class MenuRenderer
     private readonly DashboardTab         _dashboardTab;
     private readonly PacketTab            _packetTab;
     private readonly DupingTab            _dupingTab;
+    private readonly AbuseEngineTab       _abuseEngineTab;
     private readonly PrivilegeTab         _privilegeTab;
     private readonly ModAuditorTab        _modAuditorTab;
     private readonly ItemInspectorTab     _itemInspectorTab;
@@ -34,19 +35,20 @@ public class MenuRenderer
 
     // 13 sidebar sections
     private static readonly (string Icon, string Short, string Full)[] Sections = {
-        ("⌂", "Dashboard",  "Dashboard"),
-        ("⚡", "Packets",    "Packet Exploiting"),
-        ("◈", "Duping",     "Dupe Methods"),
-        ("◎", "Capture",    "Capture & Analysis"),
-        ("▲", "Privilege",  "Privilege Escalation"),
-        ("⬡", "Mod Audit",  "Mod Auditor"),
-        ("⊙", "Inspector",  "Item Inspector"),
-        ("◫", "Book",       "Packet Book"),
-        ("≡", "Memory",     "Memory Reader"),
-        ("👁️", "Visuals",  "Visuals / ESP"),
-        ("⊞", "Proto Map",  "Protocol Map"),
-        ("⟳", "Macros",    "Macro Engine"),
-        ("⚙", "Settings",  "Settings"),
+        ("[H]", "Dashboard",  "Dashboard"),
+        ("[P]", "Packets",    "Packet Exploiting"),
+        ("[D]", "Duping",     "Dupe Methods"),
+        ("[!]", "Abuse",      "Abuse Engine"),
+        ("[C]", "Capture",    "Capture & Analysis"),
+        ("[X]", "Privilege",  "Privilege Escalation"),
+        ("[M]", "Mod Audit",  "Mod Auditor"),
+        ("[I]", "Inspector",  "Item Inspector"),
+        ("[B]", "Book",       "Packet Book"),
+        ("[R]", "Memory",     "Memory Reader"),
+        ("[V]", "Visuals",    "Visuals / ESP"),
+        ("[~]", "Proto Map",  "Protocol Map"),
+        ("[>]", "Macros",     "Macro Engine"),
+        ("[S]", "Settings",   "Settings"),
     };
 
     // Palette
@@ -90,7 +92,10 @@ public class MenuRenderer
         // AutoUpdateHandler: wire the shared log so scan results appear in Log tab
         AutoUpdateHandler.Instance.Init(_log);
 
+        // Wire AbuseEngine to the proxy
         _captureTab = new CaptureTab(_log, _pktLog, _config);
+        AbuseEngine.Instance.Init(_captureTab.UdpProxy, _log);
+        EntityTracker.Instance.ToString(); // ensure singleton init
         _captureTab.UdpProxy.OnPacket += _stats.OnPacket;
         _captureTab.UdpProxy.OnPacket += _tracker.Feed;
         _captureTab.Capture.OnPacket  += _tracker.Feed;
@@ -99,6 +104,7 @@ public class MenuRenderer
         _dashboardTab        = new DashboardTab(_log, _config, _stats);
         _packetTab           = new PacketTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config);
         _dupingTab           = new DupingTab(_log, _captureTab.UdpProxy, _captureTab.Capture, _store, _config);
+        _abuseEngineTab      = new AbuseEngineTab(_log, _captureTab.UdpProxy, _captureTab.Capture, _store, _config);
         _privilegeTab        = new PrivilegeTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config, _store);
         _smartDetect         = new SmartDetectionEngine(_captureTab.Capture, _store, _log, _config);
 
@@ -337,16 +343,17 @@ public class MenuRenderer
             case 0:  RenderDashboardMerged();      break;
             case 1:  RenderPacketsMerged();        break;
             case 2:  _dupingTab.Render();          break;
-            case 3:  RenderCaptureMerged();        break;
-            case 4:  _privilegeTab.Render();       break;
-            case 5:  _modAuditorTab.Render();      break;
-            case 6:  _itemInspectorTab.Render();   break;
-            case 7:  _packetBookTab.Render();      break;
-            case 8:  _memoryTab.Render();          break;
-            case 9:  _visualsTab.Render();         break;
-            case 10: _protocolMapTab.Render();     break;
-            case 11: _macroEngineTab.Render();     break;
-            case 12: _settingsTab.Render();        break;
+            case 3:  _abuseEngineTab.Render();     break;
+            case 4:  RenderCaptureMerged();        break;
+            case 5:  _privilegeTab.Render();       break;
+            case 6:  _modAuditorTab.Render();      break;
+            case 7:  _itemInspectorTab.Render();   break;
+            case 8:  _packetBookTab.Render();      break;
+            case 9:  _memoryTab.Render();          break;
+            case 10: _visualsTab.Render();         break;
+            case 11: _protocolMapTab.Render();     break;
+            case 12: _macroEngineTab.Render();     break;
+            case 13: _settingsTab.Render();        break;
         }
     }
 

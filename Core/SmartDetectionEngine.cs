@@ -149,6 +149,23 @@ public class SmartDetectionEngine : IDisposable
         if (data.Length < 2) return;
         bool cs = pkt.Direction == PacketDirection.ClientToServer;
 
+        // ── Structured decode (OpcodeRegistry) ──────────────────────────
+        // Decodes to StructuredPacket with named fields, extracted IDs,
+        // XYZ coords, and initial confidence score.
+        var sp = OpcodeRegistry.Decode(pkt);
+
+        // ── EntityTracker feed ───────────────────────────────────────────
+        // Cross-references extracted IDs with movement/state history.
+        // Resolves names from GlobalConfig, detects desync, classifies entities.
+        EntityTracker.Instance.ProcessStructuredPacket(sp);
+
+        // Back-fill resolved names from EntityTracker into IdNameMap
+        foreach (var field in sp.ExtractedIds)
+        {
+            if (field.ResolvedName != null && !IdNameMap.ContainsKey(field.Value))
+                IdNameMap[field.Value] = field.ResolvedName;
+        }
+
         // Heuristic classification by opcode
         var hint = ClassifyByOpCode(data[0], cs, data.Length);
 
@@ -954,7 +971,7 @@ public class SmartDetectionEngine : IDisposable
     }
 
     /// <summary>
-    /// Blacklist a name for a specific ID — remove it and keep scanning.
+    /// Blacklist a name for a specific ID - remove it and keep scanning.
     /// </summary>
     public void BlacklistNameForId(uint id, string badName)
     {

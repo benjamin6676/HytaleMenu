@@ -770,7 +770,7 @@ public class VisualsTab : ITab
             ImGui.SameLine(w - 34);
             ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBg3);
             ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColDanger);
-            if (ImGui.Button($"✕##etdel{i}", new Vector2(22, 20)))
+            if (ImGui.Button($"[x]##etdel{i}", new Vector2(22, 20)))
             {
                 _entityTypes.RemoveAt(i);
                 if (_editingType == i) _editingType = -1;

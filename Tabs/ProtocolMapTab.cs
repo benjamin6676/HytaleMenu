@@ -133,6 +133,26 @@ public class ProtocolMapTab : ITab
         ImGui.SameLine(0, 16);
         UiHelper.SecondaryButton("Export JSON##pmexp", 110, 22, ExportJson);
 
+        // Populate from OpcodeRegistry
+        ImGui.SameLine(0, 8);
+        UiHelper.PrimaryButton("Populate from Registry##pmreg", 170, 22, () =>
+        {
+            int added = 0;
+            foreach (var (opcode, info, isCs) in OpcodeRegistry.AllKnown())
+            {
+                var dir = isCs ? ProtoDirection.CS : ProtoDirection.SC;
+                var entry = _map.GetOrAdd(opcode, dir, info.Name);
+                if (string.IsNullOrEmpty(entry.Name)) { entry.Name = info.Name; added++; }
+                else if (entry.Name != info.Name)     { entry.Name = info.Name; }  // update
+                if (string.IsNullOrEmpty(entry.Notes) && !string.IsNullOrEmpty(info.Description))
+                    entry.Notes = info.Description;
+                if (entry.Status == OpcodeStatus.Unknown)
+                    entry.Status = OpcodeStatus.Partial;
+            }
+            _map.Save();
+            _log.Success($"[ProtoMap] Registry sync: {added} new entries added.");
+        });
+
         ImGui.EndChild();
     }
 
@@ -341,7 +361,7 @@ public class ProtocolMapTab : ITab
             ImGui.SameLine(w - 40);
             ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBg3);
             ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColDanger);
-            if (ImGui.Button($"✕##pmfdel{fi}", new Vector2(24, 18))) removeFieldIdx = fi;
+            if (ImGui.Button($"[x]##pmfdel{fi}", new Vector2(24, 18))) removeFieldIdx = fi;
             ImGui.PopStyleColor(2);
         }
         if (removeFieldIdx >= 0) { e.Fields.RemoveAt(removeFieldIdx); _map.Save(); }
@@ -438,6 +458,18 @@ public class ProtocolMapTab : ITab
             {
                 int take = Math.Min(32, pkt.RawBytes.Length);
                 entry.SampleHex = string.Join(" ", pkt.RawBytes.Take(take).Select(b => $"{b:X2}"));
+            }
+
+            // ── Auto-name from OpcodeRegistry ─────────────────────────
+            var regInfo = OpcodeRegistry.Lookup((byte)op, pkt.Direction);
+            if (regInfo != null)
+            {
+                if (string.IsNullOrEmpty(entry.Name))
+                    entry.Name = regInfo.Name;
+                if (string.IsNullOrEmpty(entry.Notes) && !string.IsNullOrEmpty(regInfo.Description))
+                    entry.Notes = regInfo.Description;
+                if (entry.Status == OpcodeStatus.Unknown)
+                    entry.Status = OpcodeStatus.Partial;  // registry knows it = at least Partial
             }
 
             // If unknown opcode seen for first time, fire alert

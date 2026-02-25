@@ -62,16 +62,26 @@ public static class PacketAnalyser
         result.PacketId = data[0];
         bool cs = pkt.Direction == PacketDirection.ClientToServer;
 
-        var lookup = cs ? KnownCsIds : KnownScIds;
-        if (lookup.TryGetValue(data[0], out string? idName))
+        // ── Use OpcodeRegistry for authoritative label ───────────────────
+        var opcodeInfo = OpcodeRegistry.Lookup(data[0], pkt.Direction);
+        if (opcodeInfo != null)
         {
-            result.IdGuess    = idName;
+            result.IdGuess    = opcodeInfo.Name;
             result.ActionHint = GuessAction(data[0], cs);
         }
         else
         {
-            result.IdGuess    = $"Unknown (0x{data[0]:X2})";
-            result.ActionHint = PacketActionHint.Unknown;
+            var lookup = cs ? KnownCsIds : KnownScIds;
+            if (lookup.TryGetValue(data[0], out string? idName))
+            {
+                result.IdGuess    = idName;
+                result.ActionHint = GuessAction(data[0], cs);
+            }
+            else
+            {
+                result.IdGuess    = $"Unknown (0x{data[0]:X2})";
+                result.ActionHint = PacketActionHint.Unknown;
+            }
         }
 
         result.Fields.Add(new PacketField("Packet ID", $"0x{data[0]:X2}", 0, 1, FieldType.Id));
@@ -132,7 +142,7 @@ public static class PacketAnalyser
             }
         }
 
-        result.Summary = $"[{(cs ? "C\u2192S" : "S\u2192C")}] 0x{data[0]:X2} \u00b7 {result.IdGuess} \u00b7 {data.Length}b";
+        result.Summary = OpcodeRegistry.FullLabel(data[0], pkt.Direction) + $" - {data.Length}b";
         return result;
     }
 

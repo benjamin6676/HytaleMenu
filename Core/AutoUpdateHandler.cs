@@ -55,12 +55,12 @@ public sealed class AutoUpdateHandler
     //   minimum stable "anchor" bytes.  Each pattern is 10-12 bytes with
     //   wildcards on ALL relocatable offsets.
     //
-    //   HOW TO UPDATE MANUALLY (if these still fail):
-    //     1. Open Cheat Engine, attach to HytaleClient.exe
-    //     2. Memory -> "Memory View" -> Ctrl+B (AOB scan)
-    //     3. Find the instruction that writes your pointer and grab 6-10 bytes
-    //        around a stable opcode, put ?? on any 4-byte address operand.
-    //     4. Paste into Settings -> Memory -> Pattern Editor -> save.
+    //   HOW TO UPDATE (if patterns fail after a game patch):
+    //     FAST:   Settings -> Memory -> Pattern Editor -> click "[*] Discover"
+    //             The menu scans live memory and shows ranked candidates to apply.
+    //
+    //     MANUAL: Settings -> Memory -> Pattern Editor -> Edit -> paste bytes.
+    //             Format: space-separated hex, "??" = wildcard on any 4-byte offset.
     //
     //   FORMAT: space-separated hex bytes, "??" = wildcard single byte.
 
@@ -284,9 +284,9 @@ public sealed class AutoUpdateHandler
             {
                 _log?.Warn($"[AutoUpdate] [!!] {name} not found - {diag}");
                 _log?.Info($"[AutoUpdate]      Pattern was: {pattern}");
-                _log?.Info("[AutoUpdate]      TIP: Open Cheat Engine -> Memory View -> Ctrl+B");
-                _log?.Info("             Find the instruction, copy bytes, replace 4-byte offsets with ??");
-                _log?.Info("             Paste into Settings -> Memory -> Pattern Editor");
+                _log?.Info("[AutoUpdate]      TIP: Open Settings -> Memory -> Pattern Editor");
+                _log?.Info("             Click '[*] Discover' next to the pattern name.");
+                _log?.Info("             The menu will scan live memory and show ranked candidates.");
             }
 
             ScanProgress = (i + 1) * 100 / sigs.Count;
@@ -509,5 +509,264 @@ public sealed class AutoUpdateHandler
         public long   LocalPlayerAddr { get; set; }
         public long   ItemListAddr    { get; set; }
         public long   HoverIdAddr     { get; set; }
+    }
+
+    // ── Auto-Discovery: find candidates without Cheat Engine ─────────────
+    //
+    // For each signature name, there is a known opcode prefix shape:
+    //   EntityList    -> LEA RCX,[RIP+off]  -> 48 8D 0D
+    //   LocalPlayer   -> MOV [RIP+off],RAX  -> 48 89 05
+    //   ItemList      -> MOV R8,[RIP+off]   -> 4C 8B 05
+    //   HoverEntityId -> MOV [RIP+off],EBX  -> 89 1D
+    //
+    // We scan the entire module for these opcode prefixes, dereference each
+    // candidate the same way TryResolveRipRelative does, validate the pointer,
+    // and generate an AOB pattern from the surrounding bytes.
+    // The caller gets a ranked list of PatternCandidate objects.
+    //
+    // This runs on a background thread and takes 2-8 seconds for a large module.
+
+    public List<PatternCandidate> AutoDiscoverCandidates(
+        string sigName, MemoryReader reader, int maxResults = 20)
+    {
+        var results = new List<PatternCandidate>();
+
+        // Determine which opcode prefix(es) to search for
+        var prefixes = GetOpcodePrefix(sigName);
+        if (prefixes.Count == 0) return results;
+
+        // Find the game module
+        string targetModule = GameModuleNames
+            .FirstOrDefault(n => reader.GetModuleBaseAddress(n) != 0) ?? "";
+        if (string.IsNullOrEmpty(targetModule))
+        {
+            _log?.Error("[AutoDiscover] Game module not found - attach to Hytale first.");
+            return results;
+        }
+
+        var mods = reader.GetModules();
+        var mod  = mods.FirstOrDefault(m =>
+            m.Name.Equals(targetModule, StringComparison.OrdinalIgnoreCase));
+        if (mod == null) return results;
+
+        // Read full module
+        int    size = (int)Math.Min(mod.Size, 64 * 1024 * 1024L);  // cap at 64MB
+        byte[] buf  = new byte[size];
+        if (!reader.ReadBytes(mod.Base, buf))
+        {
+            _log?.Error($"[AutoDiscover] Could not read module {targetModule}.");
+            return results;
+        }
+
+        long moduleBase = mod.Base.ToInt64();
+
+        _log?.Info($"[AutoDiscover] Scanning {size / 1024}KB of {targetModule} " +
+                   $"for '{sigName}' candidates...");
+
+        // Scan for each opcode prefix
+        foreach (var prefix in prefixes)
+        {
+            int pLen = prefix.Length;
+
+            for (int i = 0; i <= buf.Length - pLen - 4; i++)
+            {
+                // Quick prefix match (no wildcards in the prefix)
+                bool match = true;
+                for (int j = 0; j < pLen; j++)
+                {
+                    if (buf[i + j] != prefix[j]) { match = false; break; }
+                }
+                if (!match) continue;
+
+                // We found an instruction with the right opcode shape.
+                // The RIP offset is always 4 bytes immediately after the prefix.
+                long instrAddr = moduleBase + i;
+                int  instrLen  = pLen + 4;   // prefix + 4-byte RIP offset
+
+                // Read the 4-byte signed RIP offset from module bytes
+                int  ripOffset  = BitConverter.ToInt32(buf, i + pLen);
+                long rip        = instrAddr + instrLen;
+                long ptrAddress = rip + ripOffset;
+
+                // Validate ptrAddress is a plausible data section address
+                // (must be within the module or in a committed heap region, not zero)
+                if (ptrAddress < moduleBase - 0x1000_0000L ||
+                    ptrAddress > moduleBase + mod.Size + 0x1000_0000L)
+                    continue;
+
+                // Dereference: read the pointer value at ptrAddress
+                long pointedValue = 0;
+                bool derefOk = reader.ReadInt64(new IntPtr(ptrAddress), out pointedValue);
+
+                // If dereference fails, ptrAddress itself might be the value (for static vars)
+                long candidateAddr = derefOk && IsPlausiblePointer(pointedValue)
+                    ? pointedValue : (IsPlausiblePointer(ptrAddress) ? ptrAddress : 0);
+
+                if (candidateAddr == 0) continue;
+
+                // Score this candidate
+                int score = ScoreCandidate(sigName, candidateAddr, ptrAddress,
+                                            derefOk, pointedValue, buf, i, moduleBase);
+                if (score < 10) continue;
+
+                // Generate a 14-byte AOB pattern:
+                //   4 bytes before instruction + prefix + ???? (4-byte RIP offset) + 3 bytes after
+                int aobStart  = Math.Max(0, i - 4);
+                int aobEnd    = Math.Min(buf.Length, i + instrLen + 3);
+                var aobBytes  = new List<string>();
+                for (int k = aobStart; k < aobEnd; k++)
+                {
+                    // Wildcard the 4-byte RIP offset
+                    bool isOffset = k >= i + pLen && k < i + pLen + 4;
+                    aobBytes.Add(isOffset ? "??" : buf[k].ToString("X2"));
+                }
+                string pattern = string.Join(" ", aobBytes);
+
+                // Clean description for the UI
+                string desc = derefOk && IsPlausiblePointer(pointedValue)
+                    ? $"ptr@0x{ptrAddress:X} -> 0x{pointedValue:X}"
+                    : $"static@0x{ptrAddress:X}";
+
+                results.Add(new PatternCandidate
+                {
+                    SignatureName = sigName,
+                    InstrAddr     = instrAddr,
+                    PointerAddr   = ptrAddress,
+                    ResolvedAddr  = candidateAddr,
+                    Score         = score,
+                    Pattern       = pattern,
+                    Description   = desc,
+                    DerefSuccess  = derefOk && IsPlausiblePointer(pointedValue),
+                });
+
+                if (results.Count >= maxResults * 3) break;  // cap raw results
+            }
+
+            if (results.Count > 0) break;  // stop after first successful prefix
+        }
+
+        // Sort by score, take top N
+        results = results
+            .OrderByDescending(c => c.Score)
+            .Take(maxResults)
+            .ToList();
+
+        _log?.Success($"[AutoDiscover] '{sigName}': {results.Count} candidates found.");
+        return results;
+    }
+
+    // ── Opcode prefix table ───────────────────────────────────────────────
+
+    private static List<byte[]> GetOpcodePrefix(string sigName) => sigName switch
+    {
+        // LEA RCX,[RIP+offset]  48 8D 0D
+        "EntityList"    => new List<byte[]> { new byte[] { 0x48, 0x8D, 0x0D } },
+        // MOV [RIP+offset],RAX  48 89 05  or  MOV RAX,[RIP+offset] 48 8B 05
+        "LocalPlayer"   => new List<byte[]> {
+            new byte[] { 0x48, 0x89, 0x05 },
+            new byte[] { 0x48, 0x8B, 0x05 },
+        },
+        // MOV R8,[RIP+offset]   4C 8B 05  or  MOV R8d,[RIP+offset] 44 8B 05
+        "ItemList"      => new List<byte[]> {
+            new byte[] { 0x4C, 0x8B, 0x05 },
+            new byte[] { 0x44, 0x8B, 0x05 },
+        },
+        // MOV [RIP+offset],EBX  89 1D
+        "HoverEntityId" => new List<byte[]> { new byte[] { 0x89, 0x1D } },
+        // For any unknown/custom signature, scan ALL common RIP-relative shapes
+        _ => new List<byte[]>
+        {
+            new byte[] { 0x48, 0x8D, 0x0D },  // LEA RCX
+            new byte[] { 0x48, 0x89, 0x05 },  // MOV [rip],RAX
+            new byte[] { 0x48, 0x8B, 0x05 },  // MOV RAX,[rip]
+            new byte[] { 0x4C, 0x8B, 0x05 },  // MOV R8,[rip]
+            new byte[] { 0x89, 0x1D },         // MOV [rip],EBX
+        },
+    };
+
+    // ── Scoring ───────────────────────────────────────────────────────────
+    //
+    // Higher score = more likely to be the correct pointer.
+    //
+    // Factors:
+    //   +40  if the deref'd pointer is in a plausible heap range
+    //   +20  if ptrAddress is in the .data/.rdata section (close to module)
+    //   +15  if immediately after the instruction there is a CALL or MOV (common pattern)
+    //   +10  if value is non-zero and aligned to 8 bytes (typical C++ object)
+    //   -20  if the pointer looks like code (page is executable)
+
+    private static int ScoreCandidate(string sigName, long candidateAddr,
+                                       long ptrAddr, bool derefOk, long derefVal,
+                                       byte[] moduleBuf, int instrOff, long moduleBase)
+    {
+        int score = 0;
+
+        if (derefOk && IsPlausiblePointer(derefVal))
+        {
+            score += 40;
+            if (derefVal % 8 == 0) score += 10;  // 8-byte aligned (heap object)
+        }
+        else if (IsPlausiblePointer(ptrAddr))
+        {
+            score += 15;
+        }
+
+        // Check the byte right after the instruction (prefix + 4 byte offset = 7 or 6 bytes)
+        int instrLen = instrOff + (sigName == "HoverEntityId" ? 6 : 7);
+        if (instrLen < moduleBuf.Length)
+        {
+            byte nextByte = moduleBuf[instrLen];
+            // E8 = CALL, 48 = REX prefix (often precedes MOV/CMP), 0F = conditional jump
+            if (nextByte == 0xE8 || nextByte == 0x48 || nextByte == 0x4C)
+                score += 15;
+        }
+
+        // ptrAddr is in the module's data section (first 64MB above module base)
+        long relPtr = ptrAddr - moduleBase;
+        if (relPtr >= 0 && relPtr < 64 * 1024 * 1024L)
+            score += 20;
+
+        return score;
+    }
+
+    private static bool IsPlausiblePointer(long v)
+        => v > 0x0001_0000_0000L && v < 0x7FFF_FFFF_FFFF_FFFFL;
+}
+
+// ── PatternCandidate: result of AutoDiscoverCandidates ────────────────────────
+
+public class PatternCandidate
+{
+    public string SignatureName { get; set; } = "";
+    public long   InstrAddr     { get; set; }   // address of the instruction in memory
+    public long   PointerAddr   { get; set; }   // effective address (where the pointer lives)
+    public long   ResolvedAddr  { get; set; }   // final value (deref'd pointer or ptrAddr)
+    public int    Score         { get; set; }
+    public string Pattern       { get; set; } = "";
+    public string Description   { get; set; } = "";
+    public bool   DerefSuccess  { get; set; }
+
+    public string ScoreLabel => Score switch
+    {
+        >= 75 => "[HIGH]",
+        >= 45 => "[MED]",
+        _     => "[LOW]",
+    };
+
+    public System.Numerics.Vector4 ScoreColor => Score switch
+    {
+        >= 75 => MenuRenderer.ColAccent,
+        >= 45 => MenuRenderer.ColWarn,
+        _     => MenuRenderer.ColDanger,
+    };
+
+    public string ShortPattern
+    {
+        get
+        {
+            var parts = Pattern.Split(' ');
+            if (parts.Length <= 14) return Pattern;
+            return string.Join(" ", parts.Take(14)) + " ...";
+        }
     }
 }

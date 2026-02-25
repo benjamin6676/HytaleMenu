@@ -30,6 +30,12 @@ public class LogTab : ITab
     private readonly HashSet<byte>          _hiddenOpcodes = new();
     private DateTime                        _spamResetTime = DateTime.Now;
 
+    // Learn-opcode modal state
+    private bool   _learnOpen   = false;
+    private byte   _learnOpcode = 0;
+    private int    _learnDir    = 0;
+    private string _learnName   = "";
+
     public LogTab(TestLog log, PacketLog pktLog)
     {
         _log    = log;
@@ -189,7 +195,7 @@ public class LogTab : ITab
                 ImGui.SameLine(0, 6);
                 ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColWarnDim);
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-                if (ImGui.Button($"0x{op:X2}x{_spamCounts.GetValueOrDefault(op)} ✕##lpop{op}",
+                if (ImGui.Button($"0x{op:X2}x{_spamCounts.GetValueOrDefault(op)} [x]##lpop{op}",
                     new Vector2(0, 18)))
                     _hiddenOpcodes.Remove(op);
                 ImGui.PopStyleColor(2);
@@ -205,7 +211,7 @@ public class LogTab : ITab
         ImGui.PopStyleColor();
 
         ImGui.SetCursorPos(new Vector2(8, 4));
-        UiHelper.MutedLabel("   Time            Dir    Bytes  INJ   Hex preview");
+        UiHelper.MutedLabel("   Time            Dir    Bytes  INJ   Opcode / Hex preview");
 
         foreach (var e in entries)
         {
@@ -233,10 +239,66 @@ public class LogTab : ITab
                     :              MenuRenderer.ColAccent;
 
             string injTag = e.Injected ? "INJ" : "   ";
+
+            // ── Opcode label from OpcodeRegistry ─────────────────────────
+            string opcodeLabel = e.HexPreview;
+            byte   opcodeB     = 0;
+            bool   hasOpcode   = e.HexPreview.Length >= 2 &&
+                                 byte.TryParse(e.HexPreview[..2],
+                                     System.Globalization.NumberStyles.HexNumber, null, out opcodeB);
+            if (hasOpcode)
+            {
+                var info = OpcodeRegistry.Lookup(opcodeB, e.Direction);
+                string name = info != null ? $"[{info.Name}]" : $"[0x{opcodeB:X2}]";
+                opcodeLabel = $"{name,-22} {e.HexPreview}";
+            }
+
             ImGui.PushStyleColor(ImGuiCol.Text, col);
-            ImGui.TextUnformatted(
-                $"   {e.TimeLabel}  {e.DirectionLabel,-5}  {e.ByteLength,5}b  {injTag}  {e.HexPreview}");
+            ImGui.Selectable(
+                $"   {e.TimeLabel}  {e.DirectionLabel,-5}  {e.ByteLength,5}b  {injTag}  {opcodeLabel}##lr{e.GetHashCode()}",
+                false, ImGuiSelectableFlags.None);
             ImGui.PopStyleColor();
+
+            // ── Right-click: Learn Opcode ─────────────────────────────────
+            if (hasOpcode && ImGui.IsItemHovered() &&
+                ImGui.IsMouseClicked(ImGuiMouseButton.Right))
+            {
+                _learnOpcode = opcodeB;
+                _learnDir    = cs ? 0 : 1;
+                _learnName   = OpcodeRegistry.Lookup(opcodeB, e.Direction)?.Name ?? "";
+                _learnOpen   = true;
+            }
+        }
+
+        // ── Learn Opcode modal ────────────────────────────────────────────
+        if (_learnOpen)
+        {
+            ImGui.OpenPopup("##learn_opcode_modal");
+            _learnOpen = false;
+        }
+        bool modalOpen = true;
+        if (ImGui.BeginPopupModal("##learn_opcode_modal", ref modalOpen,
+                ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoTitleBar))
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccentMid);
+            ImGui.TextUnformatted($"Label opcode 0x{_learnOpcode:X2}  ({(_learnDir == 0 ? "C->S" : "S->C")})");
+            ImGui.PopStyleColor();
+            ImGui.Spacing();
+            ImGui.SetNextItemWidth(260);
+            ImGui.InputText("Name##lnm", ref _learnName, 48);
+            ImGui.Spacing();
+            if (ImGui.Button("Save & Learn##lnsave", new System.Numerics.Vector2(120, 26)))
+            {
+                var dir = _learnDir == 0
+                    ? PacketDirection.ClientToServer
+                    : PacketDirection.ServerToClient;
+                OpcodeRegistry.Learn(_learnOpcode, dir, _learnName, "User-defined");
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.SameLine(0, 8);
+            if (ImGui.Button("Cancel##lncancel", new System.Numerics.Vector2(80, 26)))
+                ImGui.CloseCurrentPopup();
+            ImGui.EndPopup();
         }
 
         if (_autoScrollPackets) ImGui.SetScrollHereY(1.0f);

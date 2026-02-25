@@ -188,7 +188,7 @@ public class MacroEngineTab : ITab
             ImGui.SetCursorPosY(ImGui.GetCursorPosY() - 20);
             ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBg3);
             ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColDanger);
-            if (ImGui.Button($"✕##medel{mi}", new Vector2(22, 18)) && !_running)
+            if (ImGui.Button($"[x]##medel{mi}", new Vector2(22, 18)) && !_running)
             {
                 _lib.Delete(m.Name);
                 if (_selectedMacro == mi) _selectedMacro = -1;
@@ -469,7 +469,7 @@ public class MacroEngineTab : ITab
             ImGui.SameLine(0, 2);
             ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBg3);
             ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColDanger);
-            if (ImGui.Button($"✕##medels{si}", new Vector2(24, 20))) removeStep = si;
+            if (ImGui.Button($"[x]##medels{si}", new Vector2(24, 20))) removeStep = si;
             ImGui.PopStyleColor(2);
 
             // Tooltip with last response

@@ -112,7 +112,7 @@ public class UdpProxy : IDisposable
         try
         {
             session.ServerSocket.Send(data, data.Length, _serverEp);
-            _log.Info($"[UdpProxy] ▲ Injected {data.Length}b to server.");
+            _log.Info($"[UdpProxy] [^] Injected {data.Length}b to server.");
             FirePacket(data, PacketDirection.ClientToServer, injected: true);
             return true;
         }

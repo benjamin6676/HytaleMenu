@@ -533,7 +533,7 @@ public class PacketTab : ITab
                     ImGui.TextUnformatted(preview);
                     ImGui.PopStyleColor();
                     ImGui.SameLine(ImGui.GetContentRegionAvail().X - 50);
-                    UiHelper.DangerButton($"✕##cbdel{ci}", 32, 20, () => removeIdx = ci);
+                    UiHelper.DangerButton($"[x]##cbdel{ci}", 32, 20, () => removeIdx = ci);
                     ImGui.EndChild();
                     ImGui.Spacing();
                 }

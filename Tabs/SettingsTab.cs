@@ -31,7 +31,13 @@ public class SettingsTab : ITab
     // Pattern editor state
     private string   _editKey        = "";   // which signature we're editing
     private string   _editPattern    = "";   // text field content
-    private string   _editMsg        = "";   // feedback after save/test
+    private string   _editMsg        = "";   // feedback after save/reset
+
+    // Auto-discover state
+    private string   _discoverKey     = "";   // which sig is being discovered
+    private bool     _discoverRunning = false;
+    private List<PatternCandidate> _discoverResults = new();
+    private string   _discoverStatus  = "";   // progress/result message
 
     public SettingsTab(TestLog log) { _log = log; }
 
@@ -356,7 +362,15 @@ public class SettingsTab : ITab
 
         ImGui.SetCursorPos(new Vector2(10, 6));
         ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccentMid);
-        ImGui.TextUnformatted("PATTERN EDITOR  (use Cheat Engine to find patterns for your build)");
+        ImGui.TextUnformatted("PATTERN EDITOR");
+        ImGui.PopStyleColor();
+        ImGui.SameLine(0, 10);
+        ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccent);
+        ImGui.TextUnformatted("[*] Discover");
+        ImGui.PopStyleColor();
+        ImGui.SameLine(0, 4);
+        ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
+        ImGui.TextUnformatted("= auto-find pattern from live memory. No Cheat Engine needed.");
         ImGui.PopStyleColor();
 
         ImGui.SetCursorPos(new Vector2(10, 22));
@@ -451,6 +465,37 @@ public class SettingsTab : ITab
                     _editMsg     = "";
                 }
                 ImGui.PopStyleColor(3);
+
+                // ── Auto-Discover button ──────────────────────────────────
+                ImGui.SameLine(0, 4);
+                bool discovering = _discoverKey == sigName && _discoverRunning;
+                if (discovering) ImGui.BeginDisabled();
+                ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.08f, 0.25f, 0.12f, 1f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.08f, 0.25f, 0.12f, 0.6f));
+                ImGui.PushStyleColor(ImGuiCol.Text,          MenuRenderer.ColAccent);
+                if (ImGui.Button($"{(discovering ? "..." : "[*] Discover")}##padis_{sigName}",
+                    new Vector2(discovering ? 28 : 90, 18)))
+                {
+                    _discoverKey     = sigName;
+                    _discoverResults.Clear();
+                    _discoverStatus  = "Scanning...";
+                    _discoverRunning = true;
+                    _editMsg         = "";
+
+                    var reader = SharedMemoryReader.Instance;
+                    Task.Run(() =>
+                    {
+                        var results = AutoUpdateHandler.Instance
+                                          .AutoDiscoverCandidates(sigName, reader);
+                        _discoverResults = results;
+                        _discoverStatus  = results.Count > 0
+                            ? $"{results.Count} candidate(s) found - click 'Use This' to apply"
+                            : "No candidates found. Game must be running.";
+                        _discoverRunning = false;
+                    });
+                }
+                ImGui.PopStyleColor(3);
+                if (discovering) ImGui.EndDisabled();
             }
         }
 
@@ -462,6 +507,113 @@ public class SettingsTab : ITab
             ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccent);
             ImGui.TextUnformatted(_editMsg);
             ImGui.PopStyleColor();
+        }
+
+            }
+        }
+
+        // Feedback message
+        if (!string.IsNullOrEmpty(_editMsg))
+        {
+            ImGui.Spacing();
+            ImGui.SetCursorPosX(10);
+            ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccent);
+            ImGui.TextUnformatted(_editMsg);
+            ImGui.PopStyleColor();
+        }
+
+        ImGui.EndChild();
+
+        // ── Auto-Discover results panel ───────────────────────────────────
+        RenderDiscoverPanel(w, au);
+    }
+
+    private void RenderDiscoverPanel(float w, AutoUpdateHandler au)
+    {
+        if (string.IsNullOrEmpty(_discoverKey) && _discoverResults.Count == 0)
+            return;
+
+        ImGui.Spacing();
+        float panelH = _discoverResults.Count > 0
+            ? Math.Clamp(_discoverResults.Count * 52f + 50f, 80f, 340f)
+            : 44f;
+
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, new System.Numerics.Vector4(0.06f, 0.10f, 0.07f, 1f));
+        ImGui.BeginChild("##discover_panel", new System.Numerics.Vector2(w, panelH), ImGuiChildFlags.Border);
+        ImGui.PopStyleColor();
+
+        ImGui.SetCursorPos(new System.Numerics.Vector2(10, 6));
+        ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccentMid);
+        ImGui.TextUnformatted($"AUTO-DISCOVER: {_discoverKey}");
+        ImGui.PopStyleColor();
+        ImGui.SameLine(0, 12);
+        ImGui.PushStyleColor(ImGuiCol.Text,
+            _discoverRunning ? MenuRenderer.ColWarn : MenuRenderer.ColTextMuted);
+        ImGui.TextUnformatted(_discoverRunning ? "[scanning...]" : _discoverStatus);
+        ImGui.PopStyleColor();
+        ImGui.SameLine(0, 10);
+        if (ImGui.SmallButton("Clear##disclear"))
+        {
+            _discoverKey     = "";
+            _discoverResults.Clear();
+            _discoverStatus  = "";
+        }
+
+        ImGui.Spacing();
+
+        if (_discoverResults.Count == 0 && !_discoverRunning)
+        {
+            ImGui.SetCursorPosX(10);
+            ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColDanger);
+            ImGui.TextUnformatted("No candidates found. Game must be running and attached.");
+            ImGui.PopStyleColor();
+        }
+
+        int rank = 1;
+        foreach (var cand in _discoverResults)
+        {
+            // Score badge
+            ImGui.PushStyleColor(ImGuiCol.Text, cand.ScoreColor);
+            ImGui.SetCursorPosX(10);
+            ImGui.TextUnformatted($"{cand.ScoreLabel} #{rank}");
+            ImGui.PopStyleColor();
+            ImGui.SameLine(0, 8);
+
+            // Short description
+            ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
+            ImGui.TextUnformatted($"instr@0x{cand.InstrAddr:X}  {cand.Description}");
+            ImGui.PopStyleColor();
+
+            // Pattern preview
+            ImGui.SetCursorPosX(20);
+            ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColBlue);
+            ImGui.TextUnformatted(cand.ShortPattern);
+            ImGui.PopStyleColor();
+
+            // Action buttons
+            ImGui.SameLine(0, 10);
+            ImGui.PushStyleColor(ImGuiCol.Button,        MenuRenderer.ColAccentDim);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, MenuRenderer.ColAccent with { W = 0.35f });
+            ImGui.PushStyleColor(ImGuiCol.Text,          MenuRenderer.ColAccent);
+            if (ImGui.Button($"Use This##duse{rank}", new System.Numerics.Vector2(76, 18)))
+            {
+                au.SetUserPattern(cand.SignatureName, cand.Pattern);
+                _editMsg         = $"Pattern for '{cand.SignatureName}' set from discovery. Run Force Rescan.";
+                _discoverKey     = "";
+                _discoverResults.Clear();
+                _discoverStatus  = "";
+                _log.Success($"[AutoDiscover] Applied pattern for {cand.SignatureName}: {cand.Pattern}");
+            }
+            ImGui.PopStyleColor(3);
+            ImGui.SameLine(0, 4);
+            ImGui.PushStyleColor(ImGuiCol.Button,        MenuRenderer.ColBg3);
+            ImGui.PushStyleColor(ImGuiCol.Text,          MenuRenderer.ColTextMuted);
+            if (ImGui.Button($"Copy##dcop{rank}", new System.Numerics.Vector2(44, 18)))
+                WindowsClipboard.Set(cand.Pattern);
+            ImGui.PopStyleColor(2);
+
+            ImGui.Spacing();
+            rank++;
         }
 
         ImGui.EndChild();

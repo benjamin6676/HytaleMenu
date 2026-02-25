@@ -144,7 +144,7 @@ public class DupingTab : ITab
                 ImGui.TextUnformatted($"[*] from {_config.TargetItemSource}");
                 ImGui.PopStyleColor();
                 ImGui.SameLine(0, 10);
-                UiHelper.SecondaryButton("✕##clrtgt", 26, 22, () =>
+                UiHelper.SecondaryButton("[x]##clrtgt", 26, 22, () =>
                 {
                     _itemIdFromInspector = false;
                     _log.Info("[Dupe] Item ID cleared from inspector target.");

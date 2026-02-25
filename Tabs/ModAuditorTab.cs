@@ -122,12 +122,12 @@ public class ModAuditorTab : ITab
         ImGui.SameLine(0, 20);
         ImGui.PushStyleColor(ImGuiCol.Text, _lagSwitchActive ? MenuRenderer.ColDanger : MenuRenderer.ColTextMuted);
         ImGui.TextUnformatted(_lagSwitchActive
-            ? $"⚡ LAG BUFFER ON - {_lagQueue.Count} queued"
-            : "⚡ Lag buffer off");
+            ? $"[!] LAG BUFFER ON - {_lagQueue.Count} queued"
+            : "[!] Lag buffer off");
         ImGui.PopStyleColor();
         ImGui.SameLine(0, 20);
         ImGui.PushStyleColor(ImGuiCol.Text, _claimZones.Count > 0 ? MenuRenderer.ColWarn : MenuRenderer.ColTextMuted);
-        ImGui.TextUnformatted($"◈ {_claimZones.Count} claim(s)");
+        ImGui.TextUnformatted($"[*] {_claimZones.Count} claim(s)");
         ImGui.PopStyleColor();
         ImGui.EndChild();
     }
@@ -258,7 +258,7 @@ public class ModAuditorTab : ITab
 
             ImGui.Checkbox("Auto-scan incoming packets##clautoscan", ref _claimAutoScan);
             ImGui.SameLine(0, 20);
-            UiHelper.SecondaryButton("⟳ Re-scan All##clrescan", 130, 24, () =>
+            UiHelper.SecondaryButton("[~] Re-scan All##clrescan", 130, 24, () =>
             {
                 _claimZones.Clear();
                 foreach (var p in _capture.GetPackets()) TryScanClaim(p);
@@ -446,7 +446,7 @@ public class ModAuditorTab : ITab
             UiHelper.MutedLabel("Tests if protected objects only check ActionType or skip distance validation.");
             ImGui.Spacing();
 
-            UiHelper.PrimaryButton("⟳ Capture Last C->S Packet##ficap", 200, 28, () =>
+            UiHelper.PrimaryButton("[~] Capture Last C->S Packet##ficap", 200, 28, () =>
             {
                 var pkts = _capture.GetPackets();
                 var last = pkts.LastOrDefault(p => p.Direction == PacketDirection.ClientToServer
@@ -700,7 +700,7 @@ public class ModAuditorTab : ITab
             UiHelper.MutedLabel("Detects 'Open Window' S->C packets - especially those without a physical block position.");
             UiHelper.MutedLabel("Modded workbenches/forges often skip distance checks once the window is registered.");
             ImGui.Spacing();
-            UiHelper.SecondaryButton("⟳ Re-scan##invrescan", 100, 24, () =>
+            UiHelper.SecondaryButton("[~] Re-scan##invrescan", 100, 24, () =>
             {
                 _openWindows.Clear();
                 foreach (var p in _capture.GetPackets()) TryScanOpenWindow(p);
@@ -909,7 +909,7 @@ public class ModAuditorTab : ITab
             }
 
             ImGui.Spacing();
-            UiHelper.SecondaryButton("⟳ Re-scan##permrescan", 100, 24, () =>
+            UiHelper.SecondaryButton("[~] Re-scan##permrescan", 100, 24, () =>
             {
                 _moddedEntities.Clear();
                 _playerPermStatus = null;
@@ -1071,14 +1071,14 @@ public class ModAuditorTab : ITab
             if (_burstArmed)
             {
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-                ImGui.TextUnformatted("  ⚡ ARMED - perform any in-game interaction now...");
+                ImGui.TextUnformatted("  [!] ARMED - perform any in-game interaction now...");
                 ImGui.PopStyleColor();
                 ImGui.SameLine(0, 12);
                 UiHelper.DangerButton("Disarm##racedisarm", 80, 24, () => _burstArmed = false);
             }
             else
             {
-                UiHelper.PrimaryButton("⚡ Arm Interceptor##racearm", 180, 28, () =>
+                UiHelper.PrimaryButton("[!] Arm Interceptor##racearm", 180, 28, () =>
                 {
                     _burstArmed = true;
                     _burstCapturedHex = "";
@@ -1226,7 +1226,7 @@ public class ModAuditorTab : ITab
             UiHelper.MutedLabel("Captures all Option IDs from NPC dialogue packets - including hidden/locked ones.");
             UiHelper.MutedLabel("Allows sending any Option ID directly, bypassing game-side UI visibility.");
             ImGui.Spacing();
-            UiHelper.SecondaryButton("⟳ Re-scan##diarescan", 100, 24, () =>
+            UiHelper.SecondaryButton("[~] Re-scan##diarescan", 100, 24, () =>
             {
                 _dialogueOptions.Clear();
                 foreach (var p in _capture.GetPackets()) TryScanDialogue(p);
@@ -1381,14 +1381,14 @@ public class ModAuditorTab : ITab
             if (_teleportArmed)
             {
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-                ImGui.TextUnformatted("  ⚡ ARMED - use any waypoint, teleport scroll, or /tp command in-game...");
+                ImGui.TextUnformatted("  [!] ARMED - use any waypoint, teleport scroll, or /tp command in-game...");
                 ImGui.PopStyleColor();
                 ImGui.SameLine(0, 12);
                 UiHelper.DangerButton("Disarm##tpdisarm", 80, 24, () => _teleportArmed = false);
             }
             else
             {
-                UiHelper.PrimaryButton("⚡ Arm Teleport Hook##tparm", 180, 28, () =>
+                UiHelper.PrimaryButton("[!] Arm Teleport Hook##tparm", 180, 28, () =>
                 {
                     _teleportArmed = true;
                     _teleportCapHex = "";
@@ -1497,14 +1497,14 @@ public class ModAuditorTab : ITab
             if (_payloadArmed)
             {
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-                ImGui.TextUnformatted("  ⚡ ARMED - trigger any area-effect action in-game...");
+                ImGui.TextUnformatted("  [!] ARMED - trigger any area-effect action in-game...");
                 ImGui.PopStyleColor();
                 ImGui.SameLine(0, 12);
                 UiHelper.DangerButton("Disarm##psdisarm", 80, 24, () => _payloadArmed = false);
             }
             else
             {
-                UiHelper.PrimaryButton("⚡ Arm Payload Interceptor##psarm", 220, 28, () =>
+                UiHelper.PrimaryButton("[!] Arm Payload Interceptor##psarm", 220, 28, () =>
                 {
                     _payloadArmed = true;
                     _payloadCapHex = "";
@@ -1666,7 +1666,7 @@ public class ModAuditorTab : ITab
             ImGui.Spacing();
             ImGui.Checkbox("Auto-scan all packets##depautoscan", ref _depAutoScan);
             ImGui.SameLine(0, 20);
-            UiHelper.SecondaryButton("⟳ Re-scan All##deprescan", 130, 24, () =>
+            UiHelper.SecondaryButton("[~] Re-scan All##deprescan", 130, 24, () =>
             {
                 _deps.Clear();
                 foreach (var p in _capture.GetPackets()) TryScanDependency(p);
@@ -1807,7 +1807,7 @@ public class ModAuditorTab : ITab
         {
             ImGui.PushStyleColor(ImGuiCol.Text, _lagSwitchActive ? MenuRenderer.ColDanger : MenuRenderer.ColTextMuted);
             ImGui.TextUnformatted(_lagSwitchActive
-                ? "  ⚡ BUFFER ACTIVE - outgoing packets are being queued and burst-replayed"
+                ? "  [!] BUFFER ACTIVE - outgoing packets are being queued and burst-replayed"
                 : "  Buffer mode disabled");
             ImGui.PopStyleColor();
             ImGui.Spacing();
