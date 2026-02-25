@@ -1173,7 +1173,8 @@ public class ModAuditorTab : ITab
     private int    _dialogueSelectedOpt = -1;
     private int    _dialogueSendOptionId = 0;
     private string _dialoguePacketHex    = "";
-    private int    _dialogueNpcId        = 0;
+    private uint   _dialogueNpcId        = 0;
+    private int    _dialogueNpcIdInput   = 0;  // int wrapper for ImGui.InputInt
 
     private void TryScanDialogue(CapturedPacket p)
     {
@@ -1196,8 +1197,8 @@ public class ModAuditorTab : ITab
 
         if (optIds.Count < 2) return;
 
-        // Try to find NPC entity ID (4 bytes after opcode)
-        int npcId = b.Length >= 5 ? BitConverter.ToInt32(b, 1) : 0;
+        // Try to find NPC entity ID (4 bytes after opcode) — use uint (entity IDs are unsigned)
+        uint npcId = b.Length >= 5 ? BitConverter.ToUInt32(b, 1) : 0;
 
         foreach (int optId in optIds.Distinct())
         {
@@ -1216,7 +1217,8 @@ public class ModAuditorTab : ITab
         }
 
         if (optIds.Count > 0)
-            _dialogueNpcId = npcId;
+            _dialogueNpcId      = npcId;
+            _dialogueNpcIdInput = (int)npcId;
     }
 
     private void RenderDialogue(float w)
@@ -1283,7 +1285,8 @@ public class ModAuditorTab : ITab
                     {
                         _dialogueSelectedOpt = i;
                         _dialogueSendOptionId = opt.OptionId;
-                        _dialogueNpcId = opt.NpcEntityId;
+                        _dialogueNpcId      = opt.NpcEntityId;
+                        _dialogueNpcIdInput = (int)opt.NpcEntityId;
                         // Build packet for this option
                         _dialoguePacketHex = BytesToHex(
                             BuildDialoguePacket(opt.OptionId, opt.NpcEntityId), 64);
@@ -1300,7 +1303,8 @@ public class ModAuditorTab : ITab
         {
             ImGui.SetNextItemWidth(100); ImGui.InputInt("Option ID##diasendid", ref _dialogueSendOptionId);
             ImGui.SameLine(0, 12);
-            ImGui.SetNextItemWidth(120); ImGui.InputInt("NPC Entity ID##diasendnpc", ref _dialogueNpcId);
+            ImGui.SetNextItemWidth(120); ImGui.InputInt("NPC Entity ID##diasendnpc", ref _dialogueNpcIdInput);
+            _dialogueNpcId = (uint)Math.Max(0, _dialogueNpcIdInput);
 
             ImGui.SetNextItemWidth(-1);
             ImGui.InputText("Packet hex override##diapkt", ref _dialoguePacketHex, 512);
@@ -1320,7 +1324,7 @@ public class ModAuditorTab : ITab
         });
     }
 
-    private static byte[] BuildDialoguePacket(int optionId, int npcId)
+    private static byte[] BuildDialoguePacket(int optionId, uint npcId)
     {
         // Generic: [0x3C] [npcId:4] [optionId:2]
         var pkt = new List<byte> { 0x3C };
@@ -1986,7 +1990,7 @@ public class ModdedEntity
 public class DialogueOption
 {
     public int      OptionId        { get; set; }
-    public int      NpcEntityId     { get; set; }
+    public uint    NpcEntityId     { get; set; }
     public byte     Opcode          { get; set; }
     public string   Label           { get; set; } = "";
     public bool     IsLikelyHidden  { get; set; }

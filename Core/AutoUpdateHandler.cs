@@ -45,6 +45,103 @@ public sealed class AutoUpdateHandler
     public long ItemListAddr    { get; private set; }
     public long HoverIdAddr     { get; private set; }
 
+    // ── Live memory polling ───────────────────────────────────────────────
+    // BUG FIX: AOB scan finds static addresses but never reads live values from them.
+    // These properties hold the most recently polled live entity/player IDs.
+    public uint   LiveHoverEntityId   { get; private set; }   // current hover entity ID (from HoverIdAddr)
+    public uint   LiveLocalPlayerId   { get; private set; }   // local player entity ID (from LocalPlayerAddr)
+    public bool   IsPolling           { get; private set; }
+
+    /// <summary>Fired whenever the hover entity ID changes in memory.</summary>
+    public event Action<uint>? OnHoverEntityChanged;
+    /// <summary>Fired when local player ID is first confirmed or changes.</summary>
+    public event Action<uint>? OnLocalPlayerIdChanged;
+
+    private CancellationTokenSource? _pollCts;
+    private MemoryReader?             _pollReader;
+
+    /// <summary>
+    /// Start background polling of HoverIdAddr and LocalPlayerAddr.
+    /// Must be called after a successful AOB scan.
+    /// BUG FIX: without this, addresses are found but values are never read.
+    /// </summary>
+    public void StartLivePolling(MemoryReader reader, int intervalMs = 200)
+    {
+        StopLivePolling();
+        _pollReader  = reader;
+        _pollCts     = new CancellationTokenSource();
+        IsPolling    = true;
+        var ct = _pollCts.Token;
+        Task.Run(async () =>
+        {
+            uint lastHoverId    = 0;
+            uint lastLocalId    = 0;
+            while (!ct.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Delay(intervalMs, ct);
+                    if (!reader.IsAttached) continue;
+
+                    // ── HoverEntityId: read uint32 from HoverIdAddr ───────────
+                    // The AOB pattern (89 1D = MOV [RIP+off],EBX) stores the
+                    // hovered entity ID as a 32-bit UNSIGNED int at the resolved address.
+                    // FIX: use ReadUInt32 directly - ReadInt32 then cast (uint) is wrong
+                    //      if the value is > 0x7FFF_FFFF (it would come out negative).
+                    if (HoverIdAddr != 0 && reader.ReadUInt32(new IntPtr(HoverIdAddr), out uint hoverId))
+                    {
+                        if (hoverId >= 1 && hoverId <= 16_000_000 && hoverId != lastHoverId)
+                        {
+                            lastHoverId       = hoverId;
+                            LiveHoverEntityId = hoverId;
+                            OnHoverEntityChanged?.Invoke(hoverId);
+                            _log?.Info($"[Poll] HoverEntity -> {hoverId} (0x{hoverId:X8})");
+                        }
+                    }
+
+                    // ── LocalPlayer: dereference pointer chain to read entity ID ─
+                    // LocalPlayerAddr -> ptr to player struct -> entity ID at known offset
+                    if (LocalPlayerAddr != 0)
+                    {
+                        // First dereference: get pointer to player struct
+                        if (reader.ReadInt64(new IntPtr(LocalPlayerAddr), out long playerStructPtr)
+                            && playerStructPtr > 0x10000)
+                        {
+                            // Entity ID is typically at a small offset within the struct.
+                            // Try offsets 0x10, 0x14, 0x18, 0x1C, 0x20 (common in game engines)
+                            // FIX: ReadUInt32 not ReadInt32 - avoid sign extension on IDs > 0x7FFF_FFFF
+                            foreach (int eidOffset in new[] { 0x10, 0x14, 0x18, 0x1C, 0x20, 0x08, 0x0C, 0x00 })
+                            {
+                                if (reader.ReadUInt32(new IntPtr(playerStructPtr + eidOffset), out uint eid))
+                                {
+                                    if (IdRanges.IsPlayerId(eid) && eid != lastLocalId)
+                                    {
+                                        lastLocalId       = eid;
+                                        LiveLocalPlayerId = eid;
+                                        OnLocalPlayerIdChanged?.Invoke(eid);
+                                        _log?.Info($"[Poll] LocalPlayerEntityId -> {eid} (from struct+0x{eidOffset:X2})");
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (OperationCanceledException) { break; }
+                catch { /* non-fatal polling error */ }
+            }
+            IsPolling = false;
+        }, ct);
+        _log?.Info($"[AutoUpdate] Live memory polling started (interval: {intervalMs}ms).");
+    }
+
+    public void StopLivePolling()
+    {
+        _pollCts?.Cancel();
+        _pollCts = null;
+        IsPolling = false;
+    }
+
     private TestLog?  _log;
     private AobCache? _cache;
 
@@ -184,7 +281,7 @@ public sealed class AutoUpdateHandler
             return Task.CompletedTask;
         }
 
-        return Task.Run(() => RunScan(reader));
+        return Task.Run(() => { _pollReader = reader; RunScan(reader); });
     }
 
     // ── Internal scan ─────────────────────────────────────────────────────
@@ -313,6 +410,15 @@ public sealed class AutoUpdateHandler
 
         PersistCache();
         ScanRunning = false;
+
+        // BUG FIX: auto-start live polling if we found at least HoverIdAddr or LocalPlayerAddr
+        // Previously addresses were found but never read live, so HoverEntityId/LocalPlayerId
+        // were always 0. Now we start polling immediately after a successful scan.
+        if ((HoverIdAddr != 0 || LocalPlayerAddr != 0) && _pollReader != null)
+        {
+            _log?.Info("[AutoUpdate] Starting live memory polling for entity IDs...");
+            StartLivePolling(_pollReader);
+        }
     }
 
     // ── RIP-relative resolution ───────────────────────────────────────────

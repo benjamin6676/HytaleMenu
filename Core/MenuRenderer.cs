@@ -31,27 +31,67 @@ public class MenuRenderer
     private readonly MacroEngineTab       _macroEngineTab;
     private readonly SettingsTab          _settingsTab;
 
-    private int _selectedSection = 0;
+    private int   _selectedSection  = 0;
+    private float _sidebarAnimTimer = 0f;   // drives selected-row slide animation
 
-    // 13 sidebar sections
-    private static readonly (string Icon, string Short, string Full)[] Sections = {
-        ("[H]", "Dashboard",  "Dashboard"),
-        ("[P]", "Packets",    "Packet Exploiting"),
-        ("[D]", "Duping",     "Dupe Methods"),
-        ("[!]", "Abuse",      "Abuse Engine"),
-        ("[C]", "Capture",    "Capture & Analysis"),
-        ("[X]", "Privilege",  "Privilege Escalation"),
-        ("[M]", "Mod Audit",  "Mod Auditor"),
-        ("[I]", "Inspector",  "Item Inspector"),
-        ("[B]", "Book",       "Packet Book"),
-        ("[R]", "Memory",     "Memory Reader"),
-        ("[V]", "Visuals",    "Visuals / ESP"),
-        ("[~]", "Proto Map",  "Protocol Map"),
-        ("[>]", "Macros",     "Macro Engine"),
-        ("[S]", "Settings",   "Settings"),
+    // ── 10 sidebar sections (was 14: Duping+Abuse merged, PacketBook folded into
+    //    Packets, ProtocolMap folded into Capture, ConnectionTab added to Privilege) ──
+    //
+    //  idx  Section                  Sub-tabs
+    //  ---  -----------------------  -------------------------------------------
+    //   0   Dashboard                Dashboard | Log
+    //   1   Packets                  Exploiting | Response Analyser | Packet Book
+    //   2   Exploit Tools            Duping | Abuse Engine
+    //   3   Capture & Analysis       Capture | Diff Analysis | Protocol Map
+    //   4   Privilege Escalation     (own internal sub-tabs + Conn Tests)
+    //   5   Mod Auditor              (own internal sub-tabs)
+    //   6   Item Inspector
+    //   7   Memory Reader
+    //   8   Visuals / ESP
+    //   9   Macro Engine
+    //  10   Settings
+
+    private static readonly NavSection[] Sections =
+    {
+        // MONITOR
+        new NavSection("__HDR__", "", "-- MONITOR --",        IsHeader: true),
+        new NavSection("[H]",     "Dashboard", "Dashboard"),
+
+        // ANALYSIS
+        new NavSection("__HDR__", "", "-- ANALYSIS --",       IsHeader: true),
+        new NavSection("[P]",     "Packets",   "Packet Exploiting"),
+        new NavSection("[C]",     "Capture",   "Capture & Analysis"),
+
+        // EXPLOIT
+        new NavSection("__HDR__", "", "-- EXPLOIT --",        IsHeader: true),
+        new NavSection("[D]",     "Exploit",   "Exploit Tools"),
+        new NavSection("[X]",     "Privilege", "Privilege Escalation"),
+        new NavSection("[M]",     "Mod Audit", "Mod Auditor"),
+
+        // TOOLS
+        new NavSection("__HDR__", "", "-- TOOLS --",          IsHeader: true),
+        new NavSection("[I]",     "Inspector", "Item Inspector"),
+        new NavSection("[R]",     "Memory",    "Memory Reader"),
+        new NavSection("[V]",     "Visuals",   "Visuals / ESP"),
+        new NavSection("[>]",     "Macros",    "Macro Engine"),
+        new NavSection("[S]",     "Settings",  "Settings"),
     };
 
-    // Palette
+    // Map section index (0-based, skipping headers) to Sections[] index
+    private static readonly int[] SectionIdx;   // SectionIdx[logicalIdx] = array idx
+    private static readonly int   SectionCount; // logical count (non-headers)
+
+    static MenuRenderer()
+    {
+        var idxList = new List<int>();
+        for (int i = 0; i < Sections.Length; i++)
+            if (!Sections[i].IsHeader)
+                idxList.Add(i);
+        SectionIdx   = idxList.ToArray();
+        SectionCount = idxList.Count;
+    }
+
+    // ── Colour palette ────────────────────────────────────────────────────
     public static readonly Vector4 ColAccent       = new(0.18f, 0.95f, 0.45f, 1.00f);
     public static readonly Vector4 ColAccentDim    = new(0.18f, 0.95f, 0.45f, 0.18f);
     public static readonly Vector4 ColAccentMid    = new(0.18f, 0.95f, 0.45f, 0.55f);
@@ -73,6 +113,7 @@ public class MenuRenderer
     /// <summary>Exposed so CaptureTab can send packets directly to diff slots.</summary>
     public DiffAnalysisTab DiffAnalysis => _diffAnalysisTab;
 
+
     public MenuRenderer()
     {
         _log     = new TestLog();
@@ -83,19 +124,32 @@ public class MenuRenderer
         _tracker = new ResponseTracker();
 
         // ── Bootstrap global singletons ───────────────────────────────────
-        // GlobalConfig: load config.json (hotkeys + IdNameMap + watchlist)
-        // This is already called by the static ctor, but explicitly syncing
-        // ensures hotkeys are applied before any key events fire.
         GlobalConfig.Instance.SyncToHotkeyConfig();
         _log.Info($"[Init] GlobalConfig loaded from {GlobalConfig.ConfigPath}");
 
-        // AutoUpdateHandler: wire the shared log so scan results appear in Log tab
         AutoUpdateHandler.Instance.Init(_log);
 
-        // Wire AbuseEngine to the proxy
+        // Wire live memory polling -> SmartDetect + ServerConfig
+        AutoUpdateHandler.Instance.OnHoverEntityChanged += hoverId =>
+        {
+            _smartDetect?.SetHoverEntity(hoverId);
+            _smartDetect?.OnLiveMemoryHoverEntity(hoverId);
+            _log.Info($"[MemPoll] HoverEntity -> {hoverId}");
+        };
+        AutoUpdateHandler.Instance.OnLocalPlayerIdChanged += playerId =>
+        {
+            _smartDetect?.OnLiveMemoryLocalPlayer(playerId);
+            if (!_config.HasLocalPlayer || _config.LocalPlayerEntityId != playerId)
+            {
+                _config.SetLocalPlayerEntityId(playerId, AutoUpdateHandler.Instance.ScanSummary);
+                _log.Success($"[MemPoll] LocalPlayerEntityId -> {playerId}");
+            }
+        };
+
+        // Boot capture subsystem
         _captureTab = new CaptureTab(_log, _pktLog, _config);
         AbuseEngine.Instance.Init(_captureTab.UdpProxy, _log);
-        EntityTracker.Instance.ToString(); // ensure singleton init
+        EntityTracker.Instance.ToString();
         _captureTab.UdpProxy.OnPacket += _stats.OnPacket;
         _captureTab.UdpProxy.OnPacket += _tracker.Feed;
         _captureTab.Capture.OnPacket  += _tracker.Feed;
@@ -108,13 +162,12 @@ public class MenuRenderer
         _privilegeTab        = new PrivilegeTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config, _store);
         _smartDetect         = new SmartDetectionEngine(_captureTab.Capture, _store, _log, _config);
 
-        // Wire SmartDetect events into AlertBus
         _smartDetect.OnAdminOpCodeDetected += (op, _) =>
             AlertBus.Push(AlertBus.Sec_Inspector, AlertLevel.Critical,
                 $"Admin opcode detected: 0x{op:X2}");
         _smartDetect.OnLootDropDetected += (id, _) =>
             AlertBus.Push(AlertBus.Sec_Inspector, AlertLevel.Info,
-                $"Loot drop detected: entity {id}");
+                $"Loot drop: entity {id}");
 
         _itemInspectorTab    = new ItemInspectorTab(_log, _captureTab.Capture, _captureTab.UdpProxy,
                                    _store, _config, _smartDetect);
@@ -124,14 +177,14 @@ public class MenuRenderer
                                    _captureTab.UdpProxy, _store, _config);
         _diffAnalysisTab     = new DiffAnalysisTab(_log, _store, _captureTab.Capture);
         _captureTab.SetDiffTab(_diffAnalysisTab);
-        _logTab              = new LogTab(_log, _pktLog);
+        _logTab              = new LogTab(_log, _pktLog, _smartDetect.SmartLog);
         _memoryTab           = new MemoryTab(_log, _store, _config);
         _visualsTab          = new VisualsTab(_log, _config, _smartDetect);
         _protocolMapTab      = new ProtocolMapTab(_log, _captureTab.Capture);
         _macroEngineTab      = new MacroEngineTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config, _store);
         _settingsTab         = new SettingsTab(_log);
 
-        // Attempt auto-attach to HytaleClient in background (non-blocking)
+        // Auto-attach to HytaleClient
         Task.Run(() =>
         {
             string err = SharedMemoryReader.AutoAttach();
@@ -147,10 +200,16 @@ public class MenuRenderer
         });
     }
 
+    // ══════════════════════════════════════════════════════════════════════
+    // MAIN RENDER LOOP
+    // ══════════════════════════════════════════════════════════════════════
+
     public void Render()
     {
         var io      = ImGui.GetIO();
         var display = io.DisplaySize;
+
+        _sidebarAnimTimer += io.DeltaTime;
 
         ImGui.SetNextWindowPos(Vector2.Zero);
         ImGui.SetNextWindowSize(display);
@@ -167,7 +226,7 @@ public class MenuRenderer
         ImGui.PopStyleColor();
         ImGui.PopStyleVar();
 
-        const float SideW = 110f;
+        const float SideW = 126f;    // was 110 - wider for cleaner labels
         float totalH   = display.Y;
         float contentW = display.X - SideW;
 
@@ -194,63 +253,89 @@ public class MenuRenderer
         ImGui.End();
     }
 
+    // ══════════════════════════════════════════════════════════════════════
+    // SIDEBAR
+    // ══════════════════════════════════════════════════════════════════════
+
     private void RenderSidebar(float sideW, float totalH)
     {
         var dl = ImGui.GetWindowDrawList();
-        var wp = ImGui.GetWindowPos(); // screen-space, no offset issues
+        var wp = ImGui.GetWindowPos();
 
-        // Top green bar
+        // Top accent bar (3 px)
         dl.AddRectFilled(wp, wp + new Vector2(sideW, 3),
             ImGui.ColorConvertFloat4ToU32(ColAccent));
 
-        // Logo
-        ImGui.SetCursorPos(new Vector2(14, 14));
+        // Logo / name
+        ImGui.SetCursorPos(new Vector2(12, 12));
         ImGui.PushStyleColor(ImGuiCol.Text, ColAccent);
-        ImGui.TextUnformatted("HST");
+        ImGui.SetWindowFontScale(1.05f);
+        ImGui.TextUnformatted("HyTester");
+        ImGui.SetWindowFontScale(1.0f);
         ImGui.PopStyleColor();
 
-        ImGui.SetCursorPos(new Vector2(14, 32));
+        ImGui.SetCursorPos(new Vector2(12, 30));
         ImGui.PushStyleColor(ImGuiCol.Text, ColTextMuted);
-        ImGui.TextUnformatted("v8.0");
+        ImGui.TextUnformatted("v16.0");
         ImGui.PopStyleColor();
 
-        // Server status strip
+        // Connection status strip
         bool connected = _config.IsSet;
-        ImGui.SetCursorPosY(54);
+        bool attached  = SharedMemoryReader.IsAttached;
+        ImGui.SetCursorPosY(50);
         var sp = ImGui.GetCursorScreenPos();
-        dl.AddRectFilled(sp, sp + new Vector2(sideW, 26),
+        dl.AddRectFilled(sp, sp + new Vector2(sideW, 24),
             ImGui.ColorConvertFloat4ToU32(connected ? ColAccentDim : ColDangerDim));
-        ImGui.SetCursorPos(new Vector2(10, 59));
+        ImGui.SetCursorPos(new Vector2(9, 55));
         ImGui.PushStyleColor(ImGuiCol.Text, connected ? ColAccent : ColDanger);
-        ImGui.TextUnformatted(connected ? "[>] " + _config.ServerPort : "[>] OFFLINE");
+        ImGui.TextUnformatted(connected ? "[>] :" + _config.ServerPort : "[>] OFFLINE");
         ImGui.PopStyleColor();
 
-        // Separator
-        ImGui.SetCursorPosY(83);
+        // Memory attach dot (right side of status strip)
+        var dotPos = sp + new Vector2(sideW - 14, 7);
+        dl.AddCircleFilled(dotPos, 5f, ImGui.ColorConvertFloat4ToU32(
+            attached ? ColAccent : new Vector4(0.4f, 0.4f, 0.4f, 0.8f)));
+
+        // Divider
+        ImGui.SetCursorPosY(77);
         var sep = ImGui.GetCursorScreenPos();
         dl.AddLine(sep, sep + new Vector2(sideW, 0),
             ImGui.ColorConvertFloat4ToU32(ColBorder));
-        ImGui.SetCursorPosY(87);
+        ImGui.SetCursorPosY(81);
 
-        // Nav buttons in scrollable child - prevents vertical clipping on small monitors
-        float navH = totalH - 87 - 30;
+        // Nav scroll area
+        float navH = totalH - 81 - 52;   // 52 = footer height
         ImGui.BeginChild("##NavScroll", new Vector2(sideW, navH),
             ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar);
 
-        const float BtnH = 52f;
+        const float BtnH     = 46f;
+        int         logIdx   = 0;
+
         for (int i = 0; i < Sections.Length; i++)
         {
-            bool sel = _selectedSection == i;
+            var sec = Sections[i];
 
-            // Capture screen pos BEFORE the button renders - used for background rects
-            var btnSP = ImGui.GetCursorScreenPos();
+            if (sec.IsHeader)
+            {
+                // Group label row
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.28f, 0.38f, 0.30f, 1f));
+                ImGui.SetCursorPosX(8);
+                ImGui.TextUnformatted(sec.Full);
+                ImGui.PopStyleColor();
+                // Headers don't count as logical nav sections - do NOT increment logIdx
+                continue;
+            }
+
+            bool sel = _selectedSection == logIdx;
+            var  btnSP = ImGui.GetCursorScreenPos();
 
             if (sel)
             {
-                // Left accent bar - 3px wide strip
+                // Animated left accent bar (pulse brightness)
+                float pulse  = 0.7f + 0.3f * MathF.Sin(_sidebarAnimTimer * 3.5f);
+                var   barCol = new Vector4(ColAccent.X, ColAccent.Y, ColAccent.Z, pulse);
                 dl.AddRectFilled(btnSP, btnSP + new Vector2(3, BtnH),
-                    ImGui.ColorConvertFloat4ToU32(ColAccent));
-                // Tinted background exactly over button area (no overflow into adjacent rects)
+                    ImGui.ColorConvertFloat4ToU32(barCol));
                 dl.AddRectFilled(btnSP, btnSP + new Vector2(sideW, BtnH),
                     ImGui.ColorConvertFloat4ToU32(ColAccentDim));
             }
@@ -261,44 +346,80 @@ public class MenuRenderer
             ImGui.PushStyleColor(ImGuiCol.Text, sel ? ColAccent : ColTextMuted);
             ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, new Vector2(0.5f, 0.5f));
 
-            if (ImGui.Button(Sections[i].Icon + "\n" + Sections[i].Short + $"##nav{i}",
+            int capturedIdx = logIdx;
+            if (ImGui.Button(sec.Icon + "\n" + sec.Short + $"##nav{i}",
                 new Vector2(sideW, BtnH)))
-                _selectedSection = i;
+                _selectedSection = capturedIdx;
 
             ImGui.PopStyleVar();
             ImGui.PopStyleColor(4);
 
-            // Badge - red dot with count if there are unread alerts for this section
-            int badge = AlertBus.GetBadge(i);
-            if (badge > 0 && _selectedSection != i)
+            // Badge
+            int badge = AlertBus.GetBadge(logIdx);
+            if (badge > 0 && _selectedSection != logIdx)
             {
-                float bx = btnSP.X + sideW - 18;
-                float by = btnSP.Y + 4;
                 string badgeStr = badge > 9 ? "9+" : badge.ToString();
-                float badgeW = ImGui.CalcTextSize(badgeStr).X + 6;
+                float  badgeW   = ImGui.CalcTextSize(badgeStr).X + 6;
+                float  bx       = btnSP.X + sideW - badgeW - 4;
+                float  by       = btnSP.Y + 4;
                 dl.AddRectFilled(new Vector2(bx - 2, by), new Vector2(bx + badgeW, by + 16),
                     ImGui.ColorConvertFloat4ToU32(ColDanger), 4f);
                 dl.AddText(new Vector2(bx + 1, by + 1),
                     ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 1)), badgeStr);
             }
 
-            if (i < Sections.Length - 1)
-            {
-                var divSP = ImGui.GetCursorScreenPos();
-                dl.AddLine(divSP + new Vector2(12, 0), divSP + new Vector2(sideW - 12, 0),
-                    ImGui.ColorConvertFloat4ToU32(ColBorder));
-            }
+            logIdx++;
         }
 
         ImGui.EndChild();
 
-        // Footer
-        ImGui.SetCursorPosY(totalH - 26);
-        ImGui.SetCursorPosX(10);
+        // ── Footer: memory polling status + player ID ─────────────────────
+        float footerY = totalH - 50;
+        ImGui.SetCursorPosY(footerY);
+        var footSP = ImGui.GetCursorScreenPos();
+        dl.AddLine(footSP, footSP + new Vector2(sideW, 0),
+            ImGui.ColorConvertFloat4ToU32(ColBorder));
+
+        ImGui.SetCursorPos(new Vector2(9, footerY + 5));
         ImGui.PushStyleColor(ImGuiCol.Text, ColTextMuted);
-        ImGui.TextUnformatted("Hytale Sec");
+
+        bool polling = AutoUpdateHandler.Instance.IsPolling;
+        if (polling)
+        {
+            // Spinning dot for polling indicator
+            float spin = _sidebarAnimTimer * 2f;
+            var   dotC = new Vector4(ColAccent.X, ColAccent.Y, ColAccent.Z,
+                0.5f + 0.5f * MathF.Sin(spin));
+            var spinSP = ImGui.GetCursorScreenPos() + new Vector2(0, 7);
+            dl.AddCircleFilled(spinSP, 4f, ImGui.ColorConvertFloat4ToU32(dotC));
+            ImGui.SetCursorPosX(18);
+        }
+
+        if (_config.HasLocalPlayer)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(ColAccent.X, ColAccent.Y, ColAccent.Z, 0.7f));
+            ImGui.TextUnformatted($"PID {_config.LocalPlayerEntityId}");
+            ImGui.PopStyleColor();
+        }
+        else
+        {
+            ImGui.TextUnformatted(polling ? "Polling..." : "HyTester");
+        }
+
+        ImGui.PopStyleColor();
+
+        // Second footer row
+        ImGui.SetCursorPos(new Vector2(9, footerY + 22));
+        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.22f, 0.30f, 0.24f, 1f));
+        ImGui.TextUnformatted(AutoUpdateHandler.Instance.ScanSummary == ""
+            ? "No scan"
+            : AutoUpdateHandler.Instance.ScanSummary);
         ImGui.PopStyleColor();
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // TOP BAR
+    // ══════════════════════════════════════════════════════════════════════
 
     private void RenderTopBar()
     {
@@ -306,13 +427,28 @@ public class MenuRenderer
         var p  = ImGui.GetWindowPos();
         float w = ImGui.GetContentRegionAvail().X;
 
+        // Section title
         ImGui.PushStyleColor(ImGuiCol.Text, ColAccent);
-        ImGui.SetWindowFontScale(1.20f);
-        ImGui.TextUnformatted(Sections[_selectedSection].Full);
+        ImGui.SetWindowFontScale(1.18f);
+        ImGui.TextUnformatted(Sections[SectionIdx[_selectedSection]].Full);
         ImGui.SetWindowFontScale(1.0f);
         ImGui.PopStyleColor();
 
-        ImGui.SameLine(w - 180);
+        // Right side: server + memory status chips
+        float rightStart = w - 320;
+        ImGui.SameLine(rightStart);
+
+        // Memory chip
+        bool att = SharedMemoryReader.IsAttached;
+        ImGui.PushStyleColor(ImGuiCol.Text, att ? ColAccent : ColTextMuted);
+        ImGui.TextUnformatted(att
+            ? $"[MEM] {SharedMemoryReader.ProcessName}"
+            : "[MEM] ---");
+        ImGui.PopStyleColor();
+
+        ImGui.SameLine(0, 16);
+
+        // Server chip
         if (_config.IsSet)
         {
             ImGui.PushStyleColor(ImGuiCol.Text, ColTextMuted);
@@ -322,10 +458,20 @@ public class MenuRenderer
         else
         {
             ImGui.PushStyleColor(ImGuiCol.Text, ColDanger);
-            ImGui.TextUnformatted("No server configured");
+            ImGui.TextUnformatted("No server");
             ImGui.PopStyleColor();
         }
 
+        // Polling chip (only shown when active)
+        if (AutoUpdateHandler.Instance.IsPolling)
+        {
+            ImGui.SameLine(0, 12);
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(ColAccent.X, ColAccent.Y, ColAccent.Z, 0.65f));
+            ImGui.TextUnformatted("[POLL]");
+            ImGui.PopStyleColor();
+        }
+
+        // Horizontal rule
         float lineY = p.Y + ImGui.GetCursorPosY() - 3;
         dl.AddLine(new Vector2(p.X, lineY), new Vector2(p.X + w + 20, lineY),
             ImGui.ColorConvertFloat4ToU32(ColBorder));
@@ -333,32 +479,32 @@ public class MenuRenderer
         ImGui.Spacing();
     }
 
+    // ══════════════════════════════════════════════════════════════════════
+    // CONTENT ROUTER
+    // ══════════════════════════════════════════════════════════════════════
+
     private void RenderContent()
     {
-        // Clear badge for the currently viewed section
         AlertBus.ClearBadge(_selectedSection);
 
         switch (_selectedSection)
         {
-            case 0:  RenderDashboardMerged();      break;
-            case 1:  RenderPacketsMerged();        break;
-            case 2:  _dupingTab.Render();          break;
-            case 3:  _abuseEngineTab.Render();     break;
-            case 4:  RenderCaptureMerged();        break;
-            case 5:  _privilegeTab.Render();       break;
-            case 6:  _modAuditorTab.Render();      break;
-            case 7:  _itemInspectorTab.Render();   break;
-            case 8:  _packetBookTab.Render();      break;
-            case 9:  _memoryTab.Render();          break;
-            case 10: _visualsTab.Render();         break;
-            case 11: _protocolMapTab.Render();     break;
-            case 12: _macroEngineTab.Render();     break;
-            case 13: _settingsTab.Render();        break;
+            case 0:  RenderDashboard();          break;   // Dashboard + Log
+            case 1:  RenderPackets();            break;   // Exploiting + Response + Book
+            case 2:  RenderCapture();            break;   // Capture + Diff + Proto Map
+            case 3:  RenderExploit();            break;   // Duping + Abuse Engine
+            case 4:  _privilegeTab.Render();     break;   // Privilege (incl. Conn Tests)
+            case 5:  _modAuditorTab.Render();    break;
+            case 6:  _itemInspectorTab.Render(); break;
+            case 7:  _memoryTab.Render();        break;
+            case 8:  _visualsTab.Render();       break;
+            case 9:  _macroEngineTab.Render();   break;
+            case 10: _settingsTab.Render();      break;
         }
     }
 
-    // Dashboard absorbs Log
-    private void RenderDashboardMerged()
+    // ── Dashboard (was 2 tabs: Dashboard + Log) ───────────────────────────
+    private void RenderDashboard()
     {
         if (ImGui.BeginTabBar("##dash_tabs"))
         {
@@ -370,8 +516,8 @@ public class MenuRenderer
         }
     }
 
-    // Packets absorbs Response Analyser
-    private void RenderPacketsMerged()
+    // ── Packets (was 2 tabs: Exploiting + Response — now adds Packet Book) ─
+    private void RenderPackets()
     {
         if (ImGui.BeginTabBar("##pkt_tabs"))
         {
@@ -379,12 +525,14 @@ public class MenuRenderer
             { ImGui.Spacing(); _packetTab.Render(); ImGui.EndTabItem(); }
             if (ImGui.BeginTabItem("  Response Analyser  "))
             { ImGui.Spacing(); _responseAnalyserTab.Render(); ImGui.EndTabItem(); }
+            if (ImGui.BeginTabItem("  Packet Book  "))
+            { ImGui.Spacing(); _packetBookTab.Render(); ImGui.EndTabItem(); }
             ImGui.EndTabBar();
         }
     }
 
-    // Capture absorbs Diff Analysis
-    private void RenderCaptureMerged()
+    // ── Capture (was 2 tabs: Capture + Diff — now adds Protocol Map) ──────
+    private void RenderCapture()
     {
         if (ImGui.BeginTabBar("##cap_tabs"))
         {
@@ -392,9 +540,28 @@ public class MenuRenderer
             { ImGui.Spacing(); _captureTab.Render(); ImGui.EndTabItem(); }
             if (ImGui.BeginTabItem("  Diff Analysis  "))
             { ImGui.Spacing(); _diffAnalysisTab.Render(); ImGui.EndTabItem(); }
+            if (ImGui.BeginTabItem("  Protocol Map  "))
+            { ImGui.Spacing(); _protocolMapTab.Render(); ImGui.EndTabItem(); }
             ImGui.EndTabBar();
         }
     }
+
+    // ── Exploit Tools (new merge: Duping + Abuse Engine) ─────────────────
+    private void RenderExploit()
+    {
+        if (ImGui.BeginTabBar("##exp_tabs"))
+        {
+            if (ImGui.BeginTabItem("  Dupe Methods  "))
+            { ImGui.Spacing(); _dupingTab.Render(); ImGui.EndTabItem(); }
+            if (ImGui.BeginTabItem("  Abuse Engine  "))
+            { ImGui.Spacing(); _abuseEngineTab.Render(); ImGui.EndTabItem(); }
+            ImGui.EndTabBar();
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // THEME
+    // ══════════════════════════════════════════════════════════════════════
 
     public static void ApplyTheme()
     {
@@ -468,12 +635,11 @@ public class MenuRenderer
         c[(int)ImGuiCol.ModalWindowDimBg]     = new Vector4(0, 0, 0, 0.6f);
     }
 
-    // ── Global hotkey actions ─────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════
+    // GLOBAL HOTKEY ACTIONS
+    // ══════════════════════════════════════════════════════════════════════
 
-    /// <summary>
-    /// F8: Insert a purple timeline marker into the capture log.
-    /// Appears as a separator line in the packet log with a timestamp.
-    /// </summary>
+    /// <summary>F8: Insert a purple timeline marker into the capture log.</summary>
     public void InsertTimelineMarker()
     {
         var marker = new CapturedPacket
@@ -481,20 +647,23 @@ public class MenuRenderer
             Timestamp   = DateTime.Now,
             IsMarker    = true,
             MarkerLabel = $"[F8 MARKER] {DateTime.Now:HH:mm:ss.fff}",
-            MarkerColor = 0xFF9000FF,  // Purple ABGR
+            MarkerColor = 0xFF9000FF,
             Direction   = PacketDirection.ServerToClient,
-            Data        = Array.Empty<byte>(),
+            RawBytes     = Array.Empty<byte>(),
         };
         _captureTab.Capture.AddPacketExternal(marker);
         _log.Info($"[Marker] Timeline marker inserted at {DateTime.Now:HH:mm:ss.fff}");
     }
 
-    /// <summary>
-    /// F9: Lock/pin the last hovered entity in Item Inspector so it persists on Alt-Tab.
-    /// </summary>
+    /// <summary>F9: Lock/pin the last hovered entity in Item Inspector.</summary>
     public void LockHoveredTarget()
     {
         _itemInspectorTab.LockLastHoveredTarget();
         _log.Info("[Lock] Target locked via hotkey.");
     }
+
+    // ── Internal nav helper struct ─────────────────────────────────────────
+
+    private readonly record struct NavSection(
+        string Icon, string Short, string Full, bool IsHeader = false);
 }

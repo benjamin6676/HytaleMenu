@@ -381,7 +381,7 @@ public class ServerStats
         6379  => "Redis",
         _ => ""
     };
-}
+}   // end class ServerStats
 
 // ── Supporting types ──────────────────────────────────────────────────────────
 

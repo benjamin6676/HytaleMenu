@@ -141,6 +141,26 @@ public class MemoryReader : IDisposable
         return true;
     }
 
+    /// <summary>Read an unsigned 32-bit integer (entity/item IDs are uint, not int).</summary>
+    public bool ReadUInt32(IntPtr address, out uint value)
+    {
+        value = 0;
+        var buf = new byte[4];
+        if (!ReadBytes(address, buf)) return false;
+        value = BitConverter.ToUInt32(buf, 0);
+        return true;
+    }
+
+    /// <summary>Read an unsigned 64-bit integer (for 64-bit or UUID entity IDs).</summary>
+    public bool ReadUInt64(IntPtr address, out ulong value)
+    {
+        value = 0;
+        var buf = new byte[8];
+        if (!ReadBytes(address, buf)) return false;
+        value = BitConverter.ToUInt64(buf, 0);
+        return true;
+    }
+
     public bool ReadInt64(IntPtr address, out long value)
     {
         value = 0;
@@ -220,8 +240,14 @@ public class MemoryReader : IDisposable
 
     // Scans readable memory regions for occurrences of `playerName` (if provided)
     // or for plausible player-name-like ASCII strings, then looks in the nearby
-    // bytes for a 4-byte integer that falls within a plausible EntityID range.
-    // Returns a list of LocalPlayerCandidate with address/context information.
+    // bytes for a 4-byte or 8-byte integer that falls within a plausible EntityID range.
+    //
+    // BUG FIXES applied:
+    //   - Use uint32 comparison (not signed int32) to avoid missing IDs with high bit set
+    //   - Try big-endian reads in addition to little-endian
+    //   - Try int64 reads (8-byte) for games that use 64-bit entity IDs
+    //   - Expanded search window from +-64 to +-128 bytes for better coverage
+    //   - Lower minimum ID from 1000 to 1 (player IDs can start from 1 in some builds)
     public List<LocalPlayerCandidate> ScanLocalPlayerEntityId(string? playerName, IProgress<int>? progress)
     {
         var results = new List<LocalPlayerCandidate>();
@@ -229,7 +255,7 @@ public class MemoryReader : IDisposable
 
         var regions = GetReadableRegions(64);
         long totalBytes = regions.Sum(r => r.Size);
-        long processed = 0;
+        long processed  = 0;
 
         byte[]? nameBytes = null;
         if (!string.IsNullOrWhiteSpace(playerName))
@@ -237,7 +263,6 @@ public class MemoryReader : IDisposable
 
         foreach (var region in regions)
         {
-            // read region in manageable chunks (max 4MB)
             const int Chunk = 4 * 1024 * 1024;
             long offset = 0;
             while (offset < region.Size)
@@ -245,17 +270,12 @@ public class MemoryReader : IDisposable
                 int readSize = (int)Math.Min(Chunk, region.Size - offset);
                 var buf = new byte[readSize];
                 if (!ReadBytes(IntPtr.Add(region.BaseAddress, (int)offset), buf))
-                {
-                    offset += readSize;
-                    processed += readSize;
-                    continue;
-                }
+                { offset += readSize; processed += readSize; continue; }
 
-                // Search for either the exact name bytes or plausible ASCII name tokens
                 var nameMatches = new List<(int idx, string name)>();
                 if (nameBytes != null)
                 {
-                    for (int i = 0; ; i++)
+                    for (int i = 0;;i++)
                     {
                         int found = IndexOf(buf, nameBytes, i);
                         if (found < 0) break;
@@ -265,7 +285,6 @@ public class MemoryReader : IDisposable
                 }
                 else
                 {
-                    // detect ASCII tokens: letters/digits/underscore, length 3..32
                     int i = 0;
                     while (i < buf.Length)
                     {
@@ -285,44 +304,78 @@ public class MemoryReader : IDisposable
                     }
                 }
 
-                // For every name occurrence, scan ±64 bytes for plausible int32 entity id
+                // BUG FIX: widened window from +-64 to +-128 bytes
                 foreach (var (idx, foundName) in nameMatches)
                 {
-                    int winStart = Math.Max(0, idx - 64);
-                    int winEnd   = Math.Min(buf.Length, idx + 64 + 4);
+                    int winStart = Math.Max(0, idx - 128);
+                    int winEnd   = Math.Min(buf.Length, idx + 128 + 8);
+
+                    // 4-byte LE uint32
                     for (int j = winStart; j + 4 <= winEnd; j++)
                     {
-                        int val = BitConverter.ToInt32(buf, j);
-                        if (val >= 1000 && val <= 4_000_000)
+                        // BUG FIX: use uint, not signed int
+                        uint val = BitConverter.ToUInt32(buf, j);
+                        if (val >= 1 && val <= 4_000_000)
                         {
-                            var cand = new LocalPlayerCandidate()
-                            {
-                                FoundName = foundName,
-                                NameAddrHex = $"0x{(region.BaseAddress.ToInt64() + offset + idx):X16}",
-                                EntityIdAddrHex = $"0x{(region.BaseAddress.ToInt64() + offset + j):X16}",
-                                Offset = j - idx,
-                                EntityId = val,
-                                Score = nameBytes != null ? 100 : 60,
-                                NameAddress = IntPtr.Add(region.BaseAddress, (int)(offset + idx)),
-                                EntityIdAddress = IntPtr.Add(region.BaseAddress, (int)(offset + j)),
-                            };
-                            // dedupe by entity address
-                            if (!results.Any(r => r.EntityIdAddress == cand.EntityIdAddress))
-                                results.Add(cand);
+                            int score = nameBytes != null ? 100 : 60;
+                            AddLpCandidate(results, region, offset, idx, j, val, 4, foundName, score, "LE-uint32");
+                        }
+                        // 4-byte BE uint32
+                        if (j + 4 <= winEnd)
+                        {
+                            uint valBe = (uint)(buf[j] << 24 | buf[j+1] << 16 | buf[j+2] << 8 | buf[j+3]);
+                            if (valBe != val && valBe >= 1 && valBe <= 4_000_000)
+                                AddLpCandidate(results, region, offset, idx, j, valBe, 4, foundName, nameBytes!=null?75:45, "BE-uint32");
+                        }
+                    }
+                    // 8-byte int64 probe (64-bit entity IDs)
+                    for (int j = winStart; j + 8 <= winEnd; j++)
+                    {
+                        long val64 = BitConverter.ToInt64(buf, j);
+                        if (val64 > 0 && val64 <= 4_000_000_000L)
+                        {
+                            uint val32 = (uint)(val64 & 0xFFFF_FFFF);
+                            if (val32 >= 1 && val32 <= 4_000_000)
+                                AddLpCandidate(results, region, offset, idx, j, val32, 8, foundName, nameBytes!=null?65:35, "int64-low32");
                         }
                     }
                 }
 
                 offset += readSize;
                 processed += readSize;
-                if (totalBytes > 0)
-                    progress?.Report((int)(processed * 100 / totalBytes));
+                if (totalBytes > 0) progress?.Report((int)(processed * 100 / totalBytes));
             }
         }
 
         progress?.Report(100);
-        return results;
+        return results
+            .GroupBy(r => r.EntityIdAddress)
+            .Select(g => g.OrderByDescending(r => r.Score).First())
+            .OrderByDescending(r => r.Score)
+            .ToList();
     }
+
+    private void AddLpCandidate(List<LocalPlayerCandidate> results,
+        MemoryRegion region, long offset, int nameIdx, int idIdx, uint entityId, int idSize,
+        string foundName, int score, string readMethod)
+    {
+        var cand = new LocalPlayerCandidate
+        {
+            FoundName       = foundName,
+            NameAddrHex     = $"0x{(region.BaseAddress.ToInt64()+offset+nameIdx):X16}",
+            EntityIdAddrHex = $"0x{(region.BaseAddress.ToInt64()+offset+idIdx):X16}",
+            Offset          = idIdx - nameIdx,
+            EntityId        = entityId,
+            Score           = score,
+            ReadMethod      = readMethod,
+            IdSize          = idSize,
+            NameAddress     = IntPtr.Add(region.BaseAddress, (int)(offset+nameIdx)),
+            EntityIdAddress = IntPtr.Add(region.BaseAddress, (int)(offset+idIdx)),
+        };
+        if (!results.Any(r => r.EntityIdAddress == cand.EntityIdAddress))
+            results.Add(cand);
+    }
+
 
     private static int IndexOf(byte[] haystack, byte[] needle, int start)
     {
@@ -422,14 +475,14 @@ public class MemoryReader : IDisposable
 
             for (int i = 0; i <= buf.Length - 4; i += 4)
             {
-                int v = BitConverter.ToInt32(buf, i);
-                if (v >= min && v <= max)
+                uint v = BitConverter.ToUInt32(buf, i);
+                if ((int)v >= min && (int)v <= max)
                 {
                     long addr = region.BaseAddress.ToInt64() + i;
                     matches.Add(new ScanMatch
                     {
                         Address = new IntPtr(addr),
-                        Value   = v,
+                        Value   = (int)v,
                         Context = buf.Skip(i).Take(Math.Min(16, buf.Length - i)).ToArray(),
                     });
                     if (matches.Count >= maxResults) break;
@@ -458,7 +511,7 @@ public class MemoryReader : IDisposable
             results.Add(new ScanMatch
             {
                 Address = m.Address,
-                Value   = v,
+                Value   = (int)v,
                 Context = m.Context,
             });
         }
@@ -493,8 +546,8 @@ public class MemoryReader : IDisposable
 
             for (int i = 0; i <= buf.Length - 12; i += 4)
             {
-                int itemId = BitConverter.ToInt32(buf, i);
-                if (itemId < 100 || itemId > 9999) continue;
+                uint itemId = BitConverter.ToUInt32(buf, i);
+                if (!IdRanges.IsItemId(itemId)) continue;
 
                 // Look for count in next int32
                 int count = i + 4 < buf.Length
@@ -1350,7 +1403,7 @@ public class ScanMatch
 public class InventoryCandidate
 {
     public IntPtr Address    { get; set; }
-    public int    ItemId     { get; set; }
+    public uint   ItemId     { get; set; }
     public int    StackCount { get; set; }
     public int    SlotIndex  { get; set; }
     public byte[] Context    { get; set; } = Array.Empty<byte>();

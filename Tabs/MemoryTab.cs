@@ -1360,12 +1360,14 @@ public class MemoryTab : ITab
                     }
 
                     var col = c.Score >= 100 ? MenuRenderer.ColAccent
+                            : c.Score >=  75 ? MenuRenderer.ColAccent
                             : c.Score >=  60 ? MenuRenderer.ColBlue
                             :                  MenuRenderer.ColTextMuted;
 
                     ImGui.PushStyleColor(ImGuiCol.Text, col);
                     if (ImGui.Selectable(
-                        $"  {c.Score,-6} {c.EntityId,-12} {c.FoundName,-20} " +
+                        $"  {c.Score,-5} {c.EntityId,-12} {c.FoundName,-20} " +
+                        $"{c.ReadMethod,-12} {(c.IdSize == 8 ? "64b" : "32b"),-5} " +
                         $"{c.NameAddrHex,-20} {c.EntityIdAddrHex,-20} {(c.Offset >= 0 ? "+" : "")}{c.Offset}##lpr{i}",
                         sel, ImGuiSelectableFlags.None, new Vector2(0, RowH)))
                         _lpSelected = i;
@@ -1392,6 +1394,8 @@ public class MemoryTab : ITab
                 UiHelper.StatusRow("Struct Offset",
                     $"{(sel.Offset >= 0 ? "+" : "")}{sel.Offset} bytes from name",  true, 140);
                 UiHelper.StatusRow("Score",          sel.Score.ToString(),    sel.Score >= 60, 140);
+                UiHelper.StatusRow("Read Method",    sel.ReadMethod,          true,  140);
+                UiHelper.StatusRow("ID Size",        $"{sel.IdSize * 8}-bit", true,  140);
                 ImGui.Spacing();
 
                 // Convenience button: pre-fill Pointer Path base field
@@ -1427,11 +1431,45 @@ public class MemoryTab : ITab
                     (alreadyPushed ? "[*] Pushed to SmartDetect" : "Push to SmartDetect") + "##lpsdp",
                     new Vector2(220, 28)))
                 {
-                    _config.SetLocalPlayerEntityId((uint)sel.EntityId, sel.FoundName);
+                    _config.SetLocalPlayerEntityId(sel.EntityId, sel.FoundName);
                     _log.Success($"[LocalPlayer] EntityID {sel.EntityId} " +
                                  $"({sel.FoundName}) -> SmartDetection tagged as LocalPlayer.");
                 }
                 ImGui.PopStyleColor(2);
+
+                ImGui.Spacing();
+
+                // ── Live Memory Polling status + control ──────────────────
+                var au = AutoUpdateHandler.Instance;
+                bool polling = au.IsPolling;
+                ImGui.PushStyleColor(ImGuiCol.Text,
+                    polling ? MenuRenderer.ColAccent : MenuRenderer.ColTextMuted);
+                ImGui.TextUnformatted(polling
+                    ? $"[~] Live polling active  |  HoverEntity: {au.LiveHoverEntityId}  |  LocalPlayer: {au.LiveLocalPlayerId}"
+                    : "[!] Live polling inactive - entity IDs may be stale");
+                ImGui.PopStyleColor();
+                ImGui.Spacing();
+
+                if (!polling)
+                {
+                    UiHelper.PrimaryButton("Start Live Polling##lpstart", 200, 26, () =>
+                    {
+                        au.StartLivePolling(_reader);
+                        _log.Success("[LocalPlayer] Live memory polling started.");
+                    });
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Polls HoverIdAddr + LocalPlayerAddr every 200ms.\n" +
+                            "Keeps HoverEntityId and LocalPlayerEntityId current in real-time.\n" +
+                            "BUG FIX: previously addresses were found but never read live.");
+                }
+                else
+                {
+                    UiHelper.WarnButton("Stop Polling##lpstop", 160, 26, () =>
+                    {
+                        au.StopLivePolling();
+                        _log.Info("[LocalPlayer] Live memory polling stopped.");
+                    });
+                }
             });
         }
 

@@ -51,7 +51,7 @@ public class PrivilegeTab : ITab
     private static readonly string[] SubTabs =
         { "Give Item", "Handshake Tamper", "Session Spoofer",
           "Command Inject", "Metadata Inject", "Perm Spoof", "Response Table",
-          "Token Sniff", "Spawn Items", "Admin Replay" };
+          "Token Sniff", "Spawn Items", "Admin Replay", "Conn Tests" };
 
     // ── Give Item ──────────────────────────────────────────────────────────
     private int _giItemId   = 1001;
@@ -139,6 +139,15 @@ public class PrivilegeTab : ITab
     private bool   _psWrapWithId   = false; // also prepend admin player ID
     private int    _psWrappedId    = 0;
 
+    // ── Conn Tests (merged from ConnectionTab) ─────────────────────────────
+    private bool   _ctHandshakeTamper = true;
+    private bool   _ctAuthBypass      = true;
+    private bool   _ctSessionHijack   = false;
+    private bool   _ctTimeoutTest     = true;
+    private int    _ctFakeSessionId   = 99999;
+    private string _ctFakeToken       = "aaaabbbbccccdddd";
+    private int    _ctTimeoutMs       = 30000;
+
     // ── Constructor ────────────────────────────────────────────────────────
     public PrivilegeTab(TestLog log, PacketCapture capture, UdpProxy udpProxy,
                         ServerConfig config, PacketStore store)
@@ -208,6 +217,7 @@ public class PrivilegeTab : ITab
             case 7: RenderTokenSniff(mainW);      break;
             case 8: RenderSpawnItems(mainW);      break;
             case 9: RenderAdminReplay(mainW);     break;
+            case 10: RenderConnTests(mainW);     break;
         }
         ImGui.EndChild();
 
@@ -287,7 +297,7 @@ public class PrivilegeTab : ITab
         for (int i = 0; i < _adminList.Count; i++)
         {
             var c   = _adminList[i];
-            bool sel = _selectedAdmin == i || (_targetPlayerId > 0 && _targetPlayerId == c.PlayerId);
+            bool sel = _selectedAdmin == i || (_targetPlayerId > 0 && (uint)_targetPlayerId == c.PlayerId);
 
             if (sel)
             {
@@ -304,13 +314,13 @@ public class PrivilegeTab : ITab
                 sel, ImGuiSelectableFlags.None, new Vector2(w - 12, 20)))
             {
                 _selectedAdmin      = i;
-                _targetPlayerId     = c.PlayerId;
+                _targetPlayerId     = (int)c.PlayerId;
                 _targetPlayerName   = c.Name ?? "";
                 // Push into all sub-tab fields
-                _giPlayerId   = c.PlayerId;
-                _ssAdminId    = c.PlayerId;
-                _psWrappedId  = c.PlayerId;
-                _hsPlayerIdInPkt = c.PlayerId;
+                _giPlayerId   = (int)c.PlayerId;
+                _ssAdminId    = (int)c.PlayerId;
+                _psWrappedId  = (int)c.PlayerId;
+                _hsPlayerIdInPkt = (int)c.PlayerId;
                 _log.Success($"[PrivEsc] Target locked -> ID {c.PlayerId}" +
                              (c.Name != null ? $" ({c.Name})" : "") +
                              $" seenx{c.Seen}");
@@ -376,7 +386,7 @@ public class PrivilegeTab : ITab
             InlineAutoFill("##giaf", () =>
             {
                 var f = ContextFiller.Fill(_capture, _udpProxy);
-                if (f.HasItem) { _giItemId = f.ItemId!.Value; }
+                if (f.HasItem) { _giItemId = (int)f.ItemId!.Value; }
             });
 
             ImGui.SetNextItemWidth(100);
@@ -560,7 +570,7 @@ public class PrivilegeTab : ITab
             InlineAutoFill("##ssaf", () =>
             {
                 var f = ContextFiller.Fill(_capture, _udpProxy);
-                if (f.HasPlayer) _ssAdminId = f.PlayerId ?? _ssAdminId;
+                if (f.HasPlayer) _ssAdminId = (int)(f.PlayerId ?? (uint)_ssAdminId);
             });
             ImGui.SameLine(0, 8);
             if (_targetPlayerId > 0)
@@ -626,7 +636,7 @@ public class PrivilegeTab : ITab
                     {
                         for (int i = 0; i < count; i++)
                         {
-                            byte[] wrapped = WrapWithPlayerId(_ssAdminId, payload, _ssWrapAllFields);
+                            byte[] wrapped = WrapWithPlayerId((uint)_ssAdminId, payload, _ssWrapAllFields);
                             SendRaw(wrapped);
                             _log.Info($"[SessionSpoof] #{i+1}: {wrapped.Length}b sent - " +
                                       $"hex prefix: {BytesToHex(wrapped, 8)}...");
@@ -653,7 +663,7 @@ public class PrivilegeTab : ITab
     /// If replaceFields=true, also patches any occurrence of the current
     /// player's ID inside the payload with the admin's ID.
     /// </summary>
-    private byte[] WrapWithPlayerId(int adminId, byte[] payload, bool replaceFields)
+    private byte[] WrapWithPlayerId(uint adminId, byte[] payload, bool replaceFields)
     {
         var result = new List<byte>();
         // Prepend admin ID as the session/sender header field
@@ -667,7 +677,7 @@ public class PrivilegeTab : ITab
             for (int i = 0; i + 4 <= copy.Length; i++)
             {
                 int v = BitConverter.ToInt32(copy, i);
-                if (v >= 1000 && v <= 999_999 && v != adminId)
+                if (v >= 1000 && v <= 999_999 && (uint)v != adminId)
                 {
                     byte[] rep = BitConverter.GetBytes(adminId);
                     copy[i]   = rep[0]; copy[i+1] = rep[1];
@@ -1254,7 +1264,7 @@ public class PrivilegeTab : ITab
             InlineAutoFill("##spaf", () =>
             {
                 var f = ContextFiller.Fill(_capture, _udpProxy);
-                if (f.HasItem) _spawnItemId = f.ItemId!.Value;
+                if (f.HasItem) _spawnItemId = (int)f.ItemId!.Value;
             });
             ImGui.SameLine(0, 16);
             ImGui.SetNextItemWidth(100); ImGui.InputInt("Count##spcnt", ref _spawnCount);
@@ -1333,13 +1343,13 @@ public class PrivilegeTab : ITab
                     await Task.Delay(300);
 
                     // Step 2: Spoof session with admin ID
-                    int adminId = _spawnTargetId > 0 ? _spawnTargetId
-                                : _targetPlayerId > 0 ? _targetPlayerId : 1;
+                    uint adminId = _spawnTargetId > 0 ? (uint)_spawnTargetId
+                                 : _targetPlayerId > 0 ? (uint)_targetPlayerId : 1u;
 
                     // Step 3: Spawn item
                     var itemPkt = new List<byte> { 0x2A };
-                    itemPkt.AddRange(BitConverter.GetBytes(_spawnItemId));
-                    itemPkt.AddRange(BitConverter.GetBytes(_spawnCount));
+                    itemPkt.AddRange(BitConverter.GetBytes((uint)_spawnItemId));
+                    itemPkt.AddRange(BitConverter.GetBytes((uint)_spawnCount));
                     itemPkt.AddRange(BitConverter.GetBytes(adminId));
                     byte[] wrapped = WrapWithPlayerId(adminId, itemPkt.ToArray(), true);
                     SendRaw(wrapped);
@@ -1728,10 +1738,10 @@ public class PrivilegeTab : ITab
         UiHelper.SecondaryButton("[~] Auto-fill IDs from packets##privafbtn", 210, 22, () =>
         {
             _lastFill = ContextFiller.Fill(_capture, _udpProxy);
-            if (_lastFill.HasItem)   _giItemId = _lastFill.ItemId!.Value;
+            if (_lastFill.HasItem)   _giItemId = (int)_lastFill.ItemId!.Value;  // ItemId is uint; safe cast (items < 2^31)
             if (_lastFill.HasPlayer)
             {
-                int pid = _lastFill.PlayerId ?? 0;
+                int pid = (int)(_lastFill.PlayerId ?? 0u);
                 if (pid > 0)
                 {
                     _targetPlayerId  = pid;
@@ -1777,7 +1787,7 @@ public class PrivilegeTab : ITab
             .Take(12)
             .Select(d => new AdminCandidate
             {
-                PlayerId = (int)d.Value,
+                PlayerId = d.Value,
                 Seen     = d.OccurrenceCount,
                 Name     = null,
                 Score    = d.Score,
@@ -1789,14 +1799,14 @@ public class PrivilegeTab : ITab
         {
             var analysis = PacketAnalyser.Analyse(pkt);
             string? foundName = null;
-            int     foundId   = 0;
+            uint    foundId   = 0;
 
             foreach (var guess in analysis.Guesses)
             {
                 if (guess.Name.StartsWith("Player Name") && guess.StrValue != null)
                     foundName = guess.StrValue;
                 if (guess.Name.StartsWith("Entity/Player ID?"))
-                    foundId = guess.IntValue;
+                    foundId = guess.IntValue >= 0 ? (uint)guess.IntValue : 0u;
             }
 
             if (foundName != null && foundId > 0)
@@ -2384,6 +2394,82 @@ public class PrivilegeTab : ITab
         _                   => new Vector4(0, 0, 0, 0),
     };
 
+    // ══════════════════════════════════════════════════════════════════════
+    // CONN TESTS  (merged from ConnectionTab)
+    // ══════════════════════════════════════════════════════════════════════
+
+    private void RenderConnTests(float w)
+    {
+        float half = (w - 12) * 0.5f;
+
+        UiHelper.SectionBox("TEST SELECTION", half, 210, () =>
+        {
+            UiHelper.MutedLabel("Select connection-level attack tests to run:");
+            ImGui.Spacing();
+            ImGui.Checkbox("Handshake Tampering##ct_ht",  ref _ctHandshakeTamper);
+            UiHelper.MutedLabel("  Sends a malformed handshake to probe auth bypass.");
+            ImGui.Spacing();
+            ImGui.Checkbox("Auth Bypass Test##ct_ab",     ref _ctAuthBypass);
+            UiHelper.MutedLabel("  Replays an auth packet with a modified token.");
+            ImGui.Spacing();
+            ImGui.Checkbox("Session Hijack##ct_sh",       ref _ctSessionHijack);
+            UiHelper.MutedLabel("  Injects a fake session ID mid-flow.");
+            ImGui.Spacing();
+            ImGui.Checkbox("Timeout Behaviour##ct_tb",    ref _ctTimeoutTest);
+            UiHelper.MutedLabel("  Sends nothing and measures server keep-alive.");
+        });
+
+        ImGui.SameLine(0, 12);
+
+        UiHelper.SectionBox("PARAMETERS", half, 210, () =>
+        {
+            UiHelper.MutedLabel("Test parameters:");
+            ImGui.Spacing();
+            ImGui.SetNextItemWidth(160);
+            ImGui.InputInt("Fake Session ID##ct_fs", ref _ctFakeSessionId);
+            ImGui.Spacing();
+            ImGui.SetNextItemWidth(-1);
+            ImGui.InputText("Fake Token##ct_ft", ref _ctFakeToken, 128);
+            ImGui.Spacing();
+            ImGui.SetNextItemWidth(120);
+            ImGui.InputInt("Timeout ms##ct_to", ref _ctTimeoutMs);
+            _ctTimeoutMs = Math.Clamp(_ctTimeoutMs, 100, 120_000);
+        });
+
+        ImGui.Spacing(); ImGui.Spacing();
+
+        UiHelper.SectionBox("RUN", w, 80, () =>
+        {
+            UiHelper.WarnButton("Run Connection Tests", 200, 34, () =>
+            {
+                if (!_config.IsSet)
+                { _log.Error("[Conn] No server set — go to Dashboard first."); return; }
+
+                _log.Info($"[Conn] Testing {_config.ServerIp}:{_config.ServerPort}");
+                if (_ctHandshakeTamper) _log.Warn("[Conn] Handshake tamper — stub");
+                if (_ctAuthBypass)      _log.Warn("[Conn] Auth bypass — stub");
+                if (_ctSessionHijack)   _log.Warn($"[Conn] Session hijack (ID={_ctFakeSessionId}, token={_ctFakeToken}) — stub");
+                if (_ctTimeoutTest)     _log.Warn($"[Conn] Timeout test ({_ctTimeoutMs} ms) — stub");
+                _log.Success("[Conn] Tests dispatched.");
+            });
+
+            ImGui.SameLine(0, 12);
+            ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
+            ImGui.TextUnformatted(_config.IsSet
+                ? $"-> {_config.ServerIp}:{_config.ServerPort}"
+                : "Set server in Dashboard first");
+            ImGui.PopStyleColor();
+        });
+
+        ImGui.Spacing();
+        RenderHowTo(
+            "Go to Dashboard and set your target server IP + port.",
+            "Enable the tests you want to run above.",
+            "Set Fake Session ID / Token to values observed from a real capture.",
+            "Click Run — results appear in the Log tab."
+        );
+    }
+
     private void RenderHowTo(params string[] steps)
     {
         ImGui.Spacing();
@@ -2440,7 +2526,7 @@ public class ProbeEntry
 /// <summary>A player ID candidate identified from packet traffic.</summary>
 public class AdminCandidate
 {
-    public int     PlayerId { get; set; }
+    public uint    PlayerId { get; set; }
     public int     Seen     { get; set; }
     public string? Name     { get; set; }
     public int     Score    { get; set; }

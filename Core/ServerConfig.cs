@@ -12,7 +12,7 @@ public class ServerConfig
 
     // ── Target item - set from Item Inspector, consumed by Dupe Methods ───
     /// The item ID currently targeted for dupe testing.
-    public int    TargetItemId     { get; private set; } = 0;
+    public uint   TargetItemId     { get; private set; } = 0;
     /// Where the current TargetItemId came from (e.g. "Item Inspector", "Manual")
     public string TargetItemSource { get; private set; } = "";
     /// True when TargetItemId has been set at least once
@@ -48,7 +48,7 @@ public class ServerConfig
     /// clicks "Set as Target". DupingTab subscribes to OnTargetItemChanged
     /// to auto-populate its item ID field.
     /// </summary>
-    public void SetTargetItemId(int itemId, string source = "Item Inspector")
+    public void SetTargetItemId(uint itemId, string source = "Item Inspector")
     {
         TargetItemId     = itemId;
         TargetItemSource = source;

@@ -74,7 +74,7 @@ public class DupingTab : ITab
         {
             if (_config.HasTargetItem)
             {
-                _itemId              = _config.TargetItemId;
+                _itemId              = (int)_config.TargetItemId;   // TargetItemId is uint; safe cast (max 4M fits in int)
                 _itemIdFromInspector = true;
                 _log.Success($"[Dupe] Target item auto-filled: {_itemId} " +
                              $"(from {_config.TargetItemSource})");
@@ -138,7 +138,7 @@ public class DupingTab : ITab
             ImGui.SameLine(0, 8);
 
             // Badge showing where the ID came from
-            if (_itemIdFromInspector && _config.HasTargetItem && _config.TargetItemId == _itemId)
+            if (_itemIdFromInspector && _config.HasTargetItem && _config.TargetItemId == (uint)_itemId)
             {
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
                 ImGui.TextUnformatted($"[*] from {_config.TargetItemSource}");
@@ -484,7 +484,7 @@ public class DupingTab : ITab
         {
             // 0x1F is a heuristic guess for Hytale's inventory-save opcode.
             // The item ID from ItemInspector is embedded at bytes 1-4 if available.
-            int targetId = _config.HasTargetItem ? _config.TargetItemId : _itemId;
+            uint targetId = _config.HasTargetItem ? _config.TargetItemId : (uint)_itemId;
             var pkt = new byte[9];
             pkt[0] = 0x1F;
             BitConverter.GetBytes(targetId).CopyTo(pkt, 1);

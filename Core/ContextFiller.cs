@@ -20,9 +20,9 @@ public static class ContextFiller
             ? packets.GetRange(packets.Count - 100, 100)
             : packets;
 
-        int? bestItemId   = null;
-        int? bestPlayerId = null;
-        int? bestEntityId = null;
+        uint? bestItemId   = null;
+        uint? bestPlayerId = null;
+        uint? bestEntityId = null;
         string? playerName = null;
 
         foreach (var pkt in Enumerable.Reverse(recent))
@@ -35,14 +35,14 @@ public static class ContextFiller
                 string n = guess.Name;
 
                 if (bestItemId == null && n.StartsWith("Item ID?"))
-                    bestItemId = guess.IntValue;
+                    bestItemId = guess.IntValue >= 0 ? (uint)guess.IntValue : (uint?)null;
 
                 if (bestPlayerId == null && n.StartsWith("Entity/Player ID?"))
-                    bestPlayerId = guess.IntValue;
+                    bestPlayerId = guess.IntValue >= 0 ? (uint)guess.IntValue : (uint?)null;
 
                 if (bestEntityId == null && n.StartsWith("Entity/Player ID?")
-                    && guess.IntValue != bestPlayerId)
-                    bestEntityId = guess.IntValue;
+                    && (uint)guess.IntValue != bestPlayerId)
+                    bestEntityId = guess.IntValue >= 0 ? (uint)guess.IntValue : (uint?)null;
 
                 if (playerName == null && n.StartsWith("Player Name"))
                     playerName = guess.StrValue;
@@ -66,9 +66,9 @@ public static class ContextFiller
 
 public class ContextSnapshot
 {
-    public int?   ItemId     { get; set; }
-    public int?   PlayerId   { get; set; }
-    public int?   EntityId   { get; set; }
+    public uint?  ItemId     { get; set; }
+    public uint?  PlayerId   { get; set; }
+    public uint?  EntityId   { get; set; }
     public string? PlayerName { get; set; }
     public string  Source    { get; set; } = "";
 

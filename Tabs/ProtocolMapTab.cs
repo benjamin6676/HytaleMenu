@@ -163,7 +163,7 @@ public class ProtocolMapTab : ITab
         // Add new entry row at top
         ImGui.SetCursorPos(new Vector2(6, 6));
         ImGui.SetNextItemWidth(56); ImGui.InputInt("##pmnew_op", ref _newOpcode);
-        _newOpcode = Math.Clamp(_newOpcode, 0, 255);
+        _newOpcode = Math.Clamp(_newOpcode, 0, 65535);
         ImGui.SameLine(0, 4);
         ImGui.SetNextItemWidth(48);
         ImGui.Combo("##pmnewdir", ref _newDir, new[] { "C->S", "S->C", "Both" }, 3);

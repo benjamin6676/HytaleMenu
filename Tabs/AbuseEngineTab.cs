@@ -389,7 +389,7 @@ public class AbuseEngineTab : ITab
         ImGui.SetNextItemWidth(260);
         if (ImGui.BeginCombo(label, display))
         {
-            foreach (var (op, info, isCs) in OpcodeRegistry.AllKnown().Where(x => x.isCs).OrderBy(x => x.opcode))
+            foreach (var (op, info, isCs) in OpcodeRegistry.AllKnown().Where(x => x.isCs).OrderBy(x => x.id))
             {
                 bool sel = opcode == op;
                 if (ImGui.Selectable($"0x{op:X2}  {info.Name}  [{info.Category}]##op{op}", sel))

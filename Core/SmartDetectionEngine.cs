@@ -13,8 +13,12 @@ public class SmartDetectionEngine : IDisposable
     // ── Inputs ────────────────────────────────────────────────────────────
     private readonly PacketCapture _capture;
     private readonly PacketStore   _store;
-    private readonly TestLog       _log;
+    private readonly TestLog       _log;     // Main log - important events only
+    private readonly TestLog       _sdLog;   // SmartDetect noise log (auto-naming etc)
     private readonly ServerConfig  _config;
+
+    /// <summary>Dedicated log for SmartDetect auto-naming / scoring noise.</summary>
+    public TestLog SmartLog => _sdLog;
 
     // ── Background thread ─────────────────────────────────────────────────
     private readonly CancellationTokenSource _cts = new();
@@ -22,7 +26,7 @@ public class SmartDetectionEngine : IDisposable
 
     // ── Outputs ──────────────────────────────────────────────────────────
     public ConcurrentDictionary<uint, ConfirmedItem>    ConfirmedItems       { get; } = new();
-    public ConcurrentDictionary<uint, TrackedEntity>    ActiveEntities       { get; } = new();
+    public ConcurrentDictionary<uint, EspEntity>    ActiveEntities       { get; } = new();
     public ConcurrentDictionary<string, uint>           StringCorrelation    { get; } = new();
     public ConcurrentDictionary<uint, string>           IdNameMap            { get; } = new();
     public ConcurrentDictionary<uint, Pkt4AEntry>       Pkt4AEntities        { get; } = new();
@@ -91,11 +95,12 @@ public class SmartDetectionEngine : IDisposable
     // ─────────────────────────────────────────────────────────────────────
 
     public SmartDetectionEngine(PacketCapture capture, PacketStore store,
-                                  TestLog log, ServerConfig config)
+                                  TestLog log, ServerConfig config, TestLog? sdLog = null)
     {
         _capture = capture;
         _store   = store;
         _log     = log;
+        _sdLog   = sdLog ?? new TestLog();
         _config  = config;
 
         _thread = new Thread(BackgroundLoop)
@@ -180,7 +185,7 @@ public class SmartDetectionEngine : IDisposable
             if (data.Length >= 5)
             {
                 uint dropId = BitConverter.ToUInt32(data, 1);
-                if (dropId >= 100 && dropId <= 9_999)
+                if (IdRanges.IsEntityId(dropId))
                 {
                     OnLootDropDetected?.Invoke(dropId, data);
                     _log.Success($"[SmartDetect] [*] Loot-drop captured! Item ID {dropId} in 0x{data[0]:X2}");
@@ -188,15 +193,17 @@ public class SmartDetectionEngine : IDisposable
             }
         }
 
-        // 1. 0x4A parser (both endianness)
+        // 1. 0x4A entity-sync parser
+        // BUG FIX: The old BE check `data[data.Length-1] == 0x4A` was wrong.
+        // A BE protocol puts the opcode at byte 0 too (same position), not the end.
+        // Having 0x4A as the last byte is coincidental data, not a BE opcode indicator.
+        // Removed false-positive BE path; kept LE check + generic heuristic fallback.
         if (data.Length >= 5)
         {
-            bool is4ALE = data[0] == 0x4A;
-            bool is4ABE = data[data.Length - 1] == 0x4A;  // BE: header at end
-            if (is4ALE) Process0x4A(data, pkt.Timestamp, false);
-            else if (is4ABE && data.Length >= 5) Process0x4A(data, pkt.Timestamp, true);
-            // Also: try matching any packet with plausible movement size
-            else if (data.Length >= 7 && data.Length <= 174) TryParseAs0x4A(data, pkt.Timestamp);
+            if (data[0] == 0x4A)
+                Process0x4A(data, pkt.Timestamp, false);   // standard LE
+            else if (data.Length >= 7 && data.Length <= 174)
+                TryParseAs0x4A(data, pkt.Timestamp);       // heuristic fallback
         }
 
         // 2. Sequence correlation (LE + BE + VarInt)
@@ -280,11 +287,8 @@ public class SmartDetectionEngine : IDisposable
                     var data = allPackets[i].RawBytes;
                     var ts   = allPackets[i].Timestamp;
 
-                    // Try both endianness
                     if (data.Length >= 5 && data[0] == 0x4A)
                     { Process0x4A(data, ts, false); _forcePinned4A[BitConverter.ToUInt32(data, 1)] = true; found++; }
-                    else if (data.Length >= 5 && data[data.Length-1] == 0x4A)
-                    { Process0x4A(data, ts, true); found++; }
                     else if (data.Length >= 7 && data.Length <= 174)
                     { TryParseAs0x4A(data, ts); }
 
@@ -340,6 +344,47 @@ public class SmartDetectionEngine : IDisposable
         _log.Info("[SmartDetect] Loot-drop listener ARMED - next Drop/Use packet will be captured.");
     }
 
+    /// <summary>
+    /// Called by AutoUpdateHandler live poll when a new hover entity ID is read from memory.
+    /// Registers it in EntityTracker with Memory-level confidence (highest possible).
+    /// </summary>
+    public void OnLiveMemoryHoverEntity(uint entityId)
+    {
+        if (!IdRanges.IsEntityId(entityId)) return;
+
+        // Record in EntityTracker with Memory confidence
+        EntityTracker.Instance.RegisterMemoryConfirmed(entityId,
+            IdNameMap.TryGetValue(entityId, out var n) ? n : $"HoverEnt-{entityId}");
+
+        // Also ensure it's in our own classifications
+        if (!EntityClassifications.ContainsKey(entityId))
+            EntityClassifications[entityId] = IdRanges.GuessClassFromId(entityId);
+
+        _log.Info($"[LiveMem] HoverEntity={entityId} registered (Memory confidence).");
+    }
+
+    /// <summary>
+    /// Called by AutoUpdateHandler live poll when the local player's entity ID is read from memory.
+    /// Tags the entity as LocalPlayer in SmartDetect and EntityTracker.
+    /// </summary>
+    public void OnLiveMemoryLocalPlayer(uint entityId)
+    {
+        if (!IdRanges.IsEntityId(entityId)) return;
+        if (_config.LocalPlayerEntityId == entityId) return;  // already known
+
+        // Update config (triggers OnLocalPlayerChanged event)
+        _config.SetLocalPlayerEntityId(entityId, "[MemPoll]");
+
+        // Register as Memory-confirmed in EntityTracker
+        EntityTracker.Instance.RegisterMemoryConfirmed(entityId, "[*] LocalPlayer");
+        EntityClassifications[entityId] = EntityClass.Player;
+
+        // Ensure IdNameMap has it
+        IdNameMap[entityId] = "[*] LocalPlayer";
+
+        _log.Success($"[LiveMem] LocalPlayer EntityID={entityId} auto-detected from memory.");
+    }
+
     // ── 0x4A parser (both endianness + fallback) ──────────────────────────
 
     private void Process0x4A(byte[] data, DateTime ts, bool bigEndian)
@@ -350,7 +395,7 @@ public class SmartDetectionEngine : IDisposable
             : BitConverter.ToUInt32(data, 1);
 
         // Widen range: Hytale entity IDs could be as low as 1 or as high as ~16M
-        if (primaryId == 0 || primaryId > 16_000_000) return;
+        if (!IdRanges.IsEntityId(primaryId)) return;
 
         // If range 1-99 it's suspicious but still register
         AddOrUpdate4AEntry(primaryId, ts, data);
@@ -361,7 +406,7 @@ public class SmartDetectionEngine : IDisposable
             uint secondaryId = bigEndian
                 ? (uint)(data[5] << 24 | data[6] << 16 | data[7] << 8 | data[8])
                 : BitConverter.ToUInt32(data, 5);
-            if (secondaryId != 0 && secondaryId != primaryId && secondaryId <= 16_000_000)
+            if (secondaryId != 0 && secondaryId != primaryId && IdRanges.IsEntityId(secondaryId))
                 AddOrUpdate4AEntry(secondaryId, ts, null);
         }
 
@@ -374,7 +419,7 @@ public class SmartDetectionEngine : IDisposable
             if (m.Success)
             {
                 IdNameMap[primaryId] = m.Value;
-                _log.Info($"[SmartDetect] 0x4A name: {primaryId} -> '{m.Value}'");
+                _sdLog.Info($"[SmartDetect] 0x4A name: {primaryId} -> '{m.Value}'");
             }
         }
     }
@@ -386,7 +431,7 @@ public class SmartDetectionEngine : IDisposable
         for (int i = 1; i <= Math.Min(5, data.Length - 4); i++)
         {
             uint v = BitConverter.ToUInt32(data, i);
-            if (v < 100 || v > 4_000_000) continue;
+            if (!IdRanges.IsBroadEntityId(v)) continue;
 
             // Check if bytes after it look like floats (coords)
             if (i + 16 <= data.Length)
@@ -428,7 +473,7 @@ public class SmartDetectionEngine : IDisposable
         for (int i = 1; i + 4 < data.Length; i++)
         {
             uint v = BitConverter.ToUInt32(data, i);
-            if (v < 100 || v > 9_999) continue;
+            if (!IdRanges.IsItemId(v)) continue;  // item-range scan
 
             byte nextByte = data[i + 4];
             if (nextByte < 1 || nextByte > 64) continue;
@@ -440,7 +485,7 @@ public class SmartDetectionEngine : IDisposable
         for (int i = 1; i + 4 < data.Length; i++)
         {
             uint v = (uint)(data[i] << 24 | data[i+1] << 16 | data[i+2] << 8 | data[i+3]);
-            if (v < 100 || v > 9_999) continue;
+            if (!IdRanges.IsItemId(v)) continue;  // item-range scan
             if (v == BitConverter.ToUInt32(data, i)) continue; // same as LE, skip
 
             byte nextByte = data[i + 4];
@@ -453,7 +498,7 @@ public class SmartDetectionEngine : IDisposable
         for (int i = 1; i < data.Length - 1; i++)
         {
             if (!TryReadVarInt(data, i, out uint varint, out int varLen)) continue;
-            if (varint < 100 || varint > 9_999) continue;
+            if (!IdRanges.IsBroadEntityId(varint)) continue;
             int afterIdx = i + varLen;
             if (afterIdx >= data.Length) continue;
             byte after = data[afterIdx];
@@ -500,7 +545,9 @@ public class SmartDetectionEngine : IDisposable
             byte b = data[offset + bytesRead++];
             value |= (uint)(b & 0x7F) << shift;
             shift += 7;
-            if ((b & 0x80) == 0) return bytesRead >= 2 && value <= 9_999; // require multi-byte
+            // FIX: removed bytesRead >= 2 - single-byte IDs (1-127) are valid.
+            // FIX: use IdRanges.IsEntityId for consistent range check everywhere.
+            if ((b & 0x80) == 0) return IdRanges.IsEntityId(value);
         }
         return false;
     }
@@ -514,7 +561,7 @@ public class SmartDetectionEngine : IDisposable
     {
         if (!DropInteractIds.Contains(pktId) || data.Length < 5) return;
         uint candidateId = BitConverter.ToUInt32(data, 1);
-        if (candidateId < 100 || candidateId > 4_000_000) return;
+        if (!IdRanges.IsBroadEntityId(candidateId)) return;
         if (ConfirmedItems.ContainsKey(candidateId)) return;
 
         string src = pktId switch
@@ -546,11 +593,11 @@ public class SmartDetectionEngine : IDisposable
         {
             uint candidate = BitConverter.ToUInt32(data, idOff);
             // Widen range - also try BE
-            if (candidate == 0 || candidate > 16_000_000)
+            if (!IdRanges.IsEntityId(candidate))
             {
                 candidate = (uint)(data[idOff] << 24 | data[idOff+1] << 16 |
                                    data[idOff+2] << 8  | data[idOff+3]);
-                if (candidate == 0 || candidate > 16_000_000) continue;
+                if (!IdRanges.IsEntityId(candidate)) continue;
             }
 
             // Try reading floats at multiple offsets after the ID
@@ -619,7 +666,7 @@ public class SmartDetectionEngine : IDisposable
                            : IdNameMap.TryGetValue(candidate, out var nm) ? nm : "";
 
         var entry = ActiveEntities.AddOrUpdate(candidate,
-            _ => new TrackedEntity
+            _ => new EspEntity
             {
                 EntityId = candidate, X = x, Y = y, Z = z,
                 FirstSeen = ts, LastSeen = ts, RegisteredAt = DateTime.Now,
@@ -702,7 +749,7 @@ public class SmartDetectionEngine : IDisposable
         if (cs)
         {
             // C->S movement packets -> player
-            if (opCode == 0x02 || opCode == 0x03 || opCode == 0x04A) return EntityClass.Player;
+            if (opCode == 0x02 || opCode == 0x03 || opCode == 0x4A) return EntityClass.Player;
             // C->S inventory actions -> item
             if (opCode == 0x09 || opCode == 0x0E || opCode == 0x07 || opCode == 0x08)
                 return EntityClass.Item;
@@ -765,7 +812,7 @@ public class SmartDetectionEngine : IDisposable
         for (int i = 1; i + 4 <= data.Length; i++)
         {
             uint id = BitConverter.ToUInt32(data, i);
-            if ((id < 100 || id > 9_999) && (id < 1_000 || id > 4_000_000)) continue;
+            if (!IdRanges.IsBroadEntityId(id)) continue;  // skip IDs outside item/mob/player range
 
             // Already have a good name - skip
             if (IdNameMap.TryGetValue(id, out var existing) && IsHighQualityName(existing))
@@ -854,7 +901,7 @@ public class SmartDetectionEngine : IDisposable
                 {
                     _store.Delete(old.Label);
                     shouldSave = true;
-                    _log.Info($"[SmartDetect] Replaced stale '{old.Label}' with '{bestName}'");
+                    _sdLog.Info($"[SmartDetect] Replaced stale '{old.Label}' with '{bestName}'");
                 }
             }
 
@@ -863,7 +910,7 @@ public class SmartDetectionEngine : IDisposable
                 _store.Save(bookLabel,
                     $"Auto-named: ID {id} -> '{bestName}' (score={bestScore})",
                     BitConverter.GetBytes(id), PacketDirection.ServerToClient);
-                _log.Success($"[SmartDetect] Auto-named: {id} -> '{bestName}' (score {bestScore})");
+                _sdLog.Success($"[SmartDetect] Auto-named: {id} -> '{bestName}' (score {bestScore})");
             }
 
             // Back-fill existing entries
@@ -897,7 +944,7 @@ public class SmartDetectionEngine : IDisposable
         for (int k = 1; k + 4 <= data.Length; k++)
         {
             uint v = BitConverter.ToUInt32(data, k);
-            if (v >= 100 && v <= 9_999) itemIds.Add(v);
+            if (IdRanges.IsBroadEntityId(v)) itemIds.Add(v);
         }
 
         if (metaStrings.Count == 0 || itemIds.Count == 0) return;
@@ -921,7 +968,7 @@ public class SmartDetectionEngine : IDisposable
         for (int i = 1; i + 4 <= data.Length; i++)
         {
             uint v = BitConverter.ToUInt32(data, i);
-            if (v < 100 || v > 9_999) continue;
+            if (!IdRanges.IsItemId(v)) continue;  // item-range scan
             if (!_deltaHistory.TryGetValue(v, out var ring))
                 _deltaHistory[v] = ring = new();
             byte assoc = i + 4 < data.Length ? data[i + 4] : (byte)0;
@@ -1056,7 +1103,7 @@ public class SmartDetectionEngine : IDisposable
         {
             // Safe ID read
             uint id = BitConverter.ToUInt32(data, i);
-            if (id < 1_000 || id > 4_000_000)
+            if (!IdRanges.IsPlayerId(id) && !IdRanges.IsMobId(id))
                 continue;
 
             int flagIndex = i + 4;
@@ -1117,6 +1164,28 @@ public class SmartDetectionEngine : IDisposable
 
     public void DismissSuggestion() => _suggestedTargetId = 0;
 
+    /// <summary>
+    /// Called by the live memory polling loop when HoverEntityId changes in RAM.
+    /// BUG FIX: previously HoverIdAddr was found by AOB but never read live,
+    /// so the suggested target was only set by packet mirroring (C->S interact pkts).
+    /// Now memory polling feeds it directly for real-time hover tracking.
+    /// </summary>
+    public void SetHoverEntity(uint entityId)
+    {
+        if (entityId == 0 || entityId > 16_000_000) return;
+        if (_suggestedTargetId == entityId) return;
+
+        _suggestedTargetId = entityId;
+        _suggestedSource   = "Memory poll (HoverEntityId)";
+
+        // Register in EntityTracker so it appears in the inspector with memory confidence
+        var entity = EntityTracker.Instance.GetSnapshot().FirstOrDefault(e => e.Id == entityId);
+        if (entity != null)
+            EntityTracker.Instance.RegisterMemoryConfirmed(entityId, entity.Name);
+
+        _log.Info($"[SmartDetect] HoverEntity (memory) -> {entityId}");
+    }
+
     public void Dispose()
     {
         _cts.Cancel();
@@ -1142,7 +1211,7 @@ public class ConfirmedItem
     public EntityClass EntityClass { get; set; } = EntityClass.Item;
 }
 
-public class TrackedEntity
+public class EspEntity
 {
     public uint        EntityId     { get; set; }
     public float       X            { get; set; }

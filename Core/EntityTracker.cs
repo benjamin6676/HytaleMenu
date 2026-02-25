@@ -94,7 +94,10 @@ public class EntityTracker
                 {
                     OpcodeCategory.Item      => EntityClass.Item,
                     OpcodeCategory.Inventory => EntityClass.Item,
-                    OpcodeCategory.Entity when entity.MoveCount > 2 => EntityClass.Player,
+                    // BUG FIX: Entity packets with movement = could be Player or Mob.
+                    // Use move frequency to disambiguate (matches SmartDetect logic).
+                    OpcodeCategory.Entity when entity.MoveCount > 10 => EntityClass.Player,
+                    OpcodeCategory.Entity when entity.MoveCount > 3  => EntityClass.Mob,
                     _ => entity.EntityClass,
                 };
             }
@@ -179,6 +182,7 @@ public class EntityTracker
     public TrackedEntity[] GetSnapshot()     => Entities.Values.ToArray();
     public TrackedEntity[] GetPlayers()      => Entities.Values.Where(e => e.EntityClass == EntityClass.Player).ToArray();
     public TrackedEntity[] GetItems()        => Entities.Values.Where(e => e.EntityClass == EntityClass.Item).ToArray();
+    public TrackedEntity[] GetMobs()         => Entities.Values.Where(e => e.EntityClass == EntityClass.Mob).ToArray();   // BUG FIX: was missing
     public TrackedEntity[] GetFlagged()      => Entities.Values.Where(e => e.FlaggedEvents.Count > 0).ToArray();
 
     // ── Internals ─────────────────────────────────────────────────────────
@@ -241,6 +245,7 @@ public class TrackedEntity
     public string ClassLabel => EntityClass switch
     {
         EntityClass.Player  => "[P]",
+        EntityClass.Mob     => "[M]",   // BUG FIX: was missing, mobs showed as [?]
         EntityClass.Item    => "[I]",
         _                   => "[?]",
     };

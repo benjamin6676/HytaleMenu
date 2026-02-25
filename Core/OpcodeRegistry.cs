@@ -22,107 +22,196 @@ namespace HytaleSecurityTester.Core;
 /// </summary>
 public static class OpcodeRegistry
 {
-    // ── Known Client -> Server opcodes ────────────────────────────────────
-    private static readonly Dictionary<byte, OpcodeInfo> CsOpcodes = new()
+    // ── Real Hytale Client -> Server packet IDs ───────────────────────────
+    // Source: hytalemodding.dev (build 2026.01.13-dcad8778f)
+    // Hytale uses VarInt-encoded packet IDs on the wire (same as Minecraft).
+    // IDs 0-127 = single byte; 128+ = multi-byte VarInt.
+    // Use DecodePacketId() to extract the ID from raw bytes / hex preview.
+    private static readonly Dictionary<ushort, OpcodeInfo> CsOpcodes = new()
     {
-        { 0x01, new("ChatMessage",      "Chat / Command send",             OpcodeCategory.Chat) },
-        { 0x02, new("PlayerMove",       "Position update (XYZ + yaw/pitch)",OpcodeCategory.Movement) },
-        { 0x03, new("PlayerLook",       "Camera direction update",         OpcodeCategory.Movement) },
-        { 0x04, new("PlayerAction",     "Generic player action",           OpcodeCategory.Action) },
-        { 0x05, new("DigBlock",         "Block break / dig start",         OpcodeCategory.World) },
-        { 0x06, new("UseItem",          "Right-click / use held item",     OpcodeCategory.Item) },
-        { 0x07, new("DropItem",         "Drop item from inventory",        OpcodeCategory.Item) },
-        { 0x08, new("PickupItem",       "Pick up world entity",            OpcodeCategory.Item) },
-        { 0x09, new("InventoryClick",   "Click slot in open container",    OpcodeCategory.Inventory) },
-        { 0x0A, new("InventoryClose",   "Close container / inventory",     OpcodeCategory.Inventory) },
-        { 0x0B, new("TradeAccept",      "Accept active trade offer",       OpcodeCategory.Trade) },
-        { 0x0C, new("TradeCancel",      "Cancel active trade",             OpcodeCategory.Trade) },
-        { 0x0D, new("ContainerOpen",    "Request to open container",       OpcodeCategory.Inventory) },
-        { 0x0E, new("ContainerMove",    "Move item between container slots",OpcodeCategory.Inventory) },
-        { 0x0F, new("ContainerClose",   "Close container interaction",     OpcodeCategory.Inventory) },
-        { 0x10, new("Handshake",        "Login / handshake initiation",    OpcodeCategory.Auth) },
-        { 0x11, new("KeepAliveReply",   "Heartbeat acknowledgement",       OpcodeCategory.System) },
-        { 0x12, new("RespawnRequest",   "Request respawn after death",     OpcodeCategory.System) },
-        { 0x20, new("EntityInteract",   "Right-click entity (NPC/mob)",    OpcodeCategory.Entity) },
-        { 0x21, new("EntityAttack",     "Melee attack on entity",          OpcodeCategory.Entity) },
-        { 0x22, new("EntityUse",        "Secondary interact with entity",  OpcodeCategory.Entity) },
-        { 0x2A, new("GiveItem",         "Suspected: give item to player",  OpcodeCategory.Item) },
-        { 0x30, new("TransactionStart", "Begin atomic inventory transaction",OpcodeCategory.Transaction) },
-        { 0x31, new("TransactionCommit","Commit inventory transaction",    OpcodeCategory.Transaction) },
-        { 0x32, new("TransactionRollback","Rollback / abort transaction",  OpcodeCategory.Transaction) },
-        { 0x4A, new("EntitySync4A",     "High-freq entity/item sync (0x4A)",OpcodeCategory.Entity) },
-        { 0xFF, new("Debug",            "Debug / internal opcode",         OpcodeCategory.System) },
+        // ── Auth / setup ──────────────────────────────────────────────────
+        { 0,    new("Connect",               "Initial connection handshake",            OpcodeCategory.Auth) },
+        { 1,    new("Disconnect",            "Disconnect notification",                 OpcodeCategory.Auth) },
+        { 12,   new("AuthToken",             "Authentication token",                    OpcodeCategory.Auth) },
+        { 15,   new("PasswordResponse",      "Password authentication",                 OpcodeCategory.Auth) },
+        { 18,   new("ClientReferral",        "Client referral / relay",                 OpcodeCategory.System) },
+        { 23,   new("RequestAssets",         "Asset download request",                  OpcodeCategory.System) },
+        // ── Player / movement ─────────────────────────────────────────────
+        { 100,  new("SetClientId",           "Set client connection identifier",        OpcodeCategory.System) },
+        { 101,  new("SetGameMode",           "Request game mode change",                OpcodeCategory.System) },
+        { 102,  new("SetMovementStates",     "Batch movement state flags",              OpcodeCategory.Movement) },
+        { 103,  new("SetBlockPlacementOverride","Override block placement",             OpcodeCategory.World) },
+        { 104,  new("JoinWorld",             "Join / teleport to world",                OpcodeCategory.World) },
+        { 105,  new("ClientReady",           "Client ready for gameplay",               OpcodeCategory.System) },
+        { 106,  new("LoadHotbar",            "Load hotbar row from inventory",          OpcodeCategory.Inventory) },
+        { 107,  new("SaveHotbar",            "Save current hotbar row",                 OpcodeCategory.Inventory) },
+        { 108,  new("ClientMovement",        "Position + orientation update",           OpcodeCategory.Movement) },
+        { 109,  new("ClientTeleport",        "Teleport acknowledgement",                OpcodeCategory.Movement) },
+        { 110,  new("UpdateMovementSettings","Movement settings / modifiers",           OpcodeCategory.Movement) },
+        { 111,  new("MouseInteraction",      "Mouse click / aim interaction",           OpcodeCategory.Action) },
+        { 112,  new("DamageInfo",            "Client-reported damage event",            OpcodeCategory.Entity) },
+        { 113,  new("ReticleEvent",          "Reticle / crosshair event",               OpcodeCategory.Action) },
+        { 116,  new("SyncPlayerPreferences", "Client preferences sync",                 OpcodeCategory.System) },
+        { 117,  new("ClientPlaceBlock",      "Place block in world",                    OpcodeCategory.World) },
+        { 118,  new("UpdateMemoriesFeatureStatus","Memories feature toggle",            OpcodeCategory.System) },
+        { 119,  new("RemoveMapMarker",       "Remove map waypoint marker",              OpcodeCategory.World) },
+        // ── Inventory ─────────────────────────────────────────────────────
+        { 170,  new("UpdatePlayerInventory", "Full inventory contents sync",            OpcodeCategory.Inventory) },
+        { 171,  new("SetCreativeItem",       "Set item in creative slot",               OpcodeCategory.Inventory) },
+        { 172,  new("DropCreativeItem",      "Drop item from creative inventory",       OpcodeCategory.Inventory) },
+        { 173,  new("SmartGiveCreativeItem", "Smart-give creative item",                OpcodeCategory.Inventory) },
+        { 174,  new("DropItemStack",         "Drop item stack from slot",               OpcodeCategory.Inventory) },
+        { 175,  new("MoveItemStack",         "Move item between slots",                 OpcodeCategory.Inventory) },
+        { 176,  new("SmartMoveItemStack",    "Smart-move item stack",                   OpcodeCategory.Inventory) },
+        { 177,  new("SetActiveSlot",         "Switch active hotbar slot",               OpcodeCategory.Inventory) },
+        { 178,  new("SwitchHotbarBlockSet",  "Cycle block set on hotbar",               OpcodeCategory.Inventory) },
+        { 179,  new("InventoryAction",       "Generic inventory action",                OpcodeCategory.Inventory) },
+        // ── Windows / UI ──────────────────────────────────────────────────
+        { 200,  new("OpenWindow",            "Server-opened UI window",                 OpcodeCategory.System) },
+        { 201,  new("UpdateWindow",          "Window contents update",                  OpcodeCategory.System) },
+        { 202,  new("CloseWindow",           "Close UI window",                         OpcodeCategory.System) },
+        { 203,  new("SendWindowAction",      "Interact with window element",            OpcodeCategory.System) },
+        { 204,  new("ClientOpenWindow",      "Client-initiated window open",            OpcodeCategory.System) },
+        // ── Chat / other ──────────────────────────────────────────────────
+        { 211,  new("ChatMessage",           "Player chat message",                     OpcodeCategory.Chat) },
+        { 219,  new("CustomPageEvent",       "Custom UI page event",                    OpcodeCategory.System) },
+        { 232,  new("UpdateLanguage",        "Client language setting",                 OpcodeCategory.System) },
+        { 243,  new("UpdateWorldMapVisible", "Toggle world map visibility",             OpcodeCategory.World) },
+        { 244,  new("TeleportToWorldMapMarker","Teleport to map marker",                OpcodeCategory.Movement) },
+        { 245,  new("TeleportToWorldMapPosition","Teleport to map position",            OpcodeCategory.Movement) },
+        { 251,  new("UpdateServerAccess",    "Update server access flags",              OpcodeCategory.Auth) },
+        { 252,  new("SetServerAccess",       "Set server access + password",            OpcodeCategory.Auth) },
+        { 158,  new("SetPaused",             "Client pause state",                      OpcodeCategory.System) },
+        { 160,  new("SetEntitySeed",         "Entity random seed",                      OpcodeCategory.Entity) },
+        { 166,  new("MountMovement",         "Movement while mounted",                  OpcodeCategory.Movement) },
+        { 216,  new("SetPage",               "Navigate to page",                        OpcodeCategory.System) },
+        // ── Interaction (SyncInteractionChains - key exploit surface) ─────
+        { 290,  new("SyncInteractionChains", "Player interaction batch (primary/secondary/use/F-key)", OpcodeCategory.Action) },
+        // ── Builder tools ─────────────────────────────────────────────────
+        { 400,  new("BuilderToolArgUpdate",  "Builder tool argument",                   OpcodeCategory.World) },
+        { 401,  new("BuilderToolEntityAction","Builder entity action",                  OpcodeCategory.World) },
+        { 402,  new("BuilderToolSetEntityTransform","Set entity transform",             OpcodeCategory.World) },
+        { 405,  new("BuilderToolSelectionTransform","Transform selection",              OpcodeCategory.World) },
+        { 409,  new("BuilderToolSelectionUpdate","Update selection",                    OpcodeCategory.World) },
+        { 412,  new("BuilderToolGeneralAction","Builder general action",                OpcodeCategory.World) },
+        { 413,  new("BuilderToolOnUseInteraction","Builder use interaction",            OpcodeCategory.World) },
+        { 414,  new("BuilderToolLineAction", "Builder line draw action",                OpcodeCategory.World) },
+        // ── Misc ──────────────────────────────────────────────────────────
+        { 282,  new("RequestFlyCameraMode",  "Request fly/camera mode",                 OpcodeCategory.Movement) },
+        { 294,  new("DismountNPC",           "Dismount from NPC",                       OpcodeCategory.Entity) },
+        { 0x4A, new("EntitySync4A",          "High-freq entity/item sync (legacy 0x4A)",OpcodeCategory.Entity) },
+        { 0xFF, new("Debug",                 "Debug / internal packet",                 OpcodeCategory.System) },
     };
 
-    // ── Known Server -> Client opcodes ────────────────────────────────────
-    private static readonly Dictionary<byte, OpcodeInfo> ScOpcodes = new()
+    // ── Real Hytale Server -> Client packet IDs ───────────────────────────
+    private static readonly Dictionary<ushort, OpcodeInfo> ScOpcodes = new()
     {
-        { 0x01, new("ChatMessage",      "Chat message from server",        OpcodeCategory.Chat) },
-        { 0x02, new("PlayerSpawn",      "Spawn player entity",             OpcodeCategory.Entity) },
-        { 0x03, new("EntityUpdate",     "Entity position / state update",  OpcodeCategory.Entity) },
-        { 0x04, new("InventoryUpdate",  "Full inventory contents sync",    OpcodeCategory.Inventory) },
-        { 0x05, new("ItemPickupConfirm","Server confirms item pickup",     OpcodeCategory.Item) },
-        { 0x06, new("BlockUpdate",      "Single block state change",       OpcodeCategory.World) },
-        { 0x07, new("SoundEffect",      "Play sound at world position",    OpcodeCategory.Audio) },
-        { 0x08, new("ParticleEffect",   "Spawn particle at position",      OpcodeCategory.Visual) },
-        { 0x09, new("WorldState",       "World / chunk data transfer",     OpcodeCategory.World) },
-        { 0x0A, new("TimeUpdate",       "Day/night time sync",             OpcodeCategory.World) },
-        { 0x10, new("LoginSuccess",     "Authentication accepted",         OpcodeCategory.Auth) },
-        { 0x11, new("LoginFailure",     "Authentication rejected",         OpcodeCategory.Auth) },
-        { 0x12, new("KeepAlive",        "Heartbeat ping from server",      OpcodeCategory.System) },
-        { 0x20, new("ItemSpawnWorld",   "Item entity spawned in world",    OpcodeCategory.Item) },
-        { 0x21, new("ItemDespawn",      "Item entity removed from world",  OpcodeCategory.Item) },
-        { 0x22, new("InventorySlot",    "Single inventory slot update",    OpcodeCategory.Inventory) },
-        { 0x23, new("HealthUpdate",     "Player health / status change",   OpcodeCategory.Entity) },
-        { 0x24, new("XpUpdate",         "Experience points update",        OpcodeCategory.Entity) },
-        { 0x30, new("TransactionAck",   "Transaction acknowledged",        OpcodeCategory.Transaction) },
-        { 0x31, new("TransactionDenied","Transaction rejected by server",  OpcodeCategory.Transaction) },
-        { 0x4A, new("EntitySync4A",     "High-freq entity/item sync (0x4A)",OpcodeCategory.Entity) },
+        { 1,    new("Disconnect",            "Server disconnect",                        OpcodeCategory.System) },
+        { 3,    new("Pong",                  "Keepalive pong",                           OpcodeCategory.System) },
+        { 0x4A, new("EntitySync4A",          "High-freq entity/item sync (0x4A)",        OpcodeCategory.Entity) },
+        // IDs below are inferred (S->C not fully documented by hytalemodding.dev)
+        { 0x02, new("PlayerSpawn",           "Spawn player entity",                      OpcodeCategory.Entity) },
+        { 0x03, new("EntityUpdate",          "Entity position / state update",           OpcodeCategory.Entity) },
+        { 0x04, new("InventoryUpdate",       "Full inventory contents sync",             OpcodeCategory.Inventory) },
+        { 0x06, new("BlockUpdate",           "Single block state change",                OpcodeCategory.World) },
+        { 0x0A, new("TimeUpdate",            "Day/night time sync",                      OpcodeCategory.World) },
+        { 0x10, new("LoginSuccess",          "Authentication accepted",                  OpcodeCategory.Auth) },
+        { 0x12, new("KeepAlive",             "Heartbeat ping from server",               OpcodeCategory.System) },
+        { 0x20, new("ItemSpawnWorld",        "Item entity spawned in world",             OpcodeCategory.Item) },
+        { 0x22, new("InventorySlot",         "Single inventory slot update",             OpcodeCategory.Inventory) },
+        { 0x23, new("HealthUpdate",          "Player health / status change",            OpcodeCategory.Entity) },
+        { 0x30, new("TransactionAck",        "Transaction acknowledged",                 OpcodeCategory.Transaction) },
+        { 0x31, new("TransactionDenied",     "Transaction rejected by server",           OpcodeCategory.Transaction) },
     };
 
-    // Runtime user-learned opcodes (persisted via GlobalConfig)
-    private static readonly ConcurrentDictionary<byte, OpcodeInfo> UserCsOpcodes = new();
-    private static readonly ConcurrentDictionary<byte, OpcodeInfo> UserScOpcodes = new();
+    // Runtime user-learned opcodes
+    private static readonly ConcurrentDictionary<ushort, OpcodeInfo> UserCsOpcodes = new();
+    private static readonly ConcurrentDictionary<ushort, OpcodeInfo> UserScOpcodes = new();
+
+    // ── VarInt decoder (Netty / Hytale wire format) ───────────────────────
+
+    /// <summary>
+    /// Decode a Hytale/Netty VarInt packet ID from raw bytes.
+    /// IDs 0-127: single byte. 128+: low 7 bits of each byte, MSB = "more follows".
+    /// Returns the decoded ID and how many bytes it consumed.
+    /// </summary>
+    public static ushort DecodePacketId(byte[] data, out int bytesConsumed)
+    {
+        int result = 0;
+        bytesConsumed = 0;
+        for (int i = 0; i < Math.Min(3, data.Length); i++)
+        {
+            byte b = data[i];
+            result |= (b & 0x7F) << (7 * i);
+            bytesConsumed = i + 1;
+            if ((b & 0x80) == 0) break;
+        }
+        return (ushort)result;
+    }
+
+    /// <summary>Decode VarInt from a hex-preview string ("6C 00 AB...").</summary>
+    public static ushort DecodePacketIdFromHex(string hexPreview)
+    {
+        var tokens = hexPreview.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var bytes  = new List<byte>(3);
+        foreach (var t in tokens)
+        {
+            if (bytes.Count >= 3) break;
+            if (byte.TryParse(t, System.Globalization.NumberStyles.HexNumber, null, out byte b))
+                bytes.Add(b);
+        }
+        return bytes.Count > 0 ? DecodePacketId(bytes.ToArray(), out _) : (ushort)0;
+    }
 
     // ── Lookup ────────────────────────────────────────────────────────────
 
-    public static OpcodeInfo? Lookup(byte opcode, PacketDirection dir)
+    public static OpcodeInfo? Lookup(ushort id, PacketDirection dir)
     {
         bool cs = dir == PacketDirection.ClientToServer;
         var userMap    = cs ? UserCsOpcodes : UserScOpcodes;
         var builtInMap = cs ? CsOpcodes     : ScOpcodes;
-        if (userMap.TryGetValue(opcode, out var u)) return u;
-        if (builtInMap.TryGetValue(opcode, out var b)) return b;
+        if (userMap.TryGetValue(id, out var u)) return u;
+        if (builtInMap.TryGetValue(id, out var b)) return b;
         return null;
     }
 
-    /// <summary>Short display label: "EntitySync4A" or "Unk(0xXX)"</summary>
-    public static string Label(byte opcode, PacketDirection dir)
-        => Lookup(opcode, dir)?.Name ?? $"Unk(0x{opcode:X2})";
+    /// <summary>Legacy byte overload — wraps to ushort.</summary>
+    public static OpcodeInfo? Lookup(byte opcode, PacketDirection dir)
+        => Lookup((ushort)opcode, dir);
 
-    /// <summary>Full label with direction and description.</summary>
-    public static string FullLabel(byte opcode, PacketDirection dir)
+    public static string Label(ushort id, PacketDirection dir)
+        => Lookup(id, dir)?.Name ?? $"Unk({id})";
+
+    public static string Label(byte opcode, PacketDirection dir)
+        => Label((ushort)opcode, dir);
+
+    public static string FullLabel(ushort id, PacketDirection dir)
     {
-        var info = Lookup(opcode, dir);
+        var info = Lookup(id, dir);
         string prefix = dir == PacketDirection.ClientToServer ? "C->S" : "S->C";
-        if (info == null) return $"[{prefix}] 0x{opcode:X2} Unknown";
-        return $"[{prefix}] 0x{opcode:X2} {info.Name}";
+        if (info == null) return $"[{prefix}] ID {id} Unknown";
+        return $"[{prefix}] {id} {info.Name}";
     }
 
-    /// <summary>Register a user-learned opcode name at runtime.</summary>
-    public static void Learn(byte opcode, PacketDirection dir, string name, string description = "")
+    public static string FullLabel(byte opcode, PacketDirection dir)
+        => FullLabel((ushort)opcode, dir);
+
+    public static void Learn(ushort id, PacketDirection dir, string name, string description = "")
     {
         var info = new OpcodeInfo(name, description, OpcodeCategory.Unknown);
         if (dir == PacketDirection.ClientToServer)
-            UserCsOpcodes[opcode] = info;
+            UserCsOpcodes[id] = info;
         else
-            UserScOpcodes[opcode] = info;
+            UserScOpcodes[id] = info;
     }
 
-    public static IEnumerable<(byte opcode, OpcodeInfo info, bool isCs)> AllKnown()
+    public static void Learn(byte opcode, PacketDirection dir, string name, string description = "")
+        => Learn((ushort)opcode, dir, name, description);
+
+    public static IEnumerable<(ushort id, OpcodeInfo info, bool isCs)> AllKnown()
     {
-        foreach (var kv in CsOpcodes)  yield return (kv.Key, kv.Value, true);
-        foreach (var kv in ScOpcodes)  yield return (kv.Key, kv.Value, false);
+        foreach (var kv in CsOpcodes)     yield return (kv.Key, kv.Value, true);
+        foreach (var kv in ScOpcodes)     yield return (kv.Key, kv.Value, false);
         foreach (var kv in UserCsOpcodes) yield return (kv.Key, kv.Value, true);
         foreach (var kv in UserScOpcodes) yield return (kv.Key, kv.Value, false);
     }
@@ -139,12 +228,24 @@ public static class OpcodeRegistry
         var data = pkt.RawBytes;
         if (data.Length == 0) return sp;
 
-        byte opcode = data[0];
+        ushort opcode = DecodePacketId(data, out int idBytes);
         sp.Opcode  = opcode;
         sp.Info    = Lookup(opcode, pkt.Direction);
         sp.Label   = FullLabel(opcode, pkt.Direction);
 
         // Category-specific field extraction
+        // Special case: PlayerSpawn (0x02) has a known layout:
+        //   [opcode 1-3B VarInt][entityId 4B][nameLen 1B or 2B][name UTF-8][xyz 12B]
+        // We handle it specifically BEFORE the generic Entity extractor so
+        // the extracted ID gets labeled "PlayerID" (not generic "EntityID").
+        bool handledSpecially = false;
+        if (sp.Opcode == 0x02 && pkt.Direction == PacketDirection.ServerToClient && data.Length >= 5)
+        {
+            ExtractPlayerSpawnFields(sp, data);
+            handledSpecially = true;
+        }
+
+        if (!handledSpecially)
         switch (sp.Info?.Category)
         {
             case OpcodeCategory.Entity:
@@ -191,35 +292,82 @@ public static class OpcodeRegistry
 
     private static void ExtractEntityFields(StructuredPacket sp, byte[] data)
     {
-        // Try LE uint32 at offsets 1-8 for entity/item IDs
+        // Entity packet layouts vary. We try multiple strategies:
+        //
+        // Strategy A: LE uint32 at offsets 1-12 (standard 4-byte entity ID)
+        // Strategy B: BE uint32 as fallback (some packets use network byte order)
+        // Strategy C: uint64 at offsets 1-8 (future-proof for 8-byte IDs)
+        //
+        // Range: 1..16_000_000 (consistent with SmartDetect and entity coord scanner)
+        // BUG FIX: was 100..9_999_999 which missed IDs 1-99 and was inconsistent.
+
+        var seen = new HashSet<uint>();
+
         for (int i = 1; i + 4 <= Math.Min(data.Length, 16); i++)
         {
-            uint v = BitConverter.ToUInt32(data, i);
-            if (v >= 100 && v <= 9_999_999)
+            // LE uint32
+            uint vLe = BitConverter.ToUInt32(data, i);
+            if (IdRanges.IsEntityId(vLe) && seen.Add(vLe))
             {
-                sp.ExtractedIds.Add(new ExtractedField("EntityID", v, i,
-                    v <= 9999 ? ConfidenceSource.Packet : ConfidenceSource.Inferred));
+                var src = IdRanges.IsItemId(vLe) ? ConfidenceSource.Packet : ConfidenceSource.Inferred;
+                string fldName = IdRanges.IsItemId(vLe) ? "ItemID"
+                        : IdRanges.IsPlayerId(vLe) ? "PlayerID"
+                        : IdRanges.IsMobId(vLe)    ? "MobID"
+                        : "EntityID";
+                sp.ExtractedIds.Add(new ExtractedField(fldName, vLe, i, src));
+            }
+
+            // BE uint32 (different value only)
+            uint vBe = (uint)(data[i] << 24 | data[i+1] << 16 | data[i+2] << 8 | data[i+3]);
+            if (vBe != vLe && IdRanges.IsEntityId(vBe) && seen.Add(vBe))
+                sp.ExtractedIds.Add(new ExtractedField("EntityID(BE)", vBe, i, ConfidenceSource.Inferred));
+        }
+
+        // Strategy C: 8-byte int64 probe (covers UUID-style 64-bit entity IDs)
+        // If the low 32 bits are in a plausible ID range, register it with lower confidence.
+        if (data.Length >= 9)
+        {
+            long v64 = BitConverter.ToInt64(data, 1);
+            uint low32 = (uint)(v64 & 0xFFFF_FFFF);
+            if (v64 > 0 && v64 <= 4_000_000_000L && IdRanges.IsEntityId(low32)
+                && seen.Add(low32))
+            {
+                sp.ExtractedIds.Add(new ExtractedField("EntityID(64)", low32, 1,
+                    ConfidenceSource.Inferred) { Confidence = 45 });
             }
         }
-        // Try XYZ floats from offset 5 onwards
+
+        // XYZ floats - start at offset 5 (after opcode + 4-byte entity ID)
         TryExtractXYZ(sp, data, startOffset: 5);
     }
 
     private static void ExtractInventoryFields(StructuredPacket sp, byte[] data)
     {
-        if (data.Length >= 5)
+        // Inventory packet layout (typical):
+        //   byte 0   : opcode
+        //   byte 1   : SlotIndex
+        //   bytes 2-5: ItemID (uint32 LE)  -- range consistent with SmartDetect (up to 4M)
+        //   byte 6   : StackSize
+        //
+        // BUG FIX: upper bound was 9999, missing any item ID above 9999.
+        // Now uses 16_000_000 consistent with entity/SmartDetect scanning.
+        if (data.Length >= 2)
         {
             byte slotIdx = data[1];
             sp.Fields.Add(new PacketFieldEx("SlotIndex", slotIdx.ToString(), 1, ConfidenceSource.Packet, 70));
         }
-        for (int i = 2; i + 4 <= Math.Min(data.Length, 12); i++)
+        for (int i = 2; i + 4 <= Math.Min(data.Length, 14); i++)
         {
             uint v = BitConverter.ToUInt32(data, i);
-            if (v >= 100 && v <= 9999)
+            if (IdRanges.IsBroadEntityId(v))
             {
-                sp.ExtractedIds.Add(new ExtractedField("ItemID", v, i, ConfidenceSource.Packet));
+                // Prefer IDs in item-likely range; use lower confidence for large IDs
+                var src = IdRanges.IsItemId(v) ? ConfidenceSource.Packet : ConfidenceSource.Inferred;
+                int conf = IdRanges.IsItemId(v) ? 85 : 55;
+                sp.ExtractedIds.Add(new ExtractedField("ItemID", v, i, src) { Confidence = conf });
                 if (i + 4 < data.Length)
-                    sp.Fields.Add(new PacketFieldEx("StackSize", data[i + 4].ToString(), i + 4, ConfidenceSource.Inferred, 55));
+                    sp.Fields.Add(new PacketFieldEx("StackSize", data[i + 4].ToString(), i + 4,
+                        ConfidenceSource.Inferred, 55));
                 break;
             }
         }
@@ -227,13 +375,56 @@ public static class OpcodeRegistry
 
     private static void ExtractMovementFields(StructuredPacket sp, byte[] data)
     {
-        TryExtractXYZ(sp, data, startOffset: 1);
-        // Yaw + pitch
-        if (data.Length >= 13)
+        // Movement packet layout (typical):
+        //   byte 0    : opcode
+        //   bytes 1-4 : EntityID (uint32 LE) -- who is moving
+        //   bytes 5-8 : X (float)
+        //   bytes 9-12: Y (float)
+        //   bytes 13-16: Z (float)
+        //   bytes 17-20: Yaw (float, optional)
+        //   bytes 21-24: Pitch (float, optional)
+        //
+        // BUG FIX: previous code called TryExtractXYZ(startOffset:1) which
+        // consumed the EntityID bytes as X, losing the player/entity ID entirely.
+        // Now we extract the EntityID first, then XYZ from the correct offset.
+
+        if (data.Length >= 5)
         {
-            float yaw = BitConverter.ToSingle(data, Math.Min(9, data.Length - 4));
+            // Try LE uint32 entity ID at offset 1
+            uint entityId = BitConverter.ToUInt32(data, 1);
+            if (entityId >= 1 && entityId <= 16_000_000)
+            {
+                sp.ExtractedIds.Add(new ExtractedField("EntityID", entityId, 1,
+                    ConfidenceSource.Packet));
+                // XYZ starts after the entity ID
+                TryExtractXYZ(sp, data, startOffset: 5);
+            }
+            else
+            {
+                // No valid entity ID at offset 1 - fall back to scanning
+                // Try BE uint32 as alternative
+                uint entityIdBe = (uint)(data[1] << 24 | data[2] << 16 | data[3] << 8 | data[4]);
+                if (entityIdBe >= 1 && entityIdBe <= 16_000_000)
+                {
+                    sp.ExtractedIds.Add(new ExtractedField("EntityID", entityIdBe, 1,
+                        ConfidenceSource.Inferred));
+                    TryExtractXYZ(sp, data, startOffset: 5);
+                }
+                else
+                {
+                    // Fallback: XYZ might start at offset 1 (no entity ID prefix)
+                    TryExtractXYZ(sp, data, startOffset: 1);
+                }
+            }
+        }
+
+        // Yaw + pitch after XYZ block (if position was found)
+        if (sp.Position.HasValue && data.Length >= 21)
+        {
+            // Yaw is 4 bytes after the 12-byte XYZ block (starting at 5+12=17)
+            float yaw = BitConverter.ToSingle(data, Math.Min(17, data.Length - 4));
             if (!float.IsNaN(yaw) && yaw >= -360f && yaw <= 360f)
-                sp.Fields.Add(new PacketFieldEx("Yaw", $"{yaw:F1}", 9, ConfidenceSource.Inferred, 60));
+                sp.Fields.Add(new PacketFieldEx("Yaw", $"{yaw:F1}", 17, ConfidenceSource.Inferred, 60));
         }
     }
 
@@ -249,6 +440,54 @@ public static class OpcodeRegistry
         }
     }
 
+    /// <summary>
+    /// Extract fields from a S->C PlayerSpawn (0x02) packet.
+    ///
+    /// Hytale alpha PlayerSpawn layout (observed):
+    ///   byte  0    : opcode (0x02)
+    ///   bytes 1-4  : entityId (uint32 LE)  -- THE PLAYER ENTITY ID
+    ///   byte  5    : name length (uint8)
+    ///   bytes 6..  : player name (UTF-8, name_len bytes)
+    ///   bytes after: X, Y, Z (3x float32 LE)
+    ///
+    /// BUG FIX: previously ExtractEntityFields was called which looped over all
+    /// 4-byte windows including the name bytes, producing garbage IDs.
+    /// Now we parse the specific layout: read ID first, skip the string, then XYZ.
+    /// </summary>
+    private static void ExtractPlayerSpawnFields(StructuredPacket sp, byte[] data)
+    {
+        // ── PlayerID at offset 1 ──────────────────────────────────────────
+        uint entityId = BitConverter.ToUInt32(data, 1);
+        if (IdRanges.IsEntityId(entityId))
+        {
+            sp.ExtractedIds.Add(new ExtractedField("PlayerID", entityId, 1,
+                ConfidenceSource.Packet) { Confidence = 90 });
+            sp.Fields.Add(new PacketFieldEx("PlayerID", entityId.ToString(), 1,
+                ConfidenceSource.Packet, 90));
+        }
+
+        // ── Try to read player name ───────────────────────────────────────
+        // Layout variant A: byte 5 = name length (0-63)
+        int xyzStart = 5;
+        if (data.Length >= 7)
+        {
+            byte nameLen = data[5];
+            if (nameLen > 0 && nameLen <= 64 && 6 + nameLen <= data.Length)
+            {
+                string playerName = System.Text.Encoding.UTF8.GetString(data, 6, nameLen).Trim();
+                if (playerName.Length >= 3 && playerName.All(c => char.IsLetterOrDigit(c) || c == '_'))
+                {
+                    sp.Fields.Add(new PacketFieldEx("PlayerName", playerName, 6,
+                        ConfidenceSource.Packet, 85));
+                    xyzStart = 6 + nameLen;
+                }
+            }
+        }
+
+        // ── XYZ after name ────────────────────────────────────────────────
+        TryExtractXYZ(sp, data, xyzStart);
+    }
+
     private static void ExtractTransactionFields(StructuredPacket sp, byte[] data)
     {
         if (data.Length >= 5)
@@ -259,18 +498,27 @@ public static class OpcodeRegistry
         for (int i = 5; i + 4 <= Math.Min(data.Length, 20); i++)
         {
             uint v = BitConverter.ToUInt32(data, i);
-            if (v >= 100 && v <= 9999)
+            if (IdRanges.IsBroadEntityId(v))
                 sp.ExtractedIds.Add(new ExtractedField("ItemID", v, i, ConfidenceSource.Inferred));
         }
     }
 
     private static void ExtractGenericFields(StructuredPacket sp, byte[] data)
     {
-        for (int i = 1; i + 4 <= Math.Min(data.Length, 16); i++)
+        // BUG FIX: was 9999, missing IDs 10000-4,000,000. Now 16_000_000 consistent.
+        // Also tries big-endian reads since Hytale may use either byte order.
+        var seen = new HashSet<uint>();
+        for (int i = 1; i + 4 <= Math.Min(data.Length, 20); i++)
         {
-            uint v = BitConverter.ToUInt32(data, i);
-            if (v >= 100 && v <= 9999)
-                sp.ExtractedIds.Add(new ExtractedField("ID?", v, i, ConfidenceSource.Uncertain));
+            // LE read
+            uint vLe = BitConverter.ToUInt32(data, i);
+            if (IdRanges.IsEntityId(vLe) && seen.Add(vLe))
+                sp.ExtractedIds.Add(new ExtractedField("ID?", vLe, i, ConfidenceSource.Uncertain));
+
+            // BE read (different value = try as alternate interpretation)
+            uint vBe = (uint)(data[i] << 24 | data[i+1] << 16 | data[i+2] << 8 | data[i+3]);
+            if (vBe != vLe && IdRanges.IsEntityId(vBe) && seen.Add(vBe))
+                sp.ExtractedIds.Add(new ExtractedField("ID?(BE)", vBe, i, ConfidenceSource.Uncertain));
         }
     }
 
@@ -318,7 +566,7 @@ public enum ConfidenceSource { Memory, Packet, Inferred, Uncertain }
 public class StructuredPacket
 {
     public CapturedPacket   Raw              { get; }
-    public byte             Opcode           { get; set; }
+    public ushort           Opcode           { get; set; }
     public OpcodeInfo?      Info             { get; set; }
     public string           Label            { get; set; } = "";
     public int              ConfidenceScore  { get; set; }  // 0-100
@@ -367,11 +615,25 @@ public class PacketFieldEx
 
 public class ExtractedField
 {
-    public string           Name   { get; }
-    public uint             Value  { get; }
-    public int              Offset { get; }
-    public ConfidenceSource Source { get; }
-    public string?          ResolvedName { get; set; }  // filled by EntityTracker
+    public string           Name         { get; }
+    public uint             Value        { get; }
+    public int              Offset       { get; }
+    public ConfidenceSource Source       { get; }
+    public int              Confidence   { get; set; }   // 0-100, default from Source
+    public string?          ResolvedName { get; set; }   // filled by EntityTracker
+
     public ExtractedField(string name, uint value, int offset, ConfidenceSource src)
-    { Name = name; Value = value; Offset = offset; Source = src; }
+    {
+        Name       = name;
+        Value      = value;
+        Offset     = offset;
+        Source     = src;
+        Confidence = src switch
+        {
+            ConfidenceSource.Memory    => 95,
+            ConfidenceSource.Packet    => 80,
+            ConfidenceSource.Inferred  => 55,
+            _                          => 30,
+        };
+    }
 }

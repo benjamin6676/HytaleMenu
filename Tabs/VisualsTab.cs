@@ -516,11 +516,11 @@ public class VisualsTab : ITab
         }
 
         // ── 5. Push to config ─────────────────────────────────────────────
-        int newId = resolvedId > 0 ? resolvedId : (int)(bestPos.X * 1000); // fallback hash
+        uint newId = resolvedId > 0 ? (uint)resolvedId : 0u;
 
-        if (newId != _gazeActiveId)
+        if (newId != (uint)_gazeActiveId)
         {
-            _gazeActiveId    = newId;
+            _gazeActiveId    = (int)newId;
             _gazeActiveLabel = bestLabel;
             _gazeActiveDot   = bestDotV;
 

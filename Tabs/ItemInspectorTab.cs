@@ -371,7 +371,7 @@ public class ItemInspectorTab : ITab
             ImGui.SetCursorPosX(6);
             UiHelper.WarnButton("Set Target##mirtgt", 90, 22, () =>
             {
-                _config.SetTargetItemId((int)_smart.SuggestedTargetId, "Input Mirror");
+                _config.SetTargetItemId(_smart.SuggestedTargetId, "Input Mirror");
                 _log.Success($"[Inspector] Input Mirror -> Target {_smart.SuggestedTargetId}");
                 _smart.DismissSuggestion();
             });
@@ -464,9 +464,7 @@ public class ItemInspectorTab : ITab
                     UiHelper.MutedLabel($"{(ent.IsDynamic ? "Dynamic - player/mob" : "Static - world object")}");
                     UiHelper.MutedLabel($"Pos: ({ent.X:F1}, {ent.Y:F1}, {ent.Z:F1})");
                     UiHelper.MutedLabel($"Updates: {ent.UpdateCount}  Δmax: {ent.MaxDelta:F2}m");
-                    var lastSeenField = typeof(HytaleSecurityTester.Core.TrackedEntity).GetField("LastSeen", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-                    var lastSeenVal = (DateTime?)lastSeenField?.GetValue(ent) ?? DateTime.Now;
-                    UiHelper.MutedLabel($"Last: {lastSeenVal:HH:mm:ss}");
+                    UiHelper.MutedLabel($"Last: {ent.LastSeen:HH:mm:ss}");
                     if (!string.IsNullOrEmpty(ent.NameHint))
                         UiHelper.MutedLabel($"Name: {ent.NameHint}");
                     ImGui.EndTooltip();
@@ -478,13 +476,13 @@ public class ItemInspectorTab : ITab
                     ImGui.Separator();
                     if (ImGui.MenuItem("Set as Target"))
                     {
-                        _config.SetTargetItemId((int)ent.EntityId, "Active Entities");
+                        _config.SetTargetItemId(ent.EntityId, "Active Entities");
                         _log.Success($"[Inspector] Entity {ent.EntityId} -> Target.");
                     }
                     if (ImGui.MenuItem("Pin as Item"))
                         _pinnedItem = new DetectedItem
                         {
-                            ItemId = (int)ent.EntityId, StackCount = 1,
+                            ItemId = ent.EntityId, StackCount = 1,
                             Confidence = FieldConfidence.Medium, NameHint = ent.NameHint,
                         };
                     ImGui.EndPopup();
@@ -803,14 +801,14 @@ public class ItemInspectorTab : ITab
                         _log.Info($"[Inspector] Memory search for 0x{it.ItemId:X8} - open Memory tab.");
                     if (ImGui.MenuItem("Send to Spoofer"))
                     {
-                        _config.SetTargetItemId((int)it.ItemId, "Spoofer via context menu");
+                        _config.SetTargetItemId(it.ItemId, "Spoofer via context menu");
                         _log.Success($"[Inspector] {it.ItemId} -> Target (Spoofer).");
                     }
                     ImGui.Separator();
                     // Manual Name Entry
                     if (ImGui.MenuItem("Manually Name this ID..."))
                     {
-                        _manualNameId    = (uint)it.ItemId;
+                        _manualNameId    = it.ItemId;
                         _manualNameBuf   = it.NameHint ?? "";
                         _manualNameOpen  = true;
                     }
@@ -818,7 +816,7 @@ public class ItemInspectorTab : ITab
                     if (!string.IsNullOrEmpty(it.NameHint)
                         && ImGui.MenuItem($"Blacklist name '{it.NameHint}' (keep scanning)"))
                     {
-                        _smart.BlacklistNameForId((uint)it.ItemId, it.NameHint);
+                        _smart.BlacklistNameForId(it.ItemId, it.NameHint);
                         _log.Info($"[Inspector] '{it.NameHint}' blacklisted for ID {it.ItemId}.");
                     }
                     ImGui.EndPopup();
@@ -834,7 +832,7 @@ public class ItemInspectorTab : ITab
 
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColText);
                 // Confidence badge from EntityTracker
-                var tracked = EntityTracker.Instance.Entities.TryGetValue((uint)it.ItemId, out var te) ? te : null;
+                var tracked = EntityTracker.Instance.Entities.TryGetValue(it.ItemId, out var te) ? te : null;
                 string confBadge = tracked != null ? tracked.ConfidenceLabel : "";
                 string nameDisplay = $"{it.SlotIndex,-6} {nameStr,-16} {confBadge,-7} {it.PacketCount,-5} {timeStr}";
                 ImGui.TextUnformatted(nameDisplay);
@@ -842,8 +840,8 @@ public class ItemInspectorTab : ITab
 
                 if (ImGui.IsItemHovered())
                 {
-                    RenderIdTooltip((uint)it.ItemId);
-                    _lastHoveredEntityId = (uint)it.ItemId;
+                    RenderIdTooltip(it.ItemId);
+                    _lastHoveredEntityId = it.ItemId;
                     _lastHoveredName     = it.NameHint ?? "";
                 }
 
@@ -855,7 +853,7 @@ public class ItemInspectorTab : ITab
                 // [+] Set Target (crosshair symbol)
                 UiHelper.WarnButton($"(+)##ciset{ci}", 38, 20, () =>
                 {
-                    _config.SetTargetItemId((int)it.ItemId, "Confirmed Items");
+                    _config.SetTargetItemId(it.ItemId, "Confirmed Items");
                     _log.Success($"[Inspector] {it.ItemId} -> Target.");
                 });
                 if (ImGui.IsItemHovered())
@@ -867,7 +865,7 @@ public class ItemInspectorTab : ITab
                 // [o] ESP (eye symbol)
                 UiHelper.SecondaryButton($"[o]##ciesp{ci}", 38, 20, () =>
                 {
-                    PushIdToEsp((uint)it.ItemId, it.NameHint, EntityClass.Item);
+                    PushIdToEsp(it.ItemId, it.NameHint, EntityClass.Item);
                     _log.Info($"[Inspector] {it.ItemId} -> ESP.");
                 });
                 if (ImGui.IsItemHovered()) ImGui.SetTooltip("Push to ESP overlay");
@@ -878,7 +876,7 @@ public class ItemInspectorTab : ITab
                 {
                     _pinnedItem = new DetectedItem
                     {
-                        ItemId    = (int)it.ItemId, StackCount = it.StackSize,
+                        ItemId    = it.ItemId, StackCount = it.StackSize,
                         SlotIndex = it.SlotIndex,   Confidence = FieldConfidence.High,
                         NameHint  = it.NameHint,
                     };
@@ -890,7 +888,7 @@ public class ItemInspectorTab : ITab
                 UiHelper.SecondaryButton($"[=]##cibook{ci}", 38, 20, () =>
                 {
                     var payload = new byte[6];
-                    BitConverter.GetBytes((uint)it.ItemId).CopyTo(payload, 0);
+                    BitConverter.GetBytes(it.ItemId).CopyTo(payload, 0);
                     payload[4] = it.StackSize; payload[5] = it.SlotIndex;
                     _store.Save($"Manual:{it.ItemId}", $"Manually pinned {it.ItemId}", payload,
                                 PacketDirection.ServerToClient);
@@ -969,12 +967,12 @@ public class ItemInspectorTab : ITab
                 _smart.EntityClassifications.TryGetValue(e.EntityId, out var cls);
                 string badge = isLP ? "[*]"
                              : cls == EntityClass.Player ? "[P]"
-                             : cls == EntityClass.Mob ? "[M]"
-                             : cls == EntityClass.Item ? "[I]" : "[E]";   // [E] = unknown Entity
+                             : cls == EntityClass.Mob    ? "[M]"
+                             : cls == EntityClass.Item   ? "[I]" : "[E]";   // [E] = unknown Entity
                 var badgeColor = isLP ? new Vector4(0.18f, 0.65f, 0.95f, 1f)
                                : cls == EntityClass.Player ? new Vector4(0.18f, 0.95f, 0.45f, 1f)
-                               : cls == EntityClass.Mob ? new Vector4(0.95f, 0.28f, 0.22f, 1f)
-                               : cls == EntityClass.Item ? new Vector4(0.95f, 0.75f, 0.10f, 1f)
+                               : cls == EntityClass.Mob    ? new Vector4(0.95f, 0.28f, 0.22f, 1f)
+                               : cls == EntityClass.Item   ? new Vector4(0.95f, 0.75f, 0.10f, 1f)
                                : MenuRenderer.ColTextMuted;  // grey for unclassified
 
                 ImGui.PushStyleColor(ImGuiCol.Text, badgeColor);
@@ -995,7 +993,7 @@ public class ItemInspectorTab : ITab
                 ImGui.SameLine(0, 4);
                 UiHelper.WarnButton($"Target##4aset{qi}", 56, 20, () =>
                 {
-                    _config.SetTargetItemId((int)e.EntityId, "0x4A Parser");
+                    _config.SetTargetItemId(e.EntityId, "0x4A Parser");
                     // Also sync to ESP with name from IdNameMap
                     PushIdToEsp(e.EntityId, e.NameHint,
                         cls == EntityClass.Unknown ? EntityClass.Player : cls);
@@ -1022,22 +1020,22 @@ public class ItemInspectorTab : ITab
                     ImGui.TextUnformatted($"Entity {e.EntityId}  (0x{e.EntityId:X})  {badge}");
                     ImGui.PopStyleColor();
                     ImGui.Separator();
-                    if (ImGui.MenuItem("Copy Hex")) WindowsClipboard.Set($"0x{e.EntityId:X8}");
+                    if (ImGui.MenuItem("Copy Hex"))     WindowsClipboard.Set($"0x{e.EntityId:X8}");
                     if (ImGui.MenuItem("Copy Decimal")) WindowsClipboard.Set(e.EntityId.ToString());
-                    if (ImGui.MenuItem("Filter")) _keywordFilter = e.EntityId.ToString();
+                    if (ImGui.MenuItem("Filter"))       _keywordFilter = e.EntityId.ToString();
                     if (ImGui.MenuItem("Search in Memory"))
                         _log.Info($"[Inspector] Open Memory tab and search 0x{e.EntityId:X8}");
                     if (ImGui.MenuItem("Send to Spoofer"))
                     {
-                        _config.SetTargetItemId((int)e.EntityId, "Spoofer via context");
+                        _config.SetTargetItemId(e.EntityId, "Spoofer via context");
                         _log.Success($"[Inspector] {e.EntityId} -> Target.");
                     }
                     ImGui.Separator();
                     if (ImGui.MenuItem("Manually Name this Entity..."))
                     {
-                        _manualNameId = e.EntityId;
-                        _manualNameBuf = e.NameHint ?? "";
-                        _manualNameOpen = true;
+                        _manualNameId    = e.EntityId;
+                        _manualNameBuf   = e.NameHint ?? "";
+                        _manualNameOpen  = true;
                     }
                     if (!string.IsNullOrEmpty(e.NameHint)
                         && ImGui.MenuItem($"Blacklist name '{e.NameHint}'"))
@@ -1047,17 +1045,17 @@ public class ItemInspectorTab : ITab
                     }
                     ImGui.EndPopup();
                 }
+            }   // end for qi
+        }   // end while clip.Step()
 
-                if (entries.Count == 0)
-                {
-                    ImGui.SetCursorPosY((h - 80f) * 0.4f);
-                    UiHelper.MutedLabel("  No 0x4A packets captured yet.");
-                    UiHelper.MutedLabel("  Parser activates automatically on first 0x4A.");
-                }
-
-                ImGui.EndChild();
-            }
+        if (entries.Count == 0)
+        {
+            ImGui.SetCursorPosY((h - 80f) * 0.4f);
+            UiHelper.MutedLabel("  No 0x4A packets captured yet.");
+            UiHelper.MutedLabel("  Parser activates automatically on first 0x4A.");
         }
+
+        ImGui.EndChild();
     }
 
     // ── String Correlation table ──────────────────────────────────────────
@@ -1100,7 +1098,7 @@ public class ItemInspectorTab : ITab
                 ImGui.SameLine(260);
                 UiHelper.WarnButton($"Target##sc{si}", 80, 20, () =>
                 {
-                    _config.SetTargetItemId((int)itemId,
+                    _config.SetTargetItemId(itemId,
                         $"String Corr (\"{meta}\")");
                     _log.Success($"[Inspector] '{meta}' -> {itemId} -> Target.");
                 });
@@ -1222,7 +1220,7 @@ public class ItemInspectorTab : ITab
             {
                 var  d        = show[i];
                 bool sel      = _discSelected == i;
-                bool isTarget = _config.HasTargetItem && _config.TargetItemId == (int)d.Value;
+                bool isTarget = _config.HasTargetItem && _config.TargetItemId == d.Value;
                 bool itemLike = d.TypeTag == "Item ID";
                 bool canTgt   = itemLike || d.TypeTag == "Entity/Player ID";
 
@@ -1296,7 +1294,7 @@ public class ItemInspectorTab : ITab
                 if (ImGui.Button((isTarget ? "[*] TARGET" : "Set Target") + $"##dset{i}",
                                  new Vector2(btnW, 20)))
                 {
-                    _config.SetTargetItemId((int)d.Value, "Item Inspector");
+                    _config.SetTargetItemId(d.Value, "Item Inspector");
                     _log.Success($"[Inspector] Target -> {d.Value} ({d.TypeTag})");
                 }
                 ImGui.PopStyleColor(2);
@@ -1328,8 +1326,8 @@ public class ItemInspectorTab : ITab
                 {
                     _pinnedItem = new DetectedItem
                     {
-                        ItemId = (int)d.Value, StackCount = 1,
-                        Confidence = d.Confidence, NameHint = GuessItemName((int)d.Value),
+                        ItemId = d.Value, StackCount = 1,
+                        Confidence = d.Confidence, NameHint = GuessItemName(d.Value),
                     };
                     _log.Info($"[Inspector] Pinned {d.Value}.");
                 }
@@ -1757,7 +1755,7 @@ public class ItemInspectorTab : ITab
         return results;
     }
 
-    private static string GuessItemName(int id) => ItemScanResult.GuessItemNamePublic(id);
+    private static string GuessItemName(uint id) => ItemScanResult.GuessItemNamePublic((int)id);
 
     // ── Hotkey-callable actions ───────────────────────────────────────────
 
@@ -1770,7 +1768,7 @@ public class ItemInspectorTab : ITab
         if (_lastHoveredEntityId == 0) return;
         _pinnedItem = new DetectedItem
         {
-            ItemId    = (int)_lastHoveredEntityId,
+            ItemId    = _lastHoveredEntityId,
             StackCount = 1,
             Confidence = FieldConfidence.High,
             NameHint   = _lastHoveredName,
@@ -1826,11 +1824,11 @@ public class ItemScanResult
                      : i <= 9 ? FieldConfidence.Medium
                                : FieldConfidence.Low;
 
-            if (items.Any(x => x.ItemId == v)) continue;
+            if (items.Any(x => x.ItemId == (uint)v)) continue;
 
             items.Add(new DetectedItem
             {
-                ItemId = v, StackCount = count, SlotIndex = slot,
+                ItemId = (uint)v, StackCount = count, SlotIndex = slot,
                 Offset = i, Confidence = conf, NameHint = GuessItemNamePublic(v),
             });
         }
@@ -1838,11 +1836,11 @@ public class ItemScanResult
         foreach (var guess in analysis.Guesses)
         {
             if (guess.Name.Contains("Item") && guess.IntValue >= 100
-                && !items.Any(x => x.ItemId == guess.IntValue))
+                && !items.Any(x => x.ItemId == (uint)guess.IntValue))
             {
                 items.Add(new DetectedItem
                 {
-                    ItemId = guess.IntValue, StackCount = 1, SlotIndex = 0,
+                    ItemId = (uint)guess.IntValue, StackCount = 1, SlotIndex = 0,
                     Offset = guess.Offset, Confidence = guess.Confidence,
                     NameHint = GuessItemNamePublic(guess.IntValue),
                 });
@@ -1866,7 +1864,7 @@ public class ItemScanResult
 
 public class DetectedItem
 {
-    public int             ItemId     { get; set; }
+    public uint            ItemId     { get; set; }
     public int             StackCount { get; set; } = 1;
     public int             SlotIndex  { get; set; }
     public int             Offset     { get; set; }
