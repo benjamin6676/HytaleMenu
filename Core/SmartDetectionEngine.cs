@@ -283,11 +283,18 @@ public class SmartDetectionEngine : IDisposable
         // 9. Registry sync: capture item-name mappings from login-phase packets (IDs 40–85)
         //    Only Zstd-magic packets are processed (gate prevents entity-update false positives).
         if (!cs && sp.Opcode >= RegistrySyncParser.RegistryOpcodeMin
-                && sp.Opcode <= RegistrySyncParser.RegistryOpcodeMax
-                && data.Length >= 4)
+        && sp.Opcode <= RegistrySyncParser.RegistryOpcodeMax
+        && data.Length >= 4)
         {
+            Console.WriteLine($"[DECOMP] opcode=0x{sp.Opcode:X2} out={(data?.Length ?? 0)}");
+
+
             RegistrySyncParser.TryParse((byte)sp.Opcode, data, IdNameMap);
         }
+
+
+
+
     }
 
     // ── FORCE SCAN (processes all existing packets from scratch) ──────────
@@ -1320,8 +1327,8 @@ public class SmartDetectionEngine : IDisposable
                     (string.IsNullOrEmpty(item.NameHint) ? "" : $" ({item.NameHint})") +
                     $" - stackx{item.StackSize}, slot {item.SlotIndex}",
                     payload, PacketDirection.ServerToClient);
-                _log.Success($"[SmartDetect] Auto-pinned {item.ItemId}" +
-                             $"{(string.IsNullOrEmpty(item.NameHint) ? "" : $" ({item.NameHint})")}");
+                //_log.Success($"[SmartDetect] Auto-pinned {item.ItemId}" +
+                             //$"{(string.IsNullOrEmpty(item.NameHint) ? "" : $" ({item.NameHint})")}");
             }
         }
     }

@@ -34,25 +34,7 @@ namespace HytaleSecurityTester.Core;
 public static class RegistrySyncParser
 {
 
-    private static byte[] TryDecompressZstd(byte[] payload)
-    {
-        try
-        {
-            using var d = new ZstdSharp.Decompressor();
-            var span = d.Unwrap(payload);
-            var result = span.ToArray();
-
-            Console.WriteLine($"[ZSTD] Decompressed {payload.Length} -> {result.Length} bytes");
-            return result;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[ZSTD] Decompress failed: {ex.Message}");
-            return payload;
-        }
-    }
-
-
+    
 
 
 
@@ -187,18 +169,20 @@ public static class RegistrySyncParser
     /// No magic gating — we try to parse every packet and use quality filtering.
     /// Also dumps raw bytes to disk for community format analysis.
     /// </summary>
-    public static bool TryParse(byte opcode, byte[] payload,
-                             ConcurrentDictionary<uint, string> idNameMap)
+
+
+
+    public static bool TryParse(byte opcode, byte[] data,
+    ConcurrentDictionary<uint, string> idNameMap)
     {
+
         if (opcode < RegistryOpcodeMin || opcode > RegistryOpcodeMax) return false;
-        if (payload.Length < 4) return false;
+        if (data.Length < 4) return false;
         if (EntityUpdateOpcodes.Contains(opcode)) return false;
 
         SeenRegistryOpcodes.AddOrUpdate(opcode, 1, (_, v) => v + 1);
 
-        DumpRawPacket(opcode, payload);
-
-        byte[] data = TryDecompressZstd(payload);
+        DumpRawPacket(opcode, data);
 
         int found = 0;
         found += ParseStrategy_LengthPrefix(data, idNameMap, prefix: 2, idBefore: true);
@@ -214,6 +198,8 @@ public static class RegistrySyncParser
 
         return found > 0;
     }
+
+
 
 
 

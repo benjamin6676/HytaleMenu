@@ -69,6 +69,9 @@ public class ServerStats
 
     public void OnPacket(CapturedPacket pkt)
     {
+        
+        
+
         if (ConnectedAt == null) ConnectedAt = DateTime.Now;
 
         bool cs = pkt.Direction == PacketDirection.ClientToServer;

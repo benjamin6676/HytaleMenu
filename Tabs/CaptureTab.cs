@@ -38,7 +38,7 @@ public class CaptureTab : ITab
     private bool   _showServerClient = true;
     private bool   _autoScroll       = true;
     private bool   _hideSmallPkts    = false;   // hide packets < 15 bytes
-    private bool   _decompressView   = false;   // show decompressed payload in hex view
+    private bool   _decompressView   = true;   // show decompressed payload in hex view
     private int    _commentingIdx    = -1;       // index of packet being commented
     private string _commentBuf       = "";       // edit buffer for inline comment
 
@@ -538,6 +538,8 @@ public class CaptureTab : ITab
             if (_decompressView && sel.RawBytes.Length > 4)
             {
                 var decompressed = PacketAnalyser.TryDecompress(sel.RawBytes, out string method);
+                
+
                 if (decompressed != null)
                 {
                     displayBytes = decompressed;
