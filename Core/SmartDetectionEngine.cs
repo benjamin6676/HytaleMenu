@@ -129,7 +129,10 @@ public class SmartDetectionEngine : IDisposable
     {
         _log.Info("[SmartDetect] Background engine started.");
 
-        // ── One-time startup cleanup: remove garbage names (from old UTF-16 decode bug) ─
+        // ── Load manual name overrides (item_names.txt) first ─────────────
+        LoadManualNameOverrides();
+
+        // ── One-time startup cleanup: remove garbage names ─────────────────
         int removed = 0;
         foreach (var kv in IdNameMap.ToArray())
         {
@@ -276,6 +279,15 @@ public class SmartDetectionEngine : IDisposable
 
         // 8. Permission bit sniffer
         if (!cs) ProcessPermissionBits(data);
+
+        // 9. Registry sync: capture item-name mappings from login-phase packets (IDs 40–85)
+        //    Only Zstd-magic packets are processed (gate prevents entity-update false positives).
+        if (!cs && sp.Opcode >= RegistrySyncParser.RegistryOpcodeMin
+                && sp.Opcode <= RegistrySyncParser.RegistryOpcodeMax
+                && data.Length >= 4)
+        {
+            RegistrySyncParser.TryParse((byte)sp.Opcode, data, IdNameMap);
+        }
     }
 
     // ── FORCE SCAN (processes all existing packets from scratch) ──────────
@@ -1119,19 +1131,112 @@ public class SmartDetectionEngine : IDisposable
     // Throttle sync to avoid iterating 252k entries every 300ms background loop pass
     private DateTime _lastFullSync = DateTime.MinValue;
 
+    // ── Manual name override loader ──────────────────────────────────────────
+    /// <summary>Called from UI thread to reload item_names.txt immediately.</summary>
+    public void ReloadManualNames() => LoadManualNameOverrides();
+
+    private static readonly string ManualNamesPath = System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "HytaleMenu", "item_names.txt");
+
+    private void LoadManualNameOverrides()
+    {
+        try
+        {
+            // Create template file if it doesn't exist
+            string dir = System.IO.Path.GetDirectoryName(ManualNamesPath)!;
+            System.IO.Directory.CreateDirectory(dir);
+            if (!System.IO.File.Exists(ManualNamesPath))
+            {
+                System.IO.File.WriteAllText(ManualNamesPath,
+                    "# HytaleMenu item name overrides" +
+                    "# Format: ID=Name  or  0xHEX=Name  or  stringId=DisplayName" +
+                    "# Example:" +
+                    "#   232=Stone" +
+                    "#   0xE8=Stone" +
+                    "#   hytale:stone=Stone" +
+                    "# Fill in IDs from the Inspector's Discovery tab." +
+                    "# Registry dumps are saved to %AppData%\\HytaleMenu\\registry_dump\\");
+                _sdLog.Info($"[SmartDetect] Created item_names.txt at {ManualNamesPath}");
+                return;
+            }
+
+            int loaded = 0;
+            foreach (string line in System.IO.File.ReadAllLines(ManualNamesPath))
+            {
+                string trimmed = line.Trim();
+                if (trimmed.StartsWith("#") || !trimmed.Contains('=')) continue;
+                int eq = trimmed.IndexOf('=');
+                string key  = trimmed[..eq].Trim();
+                string name = trimmed[(eq + 1)..].Trim();
+                if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(name)) continue;
+
+                // Try numeric ID (decimal or hex)
+                if (key.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (uint.TryParse(key[2..], System.Globalization.NumberStyles.HexNumber,
+                        null, out uint hexId))
+                    {
+                        IdNameMap[hexId] = name;
+                        RegistrySyncParser.RegisterMapping(hexId, name);
+                        loaded++;
+                    }
+                }
+                else if (uint.TryParse(key, out uint decId))
+                {
+                    IdNameMap[decId] = name;
+                    RegistrySyncParser.RegisterMapping(decId, name);
+                    loaded++;
+                }
+                else
+                {
+                    // String ID → display name
+                    RegistrySyncParser.RegisterMapping(0, key);   // string-only
+                    loaded++;
+                }
+            }
+            if (loaded > 0)
+                _sdLog.Success($"[SmartDetect] Loaded {loaded} manual name overrides from item_names.txt");
+        }
+        catch (Exception ex)
+        {
+            _sdLog.Warn($"[SmartDetect] Could not load item_names.txt: {ex.Message}");
+        }
+    }
+
     private void SyncNamesToConfirmedItems()
     {
-        // Only do a full pass every 5 seconds. Between passes, only sync IDs that
-        // were just added to IdNameMap (handled inline in ProcessPacket).
+        // Only do a full pass every 5 seconds.
         if ((DateTime.Now - _lastFullSync).TotalSeconds < 5.0) return;
         _lastFullSync = DateTime.Now;
 
         foreach (var kv in ConfirmedItems)
         {
-            if (!string.IsNullOrEmpty(kv.Value.NameHint)) continue;
-            if (!IdNameMap.TryGetValue(kv.Key, out var name)) continue;
-            if (!IsAnyQualityName(name)) continue;
-            kv.Value.NameHint = name;
+            var ci = kv.Value;
+
+            // ── 1. Registry: numeric ID direct match (Zstd literal scan) ────
+            if (RegistrySyncParser.NumericIdToName.TryGetValue(kv.Key, out var regName)
+                && ci.NameConfidence < 100)
+            {
+                ci.NameHint       = regName;
+                ci.NameConfidence = 100;
+                ci.NameSource     = ConfidenceSource.Packet;
+                continue;
+            }
+
+            // ── 2. IdNameMap from packet extraction ────────────────────────
+            if (!string.IsNullOrEmpty(ci.NameHint) && ci.NameConfidence >= 70) continue;
+
+            if (IdNameMap.TryGetValue(kv.Key, out var name) && IsAnyQualityName(name))
+            {
+                int newConf = IsHighQualityName(name) ? 70 : 45;
+                if (newConf > ci.NameConfidence)
+                {
+                    ci.NameHint       = name;
+                    ci.NameConfidence = newConf;
+                    ci.NameSource     = ConfidenceSource.Inferred;
+                }
+            }
         }
     }
 
@@ -1337,14 +1442,37 @@ public enum DeltaClass  { Unknown, Static, Dynamic }
 
 public class ConfirmedItem
 {
-    public uint        ItemId      { get; set; }
-    public byte        StackSize   { get; set; }
-    public byte        SlotIndex   { get; set; }
-    public DateTime    FirstSeen   { get; set; }
-    public DateTime    LastSeen    { get; set; }
-    public int         PacketCount { get; set; }
-    public string      NameHint    { get; set; } = "";
-    public EntityClass EntityClass { get; set; } = EntityClass.Item;
+    public uint        ItemId         { get; set; }
+    public byte        StackSize      { get; set; }
+    public byte        SlotIndex      { get; set; }
+    public DateTime    FirstSeen      { get; set; }
+    public DateTime    LastSeen       { get; set; }
+    public int         PacketCount    { get; set; }
+    public string      NameHint       { get; set; } = "";
+    public EntityClass EntityClass    { get; set; } = EntityClass.Item;
+
+    // ── Confidence scoring (0-100) ────────────────────────────────────────
+    /// <summary>
+    /// 100 = from authoritative source (Registry packet / Memory-verified).
+    /// 70+ = from confirmed packet field (PlayerSpawn / ChatMessage sender).
+    /// 40-69 = inferred from nearby bytes in packet window.
+    /// 0-39 = uncertain/unresolved.
+    /// </summary>
+    public int            NameConfidence  { get; set; } = 0;
+    public ConfidenceSource NameSource    { get; set; } = ConfidenceSource.Uncertain;
+
+    /// <summary>Human-readable confidence label for display.</summary>
+    public string ConfidenceLabel => NameSource switch
+    {
+        ConfidenceSource.Memory  => "[MEM]",
+        ConfidenceSource.Packet  when NameConfidence >= 85 => "[PKT]",
+        ConfidenceSource.Packet  => "[PKT?]",
+        ConfidenceSource.Inferred => "[INF]",
+        _                        => "[UNK]",
+    };
+
+    /// <summary>0-100 score used for display bar.</summary>
+    public int ConfidencePercent => NameSource == ConfidenceSource.Memory ? 100 : NameConfidence;
 }
 
 public class EspEntity

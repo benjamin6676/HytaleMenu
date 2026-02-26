@@ -103,15 +103,69 @@ public static class OpcodeRegistry
         { 0xFF, new("Debug",                 "Debug / internal packet",                 OpcodeCategory.System) },
     };
 
-    // ── Real Hytale Server -> Client packet IDs ───────────────────────────
+    // ── Real Hytale Server -> Client packet IDs ─────────────────────────────
+    // ▸ IDs 1, 3 confirmed via hytalemodding.dev (GamePacketHandler inbound list)
+    // ▸ IDs 14, 20 confirmed via community Discord (Image 4: connection sequence)
+    // ▸ IDs 40–85 confirmed as Asset/Registry sync range (sent on login)
+    //   These contain item-ID→name mappings; see RegistrySyncParser.cs
+    // ▸ EntityUpdates and CachedPacket mentioned in docs as high-frequency outbound
     private static readonly Dictionary<ushort, OpcodeInfo> ScOpcodes = new()
     {
         { 1,    new("Disconnect",            "Server disconnect",                        OpcodeCategory.System) },
         { 3,    new("Pong",                  "Keepalive pong",                           OpcodeCategory.System) },
+        // ── Login sequence (confirmed: hytalemodding.dev + community) ─────
+        { 14,   new("ConnectAccept",         "Connection accepted by server",            OpcodeCategory.Auth) },
+        { 20,   new("WorldSettings",         "World configuration sent on login",        OpcodeCategory.World) },
+        // ── Asset/Registry sync: IDs 40–85 (0x28–0x55) ────────────────────
+        // Sent after ConnectAccept, maps numeric item IDs to string names.
+        // Payload is Zstd-compressed (community finding). Captured by RegistrySyncParser.
+        { 40,   new("RegistrySync_40",       "Asset/registry sync block 40",            OpcodeCategory.System) },
+        { 41,   new("RegistrySync_41",       "Asset/registry sync block 41",            OpcodeCategory.System) },
+        { 42,   new("RegistrySync_42",       "Asset/registry sync block 42",            OpcodeCategory.System) },
+        { 43,   new("RegistrySync_43",       "Asset/registry sync block 43",            OpcodeCategory.System) },
+        { 44,   new("RegistrySync_44",       "Asset/registry sync block 44",            OpcodeCategory.System) },
+        { 45,   new("RegistrySync_45",       "Asset/registry sync block 45",            OpcodeCategory.System) },
+        { 46,   new("RegistrySync_46",       "Asset/registry sync block 46",            OpcodeCategory.System) },
+        { 47,   new("RegistrySync_47",       "Asset/registry sync block 47",            OpcodeCategory.System) },
+        { 50,   new("RegistrySync_50",       "Asset/registry sync block 50",            OpcodeCategory.System) },
+        { 51,   new("RegistrySync_51",       "Asset/registry sync block 51",            OpcodeCategory.System) },
+        { 52,   new("RegistrySync_52",       "Asset/registry sync block 52",            OpcodeCategory.System) },
+        { 53,   new("RegistrySync_53",       "Asset/registry sync block 53",            OpcodeCategory.System) },
+        { 54,   new("RegistrySync_54",       "Asset/registry sync block 54",            OpcodeCategory.System) },
+        { 55,   new("RegistrySync_55",       "Asset/registry sync block 55",            OpcodeCategory.System) },
+        { 56,   new("RegistrySync_56",       "Asset/registry sync block 56",            OpcodeCategory.System) },
+        { 57,   new("RegistrySync_57",       "Asset/registry sync block 57",            OpcodeCategory.System) },
+        { 58,   new("RegistrySync_58",       "Asset/registry sync block 58",            OpcodeCategory.System) },
+        { 59,   new("RegistrySync_59",       "Asset/registry sync block 59",            OpcodeCategory.System) },
+        { 60,   new("RegistrySync_60",       "Asset/registry sync block 60",            OpcodeCategory.System) },
+        { 61,   new("RegistrySync_61",       "Asset/registry sync block 61",            OpcodeCategory.System) },
+        { 62,   new("RegistrySync_62",       "Asset/registry sync block 62",            OpcodeCategory.System) },
+        { 63,   new("RegistrySync_63",       "Asset/registry sync block 63",            OpcodeCategory.System) },
+        { 64,   new("ItemStackUpdate",       "Item/entity state update (high-freq S->C 0x40)", OpcodeCategory.Item) },
+        { 65,   new("EntityStateUpdate",     "Entity state update (high-freq S->C 0x41)",      OpcodeCategory.Entity) },
+        { 66,   new("InventoryDelta",        "Inventory delta update (high-freq S->C 0x42)",   OpcodeCategory.Inventory) },
+        { 67,   new("RegistrySync_67",       "Asset/registry sync block 67",            OpcodeCategory.System) },
+        { 68,   new("RegistrySync_68",       "Asset/registry sync block 68",            OpcodeCategory.System) },
+        { 69,   new("RegistrySync_69",       "Asset/registry sync block 69",            OpcodeCategory.System) },
+        { 70,   new("RegistrySync_70",       "Asset/registry sync block 70",            OpcodeCategory.System) },
+        { 71,   new("RegistrySync_71",       "Asset/registry sync block 71",            OpcodeCategory.System) },
+        { 72,   new("RegistrySync_72",       "Asset/registry sync block 72",            OpcodeCategory.System) },
+        { 73,   new("RegistrySync_73",       "Asset/registry sync block 73",            OpcodeCategory.System) },
+        { 75,   new("RegistrySync_75",       "Asset/registry sync block 75",            OpcodeCategory.System) },
+        { 76,   new("RegistrySync_76",       "Asset/registry sync block 76",            OpcodeCategory.System) },
+        { 77,   new("RegistrySync_77",       "Asset/registry sync block 77",            OpcodeCategory.System) },
+        { 78,   new("RegistrySync_78",       "Asset/registry sync block 78",            OpcodeCategory.System) },
+        { 79,   new("RegistrySync_79",       "Asset/registry sync block 79",            OpcodeCategory.System) },
+        { 80,   new("RegistrySync_80",       "Asset/registry sync block 80",            OpcodeCategory.System) },
+        { 81,   new("RegistrySync_81",       "Asset/registry sync block 81",            OpcodeCategory.System) },
+        { 82,   new("RegistrySync_82",       "Asset/registry sync block 82",            OpcodeCategory.System) },
+        { 83,   new("RegistrySync_83",       "Asset/registry sync block 83",            OpcodeCategory.System) },
+        { 84,   new("RegistrySync_84",       "Asset/registry sync block 84",            OpcodeCategory.System) },
+        { 85,   new("RegistrySync_85",       "Asset/registry sync block 85",            OpcodeCategory.System) },
+        // ── Entity / player ───────────────────────────────────────────────
         { 0x4A, new("EntitySync4A",          "High-freq entity/item sync (0x4A)",        OpcodeCategory.Entity) },
-        // IDs below are inferred (S->C not fully documented by hytalemodding.dev)
+        // IDs below are inferred (full S->C list not yet documented by hytalemodding.dev)
         { 0x02, new("PlayerSpawn",           "Spawn player entity",                      OpcodeCategory.Entity) },
-        // 0x03 = 3 = "Pong" (already defined above; EntityUpdate is a different ID)
         { 200,  new("EntityUpdate",          "Entity position / state update",           OpcodeCategory.Entity) },
         { 0x04, new("InventoryUpdate",       "Full inventory contents sync",             OpcodeCategory.Inventory) },
         { 0x06, new("BlockUpdate",           "Single block state change",                OpcodeCategory.World) },

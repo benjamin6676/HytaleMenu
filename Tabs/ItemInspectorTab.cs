@@ -341,6 +341,73 @@ public class ItemInspectorTab : ITab
 
         ImGui.Spacing();
 
+        // ── Registry sync status ──────────────────────────────────────────
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
+        ImGui.BeginChild("##regstat", new Vector2(w - 4, 62), ImGuiChildFlags.Border);
+        ImGui.PopStyleColor();
+        ImGui.SetCursorPos(new Vector2(8, 3));
+        int builtIn    = RegistrySyncParser.BuiltInNames.Count;
+        int liveNames  = RegistrySyncParser.LiteralNames.Count;
+        int numericMap = RegistrySyncParser.NumericIdToName.Count;
+        int dumpCount  = RegistrySyncParser.DumpedPacketCount;
+        int seenOps    = RegistrySyncParser.SeenRegistryOpcodes.Count;
+        if (RegistrySyncParser.HasLiveData)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.18f, 0.95f, 0.45f, 1f));
+            ImGui.TextUnformatted($"[REG] {liveNames} live strings  {numericMap} ID→name pairs");
+            ImGui.PopStyleColor();
+        }
+        else
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
+            ImGui.TextUnformatted($"[REG] {builtIn} built-in names  (reconnect for live)");
+            ImGui.PopStyleColor();
+        }
+        ImGui.SetCursorPosX(8);
+        UiHelper.MutedLabel($"{seenOps} registry pkts seen  •  {dumpCount} dumped to %AppData%\\HytaleMenu\\registry_dump");
+        ImGui.SetCursorPosX(8);
+        UiHelper.MutedLabel("Dumps = raw registry bytes for format analysis");
+        ImGui.EndChild();
+
+        ImGui.Spacing();
+
+        // ── Manual name overrides quick-access ────────────────────────────
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
+        ImGui.BeginChild("##namefile", new Vector2(w - 4, 44), ImGuiChildFlags.Border);
+        ImGui.PopStyleColor();
+        ImGui.SetCursorPos(new Vector2(8, 4));
+        UiHelper.MutedLabel("Manual names: %AppData%\\HytaleMenu\\item_names.txt");
+        ImGui.SetCursorPos(new Vector2(8, 20));
+        if (ImGui.SmallButton("Open File"))
+        {
+            try {
+                var p = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "HytaleMenu", "item_names.txt");
+                System.Diagnostics.Process.Start("notepad.exe", p);
+            } catch { }
+        }
+        ImGui.SameLine(0, 6);
+        if (ImGui.SmallButton("Reload"))
+        {
+            // Signal reload by calling directly on background engine next tick
+            _smart.ReloadManualNames();
+        }
+        ImGui.SameLine(0, 6);
+        if (ImGui.SmallButton("Open Dumps"))
+        {
+            try {
+                var d = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "HytaleMenu", "registry_dump");
+                System.IO.Directory.CreateDirectory(d);
+                System.Diagnostics.Process.Start("explorer.exe", d);
+            } catch { }
+        }
+        ImGui.EndChild();
+
+        ImGui.Spacing();
+
         // ── LocalPlayer status pill ───────────────────────────────────────
         if (_config.HasLocalPlayer)
         {
@@ -633,7 +700,6 @@ public class ItemInspectorTab : ITab
         // ── Build display list (with optional Group-by-ID) ────────────────
         // ── Cache sorted/grouped display list (252k+ items is slow to sort every frame) ─
         int ciCount = _smart.ConfirmedItems.Count;
-        var rawItems = _smart.ConfirmedItems.Values;
         _ciFramesSince++;
         bool ciRebuild = _ciCache == null
                       || ciCount != _ciCacheCount
@@ -645,7 +711,7 @@ public class ItemInspectorTab : ITab
             _ciCacheCount   = ciCount;
             _ciCacheGrouped = _groupById;
 
-            _smart.ConfirmedItems.Values
+            var rawItems = _smart.ConfirmedItems.Values
                 .OrderByDescending(i => i.PacketCount)
                 .ToList();
 
@@ -678,12 +744,12 @@ public class ItemInspectorTab : ITab
             }
             else
             {
-                _ciCache = rawItems.ToList();
+                _ciCache = rawItems;
             }
             _ciNamedCount = _ciCache.Count(i => !string.IsNullOrEmpty(i.NameHint));
         }
-        // Use the cached list for rendering (re-read rawItems just for the count label)
-        rawItems = _smart.ConfirmedItems.Values;   // cheap, no alloc
+        // Use the cached item values just for the count label (not the sorted list)
+        var ciRawValues = _smart.ConfirmedItems.Values;   // cheap, no alloc
         var displayItems = _ciCache!;
 
         // ── Header box ────────────────────────────────────────────────────
@@ -697,7 +763,7 @@ public class ItemInspectorTab : ITab
         ImGui.SetCursorPosX(8);
 
         // Smart auto-pin notice
-        UiHelper.MutedLabel($"{displayItems.Count} shown ({rawItems.Count()} total)  ·  " +
+        UiHelper.MutedLabel($"{displayItems.Count} shown ({ciRawValues.Count()} total)  ·  " +
                             $"{_ciNamedCount} named  ·  Smart auto-pin: named + slotted only");
 
         ImGui.SetCursorPosX(8);
@@ -791,7 +857,35 @@ public class ItemInspectorTab : ITab
                     stackStr = $"{it.StackSize}";
                 }
 
-                string nameStr  = string.IsNullOrEmpty(it.NameHint) ? "-" : it.NameHint;
+                // ── Name + confidence badge ───────────────────────────────
+                // ConfidencePercent: 100 = registry/memory, 70+ = packet, <40 = guessed
+                string nameStr;
+                Vector4 nameColor = MenuRenderer.ColText;
+                if (string.IsNullOrEmpty(it.NameHint))
+                {
+                    // Try registry lookup for names not yet propagated
+                    var regName = RegistrySyncParser.LookupName(it.ItemId);
+                    if (regName != null)
+                    {
+                        it.NameHint       = regName;
+                        it.NameConfidence = 100;
+                        it.NameSource     = ConfidenceSource.Packet;
+                    }
+                }
+                nameStr = string.IsNullOrEmpty(it.NameHint) ? "-" : it.NameHint;
+
+                // Colour-code by confidence: green=auth, yellow=inferred, red=unknown
+                nameColor = it.NameConfidence switch
+                {
+                    >= 85 => new Vector4(0.18f, 0.95f, 0.45f, 1f),  // green = authoritative
+                    >= 55 => new Vector4(0.95f, 0.85f, 0.18f, 1f),  // yellow = inferred
+                    _     => new Vector4(0.70f, 0.40f, 0.40f, 1f),  // red = unknown
+                };
+
+                // Confidence label suffix: [PKT], [INF], [UNK]
+                string confLabel = it.ConfidenceLabel;
+                string nameDisplayStr = nameStr == "-" ? nameStr : $"{nameStr} {confLabel}";
+
                 // Short timestamp HH:mm:ss
                 string timeStr  = it.FirstSeen.ToString("HH:mm:ss");
 
@@ -858,11 +952,9 @@ public class ItemInspectorTab : ITab
                 ImGui.PopStyleColor();
                 ImGui.SameLine(0, 0);
 
-                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColText);
-                // Confidence badge from EntityTracker
-                var tracked = EntityTracker.Instance.Entities.TryGetValue(it.ItemId, out var te) ? te : null;
-                string confBadge = tracked != null ? tracked.ConfidenceLabel : "";
-                string nameDisplay = $"{it.SlotIndex,-6} {nameStr,-16} {confBadge,-7} {it.PacketCount,-5} {timeStr}";
+                // Use nameColor (set by confidence above): green=auth, yellow=inferred, red=unk
+                ImGui.PushStyleColor(ImGuiCol.Text, nameColor);
+                string nameDisplay = $"{it.SlotIndex,-6} {nameDisplayStr,-24} {it.PacketCount,-5} {timeStr}";
                 ImGui.TextUnformatted(nameDisplay);
                 ImGui.PopStyleColor();
 
@@ -893,7 +985,7 @@ public class ItemInspectorTab : ITab
                 // [o] ESP (eye symbol)
                 UiHelper.SecondaryButton($"[o]##ciesp{ci}", 38, 20, () =>
                 {
-                    PushIdToEsp(it.ItemId, it.NameHint, EntityClass.Item);
+                    PushIdToEsp(it.ItemId, it.NameHint ?? "", EntityClass.Item);
                     _log.Info($"[Inspector] {it.ItemId} -> ESP.");
                 });
                 if (ImGui.IsItemHovered()) ImGui.SetTooltip("Push to ESP overlay");
@@ -906,7 +998,7 @@ public class ItemInspectorTab : ITab
                     {
                         ItemId    = it.ItemId, StackCount = it.StackSize,
                         SlotIndex = it.SlotIndex,   Confidence = FieldConfidence.High,
-                        NameHint  = it.NameHint,
+                        NameHint  = it.NameHint ?? "",
                     };
                 });
                 if (ImGui.IsItemHovered()) ImGui.SetTooltip("Pin item for dupe setup");
@@ -1023,7 +1115,7 @@ public class ItemInspectorTab : ITab
                 {
                     _config.SetTargetItemId(e.EntityId, "0x4A Parser");
                     // Also sync to ESP with name from IdNameMap
-                    PushIdToEsp(e.EntityId, e.NameHint,
+                    PushIdToEsp(e.EntityId, e.NameHint ?? "",
                         cls == EntityClass.Unknown ? EntityClass.Player : cls);
                     _log.Success($"[Inspector] 0x4A entity {e.EntityId} -> Target.");
                 });
@@ -1032,7 +1124,7 @@ public class ItemInspectorTab : ITab
                 ImGui.SameLine(0, 4);
                 UiHelper.SecondaryButton($"[o]##4aesp{qi}", 38, 20, () =>
                 {
-                    PushIdToEsp(e.EntityId, e.NameHint,
+                    PushIdToEsp(e.EntityId, e.NameHint ?? "",
                         cls == EntityClass.Unknown ? EntityClass.Player : cls);
                     _log.Info($"[Inspector] Entity {e.EntityId} -> ESP.");
                 });
