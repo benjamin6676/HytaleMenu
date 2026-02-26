@@ -49,6 +49,12 @@ public sealed class Application : IDisposable
         foreach (var keyboard in _input.Keyboards)
             keyboard.KeyDown += OnKeyDown;
 
+        // ── Cursor: ensure our overlay window always shows a normal arrow cursor.
+        //    Without this Silk.NET may inherit the previous cursor mode (e.g.
+        //    CursorMode.Raw) from Hytale, making the cursor invisible inside our window.
+        foreach (var mouse in _input.Mice)
+            mouse.Cursor.CursorMode = CursorMode.Normal;
+
         MenuRenderer.ApplyTheme();
         _menu = new MenuRenderer();
     }

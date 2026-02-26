@@ -43,6 +43,7 @@ public class PrivilegeTab : ITab
     private string               _fillStatus  = "Click [~] to auto-fill from captured packets";
     private List<AdminCandidate> _adminList   = new();
     private int                  _adminLastPkt = 0;
+    private bool                 _adminScanRunning = false;  // BG scan guard
     private DateTime             _adminScanTime = DateTime.MinValue;
     private int                  _selectedAdmin = -1;
 
@@ -61,6 +62,7 @@ public class PrivilegeTab : ITab
     // ── Token Sniff ────────────────────────────────────────────────────────
     private List<TokenEntry> _tokens        = new();
     private int              _tokLastPkt    = 0;
+    private bool             _tokScanRunning = false;  // BG token scan guard
     private bool             _tokReplaying  = false;
     private int              _tokSelectedIdx = -1;
 
@@ -165,13 +167,23 @@ public class PrivilegeTab : ITab
         float mainW = fullW - sideW - 8f;
 
         // Refresh admin candidate list when new packets arrive
+        // BUG FIX: BuildAdminCandidates iterates 300 packets synchronously on the render
+        // thread, which causes visible freezes (especially when first switching to this tab).
+        // Now we kick it off in a background Task and update _adminList when done.
         var pkts = _capture.GetPackets();
-        if (pkts.Count != _adminLastPkt &&
+        if (!_adminScanRunning && pkts.Count != _adminLastPkt &&
             (DateTime.Now - _adminScanTime).TotalMilliseconds > 1500)
         {
-            _adminList    = BuildAdminCandidates(pkts);
-            _adminLastPkt = pkts.Count;
-            _adminScanTime = DateTime.Now;
+            _adminScanRunning = true;
+            _adminLastPkt    = pkts.Count;
+            _adminScanTime   = DateTime.Now;
+            var snapshot = pkts;  // captured before Task starts
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                try   { var result = BuildAdminCandidates(snapshot); _adminList = result; }
+                catch { /* swallow - non-critical background scan */ }
+                finally { _adminScanRunning = false; }
+            });
         }
 
         // ── Status + auto-fill bar (full width) ───────────────────────────
@@ -199,10 +211,18 @@ public class PrivilegeTab : ITab
         ImGui.BeginChild("##privmain", new Vector2(mainW, availH), ImGuiChildFlags.None);
         ImGui.PopStyleColor();
         // ── Token and admin action auto-scan ─────────────────────────────
-        if (pkts.Count != _tokLastPkt)
+        // BUG FIX: ScanTokens was also sync on render thread - kick to background
+        if (!_tokScanRunning && pkts.Count != _tokLastPkt)
         {
-            ScanTokensAndAdminActions(pkts);
-            _tokLastPkt = pkts.Count;
+            _tokScanRunning = true;
+            _tokLastPkt     = pkts.Count;
+            var tSnapshot = pkts;
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                try   { ScanTokensAndAdminActions(tSnapshot); }
+                catch { }
+                finally { _tokScanRunning = false; }
+            });
         }
 
         switch (_subTab)

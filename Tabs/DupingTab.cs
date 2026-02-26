@@ -1024,17 +1024,36 @@ public class DupingTab : ITab
         });
     }
 
+    // ── Book picker cache (avoid GetAll() every frame with 35k+ entries) ────────
+    private List<SavedPacket>? _bookCache    = null;
+    private int               _bookCacheSize = -1;
+
     private void RenderBookPicker(string label, Action<string> onSelect)
     {
-        var saved = _store.GetAll();
-        if (saved.Count == 0) return;
+        // Only rebuild when store changes size
+        int storeSize = _store.GetAll().Count;
+        if (_bookCache == null || storeSize != _bookCacheSize)
+        {
+            _bookCacheSize = storeSize;
+            _bookCache     = _store.GetAll()
+                .OrderByDescending(p => p.SavedAt)
+                .Take(300)      // cap at 300 most-recent; combo with 35k rows freezes ImGui
+                .ToList();
+        }
+
+        if (_bookCache.Count == 0) return;
         if (ImGui.BeginCombo(label, ""))
         {
-            foreach (var s in saved)
+            foreach (var s in _bookCache)
             {
                 if (ImGui.Selectable(s.Label)) onSelect(s.HexString);
                 if (ImGui.IsItemHovered())
                     ImGui.SetTooltip(s.Notes.Length > 0 ? s.Notes : s.HexString[..Math.Min(40, s.HexString.Length)]);
+            }
+            if (storeSize > 300)
+            {
+                ImGui.Separator();
+                UiHelper.MutedLabel($"Showing 300 of {storeSize} - use Packet Book search for more");
             }
             ImGui.EndCombo();
         }

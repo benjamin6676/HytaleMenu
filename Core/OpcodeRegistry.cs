@@ -111,7 +111,8 @@ public static class OpcodeRegistry
         { 0x4A, new("EntitySync4A",          "High-freq entity/item sync (0x4A)",        OpcodeCategory.Entity) },
         // IDs below are inferred (S->C not fully documented by hytalemodding.dev)
         { 0x02, new("PlayerSpawn",           "Spawn player entity",                      OpcodeCategory.Entity) },
-        { 0x03, new("EntityUpdate",          "Entity position / state update",           OpcodeCategory.Entity) },
+        // 0x03 = 3 = "Pong" (already defined above; EntityUpdate is a different ID)
+        { 200,  new("EntityUpdate",          "Entity position / state update",           OpcodeCategory.Entity) },
         { 0x04, new("InventoryUpdate",       "Full inventory contents sync",             OpcodeCategory.Inventory) },
         { 0x06, new("BlockUpdate",           "Single block state change",                OpcodeCategory.World) },
         { 0x0A, new("TimeUpdate",            "Day/night time sync",                      OpcodeCategory.World) },
@@ -125,8 +126,47 @@ public static class OpcodeRegistry
     };
 
     // Runtime user-learned opcodes
-    private static readonly ConcurrentDictionary<ushort, OpcodeInfo> UserCsOpcodes = new();
-    private static readonly ConcurrentDictionary<ushort, OpcodeInfo> UserScOpcodes = new();
+    private static readonly ConcurrentDictionary<ushort, OpcodeInfo> UserCsOpcodes;
+    private static readonly ConcurrentDictionary<ushort, OpcodeInfo> UserScOpcodes;
+
+    // Indicates whether static init succeeded
+    private static readonly bool _initOk;
+    private static readonly string _initError = "";
+
+    static OpcodeRegistry()
+    {
+        UserCsOpcodes = new();
+        UserScOpcodes = new();
+        try
+        {
+            // Validate no duplicate keys exist
+            var seen = new Dictionary<(ushort, bool), string>();
+            foreach (var kv in CsOpcodes)
+            {
+                var key = (kv.Key, true);
+                if (seen.ContainsKey(key))
+                    throw new InvalidOperationException(
+                        $"Duplicate C->S opcode {kv.Key}: '{kv.Value.Name}' vs '{seen[key]}'");
+                seen[key] = kv.Value.Name;
+            }
+            foreach (var kv in ScOpcodes)
+            {
+                var key = (kv.Key, false);
+                if (seen.ContainsKey(key))
+                    throw new InvalidOperationException(
+                        $"Duplicate S->C opcode {kv.Key}: '{kv.Value.Name}' vs '{seen[key]}'");
+                seen[key] = kv.Value.Name;
+            }
+            _initOk = true;
+        }
+        catch (Exception ex)
+        {
+            _initOk    = false;
+            _initError = ex.Message;
+            // Don't rethrow — a TypeInitializationException would crash the whole app.
+            // The tab will show an error banner instead.
+        }
+    }
 
     // ── VarInt decoder (Netty / Hytale wire format) ───────────────────────
 
@@ -165,19 +205,37 @@ public static class OpcodeRegistry
 
     // ── Lookup ────────────────────────────────────────────────────────────
 
-    public static OpcodeInfo? Lookup(ushort id, PacketDirection dir)
+    private static readonly OpcodeInfo _unknownInfo =
+        new("UNKNOWN", "Unrecognised packet ID", OpcodeCategory.Unknown);
+
+    /// <summary>
+    /// Look up an opcode. Never returns null — unknown IDs get an UNKNOWN sentinel
+    /// so callers don't need null-checks and can't trigger a NullReferenceException.
+    /// </summary>
+    public static OpcodeInfo Lookup(ushort id, PacketDirection dir)
     {
-        bool cs = dir == PacketDirection.ClientToServer;
-        var userMap    = cs ? UserCsOpcodes : UserScOpcodes;
-        var builtInMap = cs ? CsOpcodes     : ScOpcodes;
-        if (userMap.TryGetValue(id, out var u)) return u;
-        if (builtInMap.TryGetValue(id, out var b)) return b;
-        return null;
+        try
+        {
+            if (!_initOk) return _unknownInfo;
+            bool cs = dir == PacketDirection.ClientToServer;
+            var userMap    = cs ? UserCsOpcodes : UserScOpcodes;
+            var builtInMap = cs ? CsOpcodes     : ScOpcodes;
+            if (userMap    != null && userMap.TryGetValue(id, out var u)) return u;
+            if (builtInMap != null && builtInMap.TryGetValue(id, out var b)) return b;
+            return _unknownInfo;
+        }
+        catch
+        {
+            return _unknownInfo;
+        }
     }
 
     /// <summary>Legacy byte overload — wraps to ushort.</summary>
-    public static OpcodeInfo? Lookup(byte opcode, PacketDirection dir)
+    public static OpcodeInfo Lookup(byte opcode, PacketDirection dir)
         => Lookup((ushort)opcode, dir);
+
+    /// <summary>Returns the init error message if static init failed, else empty string.</summary>
+    public static string InitError => _initOk ? "" : _initError;
 
     public static string Label(ushort id, PacketDirection dir)
         => Lookup(id, dir)?.Name ?? $"Unk({id})";
@@ -187,9 +245,10 @@ public static class OpcodeRegistry
 
     public static string FullLabel(ushort id, PacketDirection dir)
     {
-        var info = Lookup(id, dir);
+        var info = Lookup(id, dir);   // always non-null
         string prefix = dir == PacketDirection.ClientToServer ? "C->S" : "S->C";
-        if (info == null) return $"[{prefix}] ID {id} Unknown";
+        bool isKnown = info.Name != "UNKNOWN";
+        if (!isKnown) return $"[{prefix}] ID {id} Unknown";
         return $"[{prefix}] {id} {info.Name}";
     }
 
@@ -239,9 +298,32 @@ public static class OpcodeRegistry
         // We handle it specifically BEFORE the generic Entity extractor so
         // the extracted ID gets labeled "PlayerID" (not generic "EntityID").
         bool handledSpecially = false;
+
+        // ── PlayerSpawn (S->C 0x02): entityId + name + XYZ ────────────
         if (sp.Opcode == 0x02 && pkt.Direction == PacketDirection.ServerToClient && data.Length >= 5)
         {
             ExtractPlayerSpawnFields(sp, data);
+            handledSpecially = true;
+        }
+
+        // ── MouseInteraction (C->S 111): targetEntityId + itemInHandId ─
+        else if (sp.Opcode == 111 && pkt.Direction == PacketDirection.ClientToServer && data.Length >= 5)
+        {
+            ExtractMouseInteractionFields(sp, data);
+            handledSpecially = true;
+        }
+
+        // ── SyncInteractionChains (C->S 290): interacted entityId ──────
+        else if (sp.Opcode == 290 && pkt.Direction == PacketDirection.ClientToServer && data.Length >= 5)
+        {
+            ExtractSyncInteractionFields(sp, data);
+            handledSpecially = true;
+        }
+
+        // ── ChatMessage (C->S 211 or S->C relay): try to extract sender ─
+        else if (sp.Opcode == 211 && data.Length >= 4)
+        {
+            ExtractChatWithSenderFields(sp, data);
             handledSpecially = true;
         }
 
@@ -270,7 +352,7 @@ public static class OpcodeRegistry
         }
 
         // Confidence: known opcode = starts at Medium, unknown = Low
-        if (sp.Info != null)
+        if (sp.Info.Name != "UNKNOWN")
         {
             sp.ConfidenceScore = 50;  // known opcode baseline
             sp.ConfidenceSource = "Opcode known";
@@ -428,6 +510,130 @@ public static class OpcodeRegistry
         }
     }
 
+    /// <summary>
+    /// MouseInteraction (C->S ID 111) layout (observed from hytalemodding.dev):
+    ///   [VarInt opcode (111) = 0x6F, 1 byte]
+    ///   bytes 1-4 : targetEntityId (uint32 LE)  — entity/item the crosshair is on
+    ///   byte  5   : interactionType (0=Primary/left, 1=Secondary/right, 2=Use/F)
+    ///   bytes 6-9 : itemInHandId (uint32 LE)    — item currently held by the player
+    /// </summary>
+    private static void ExtractMouseInteractionFields(StructuredPacket sp, byte[] data)
+    {
+        // ── Target entity (what cursor is pointing at) ─────────────────
+        if (data.Length >= 5)
+        {
+            uint targetId = BitConverter.ToUInt32(data, 1);
+            if (IdRanges.IsBroadEntityId(targetId))
+            {
+                sp.ExtractedIds.Add(new ExtractedField("TargetEntityId", targetId, 1,
+                    ConfidenceSource.Packet) { Confidence = 88 });
+                sp.Fields.Add(new PacketFieldEx("TargetEntityId", targetId.ToString(), 1,
+                    ConfidenceSource.Packet, 88));
+            }
+        }
+
+        // ── Interaction type ───────────────────────────────────────────
+        if (data.Length >= 6)
+        {
+            string iType = data[5] switch { 0 => "Primary", 1 => "Secondary", 2 => "Use", _ => $"{data[5]}" };
+            sp.Fields.Add(new PacketFieldEx("InteractionType", iType, 5, ConfidenceSource.Packet, 80));
+        }
+
+        // ── Item in hand ───────────────────────────────────────────────
+        if (data.Length >= 10)
+        {
+            uint itemInHand = BitConverter.ToUInt32(data, 6);
+            if (IdRanges.IsBroadEntityId(itemInHand))
+            {
+                sp.ExtractedIds.Add(new ExtractedField("ItemInHandId", itemInHand, 6,
+                    ConfidenceSource.Packet) { Confidence = 82 });
+                sp.Fields.Add(new PacketFieldEx("ItemInHandId", itemInHand.ToString(), 6,
+                    ConfidenceSource.Packet, 82));
+            }
+        }
+    }
+
+    /// <summary>
+    /// SyncInteractionChains (C->S ID 290): carries one or more interaction chains.
+    /// Each chain starts with an entityId (uint32 LE) describing the interaction target.
+    /// Layout is not fully documented; we scan for any valid entity IDs in the payload.
+    /// </summary>
+    private static void ExtractSyncInteractionFields(StructuredPacket sp, byte[] data)
+    {
+        // Try offset 1 first (most likely), then scan wider
+        for (int off = 1; off + 4 <= Math.Min(data.Length, 16); off++)
+        {
+            uint id = BitConverter.ToUInt32(data, off);
+            if (IdRanges.IsBroadEntityId(id))
+            {
+                sp.ExtractedIds.Add(new ExtractedField("InteractionTarget", id, off,
+                    ConfidenceSource.Packet) { Confidence = 78 });
+                sp.Fields.Add(new PacketFieldEx("InteractionTarget", id.ToString(), off,
+                    ConfidenceSource.Packet, 78));
+                break;  // first valid ID is sufficient
+            }
+        }
+    }
+
+    /// <summary>
+    /// ChatMessage (211) – try to extract a sender username that precedes the message.
+    /// Hytale chat packets observed layout variants:
+    ///   Variant A (C->S player send): [opcode][msgLen VarInt][UTF-8 message]
+    ///   Variant B (S->C relay):       [opcode][senderLen byte][senderUTF8][msgLen][msg]
+    /// We try both; a valid sender name must be 3-32 chars alphanumeric/underscore.
+    /// </summary>
+    private static void ExtractChatWithSenderFields(StructuredPacket sp, byte[] data)
+    {
+        if (data.Length < 4) return;
+
+        // ── Variant B: first byte after opcode = sender name length ───
+        byte possibleSenderLen = data[1];
+        if (possibleSenderLen >= 3 && possibleSenderLen <= 32
+            && 2 + possibleSenderLen < data.Length)
+        {
+            try
+            {
+                string sender = System.Text.Encoding.UTF8
+                    .GetString(data, 2, possibleSenderLen).Trim();
+                // Validate: alphanumeric + underscore, starts with letter
+                if (sender.Length >= 3
+                    && char.IsLetter(sender[0])
+                    && sender.All(c => char.IsLetterOrDigit(c) || c == '_')
+                    && sender.Any(c => "aeiouAEIOU".Contains(c) || char.IsDigit(c)))
+                {
+                    sp.Fields.Add(new PacketFieldEx("SenderName", sender, 2,
+                        ConfidenceSource.Packet, 82));
+
+                    // Rest of packet = message
+                    int msgOff = 2 + possibleSenderLen;
+                    if (msgOff + 1 < data.Length)
+                    {
+                        string msg = System.Text.Encoding.UTF8
+                            .GetString(data, msgOff, data.Length - msgOff)
+                            .Replace("\0", "").Trim();
+                        if (msg.Length > 0)
+                            sp.Fields.Add(new PacketFieldEx("Message", msg, msgOff,
+                                ConfidenceSource.Packet, 75));
+                    }
+                    return;
+                }
+            }
+            catch { }
+        }
+
+        // ── Variant A: plain message, no sender prefix ─────────────────
+        try
+        {
+            string text = System.Text.Encoding.UTF8
+                .GetString(data, 1, data.Length - 1)
+                .Replace("\0", "").Trim();
+            if (text.Length > 0 && text.Length <= 256)
+                sp.Fields.Add(new PacketFieldEx("Message", text, 1,
+                    ConfidenceSource.Packet, 65));
+        }
+        catch { }
+    }
+
     private static void ExtractChatFields(StructuredPacket sp, byte[] data)
     {
         // Chat: opcode + length prefix + UTF-8 string
@@ -505,21 +711,23 @@ public static class OpcodeRegistry
 
     private static void ExtractGenericFields(StructuredPacket sp, byte[] data)
     {
-        // BUG FIX: was 9999, missing IDs 10000-4,000,000. Now 16_000_000 consistent.
-        // Also tries big-endian reads since Hytale may use either byte order.
+        // Scan first 20 bytes for entity IDs (both byte orders).
         var seen = new HashSet<uint>();
         for (int i = 1; i + 4 <= Math.Min(data.Length, 20); i++)
         {
-            // LE read
             uint vLe = BitConverter.ToUInt32(data, i);
             if (IdRanges.IsEntityId(vLe) && seen.Add(vLe))
                 sp.ExtractedIds.Add(new ExtractedField("ID?", vLe, i, ConfidenceSource.Uncertain));
 
-            // BE read (different value = try as alternate interpretation)
             uint vBe = (uint)(data[i] << 24 | data[i+1] << 16 | data[i+2] << 8 | data[i+3]);
             if (vBe != vLe && IdRanges.IsEntityId(vBe) && seen.Add(vBe))
                 sp.ExtractedIds.Add(new ExtractedField("ID?(BE)", vBe, i, ConfidenceSource.Uncertain));
         }
+        // NOTE: Display name extraction is NOT done here.
+        // ProcessAutoNaming in SmartDetect handles name extraction from the full UTF-8
+        // payload window, with proper quality gates. Doing it here caused false positives:
+        // any 3-byte sequence after a coincidental length byte was treated as a name,
+        // flooding the Packet Book with garbage like "QAI", "EurLnM", "Wl7oHk".
     }
 
     private static void TryExtractXYZ(StructuredPacket sp, byte[] data, int startOffset)
@@ -567,7 +775,7 @@ public class StructuredPacket
 {
     public CapturedPacket   Raw              { get; }
     public ushort           Opcode           { get; set; }
-    public OpcodeInfo?      Info             { get; set; }
+    public OpcodeInfo       Info             { get; set; } = new("UNKNOWN", "", OpcodeCategory.Unknown);
     public string           Label            { get; set; } = "";
     public int              ConfidenceScore  { get; set; }  // 0-100
     public string           ConfidenceSource { get; set; } = "";

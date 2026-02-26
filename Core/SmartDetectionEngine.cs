@@ -92,6 +92,18 @@ public class SmartDetectionEngine : IDisposable
         new(@"(?:hytale:[a-z][a-z0-9_]{2,31})|(?:[a-z][a-z0-9]{1,6}_[a-z0-9_]{2,24})|(?:[A-Za-z][A-Za-z0-9]{2,15})",
             RegexOptions.Compiled);
 
+    // Display names: up to 5 capitalised words separated by single spaces.
+    // Matches custom server items like "Mystica Spellblade", "Iron Sword", "Mythic Bow".
+    // Minimum 2 words, each word >= 2 letters, starts with capital.
+    private static readonly Regex DisplayNameRx =
+        new(@"^[A-Z][a-zA-Z]{1,20}(?:\s[A-Z][a-zA-Z]{1,20}){1,4}$",
+            RegexOptions.Compiled);
+
+    // Extended item name scanner: finds display-name style strings (Title Case with spaces)
+    private static readonly Regex DisplayNameScanRx =
+        new(@"[A-Z][a-zA-Z]{2,20}(?:\s[A-Z][a-zA-Z]{1,20}){1,4}",
+            RegexOptions.Compiled);
+
     // ─────────────────────────────────────────────────────────────────────
 
     public SmartDetectionEngine(PacketCapture capture, PacketStore store,
@@ -116,6 +128,20 @@ public class SmartDetectionEngine : IDisposable
     private void BackgroundLoop()
     {
         _log.Info("[SmartDetect] Background engine started.");
+
+        // ── One-time startup cleanup: remove garbage names (from old UTF-16 decode bug) ─
+        int removed = 0;
+        foreach (var kv in IdNameMap.ToArray())
+        {
+            if (!IsAnyQualityName(kv.Value))
+            {
+                IdNameMap.TryRemove(kv.Key, out _);
+                removed++;
+            }
+        }
+        if (removed > 0)
+            _log.Info($"[SmartDetect] Cleaned {removed} garbage names from IdNameMap on startup.");
+
         while (!_cts.IsCancellationRequested)
         {
             try
@@ -171,6 +197,29 @@ public class SmartDetectionEngine : IDisposable
                 IdNameMap[field.Value] = field.ResolvedName;
         }
 
+        // ── Also extract PlayerName / SenderName directly from packet fields ─
+        // Ensures player names from PlayerSpawn/Chat reach IdNameMap even if
+        // EntityTracker hasn't processed the entity yet.
+        // ── Harvest PlayerName, SenderName, DisplayName from packet fields ──────
+        // Covers: PlayerSpawn player name, ChatMessage sender, custom item display names.
+        var nameFields = sp.Fields.Where(f =>
+            f.Name is "PlayerName" or "SenderName" or "DisplayName").ToList();
+        foreach (var nf in nameFields)
+        {
+            if (string.IsNullOrEmpty(nf.Value)) continue;
+            bool isPlayer = nf.Name is "PlayerName" or "SenderName";
+            foreach (var idField in sp.ExtractedIds)
+            {
+                if (!IdNameMap.ContainsKey(idField.Value))
+                {
+                    IdNameMap[idField.Value] = nf.Value;
+                    if (isPlayer)
+                        EntityClassifications[idField.Value] = EntityClass.Player;
+                    _sdLog.Success($"[SmartDetect] {nf.Name} from packet: {idField.Value} -> '{nf.Value}'");
+                }
+            }
+        }
+
         // Heuristic classification by opcode
         var hint = ClassifyByOpCode(data[0], cs, data.Length);
 
@@ -209,8 +258,9 @@ public class SmartDetectionEngine : IDisposable
         // 2. Sequence correlation (LE + BE + VarInt)
         ProcessSequenceCorrelation(data, pkt.Timestamp, pktIndex);
 
-        // 3. Input mirroring
-        if (cs) ProcessInputMirroring(data[0], data);
+        // 3. Input mirroring – use VarInt-decoded opcode (sp.Opcode) so real
+        //    Hytale IDs 111/175/179/290 are recognised correctly.
+        if (cs) ProcessInputMirroring(sp.Opcode, data);
 
         // 4. Entity coords
         ProcessEntityCoords(data, pkt.Timestamp, hint);
@@ -554,32 +604,56 @@ public class SmartDetectionEngine : IDisposable
 
     // ── Input Mirroring ───────────────────────────────────────────────────
 
-    private static readonly HashSet<byte> DropInteractIds =
-        new() { 0x07, 0x08, 0x20, 0x21, 0x22, 0x04, 0x06 };
+    // Real Hytale C->S packet IDs that carry an item/entity ID we want to track.
+    // Stored as ushort to match VarInt-decoded opcodes (IDs 128+ need multi-byte VarInt).
+    private static readonly HashSet<ushort> DropInteractIds = new()
+    {
+        111,  // MouseInteraction      – aim/click; bytes 1-4 = targetEntityId
+        174,  // DropItemStack         – bytes 1-4 = itemId
+        175,  // MoveItemStack         – bytes 1-4 = itemId, bytes 5-8 = destSlot info
+        179,  // InventoryAction       – bytes 1-4 = itemId
+        290,  // SyncInteractionChains – bytes 1-4 = interacted entity/item ID
+        // Legacy byte-range IDs kept for backward compat
+        0x07, 0x08, 0x20, 0x21, 0x22, 0x04, 0x06,
+    };
 
-    private void ProcessInputMirroring(byte pktId, byte[] data)
+    // Called with VarInt-decoded opcode (ushort) from ProcessPacket
+    private void ProcessInputMirroring(ushort pktId, byte[] data)
     {
         if (!DropInteractIds.Contains(pktId) || data.Length < 5) return;
+
+        // For SyncInteractionChains (290) the interaction chain starts at offset 1.
+        // For MouseInteraction (111) the target entity is at offset 1-4.
+        // For inventory ops (174/175/179) the item ID is at offset 1-4.
         uint candidateId = BitConverter.ToUInt32(data, 1);
         if (!IdRanges.IsBroadEntityId(candidateId)) return;
-        if (ConfirmedItems.ContainsKey(candidateId)) return;
 
         string src = pktId switch
         {
-            0x07 => "Drop packet (0x07)",
-            0x08 => "Pick-Up packet (0x08)",
+            111  => "MouseInteraction (aim target)",
+            174  => "DropItemStack",
+            175  => "MoveItemStack",
+            179  => "InventoryAction",
+            290  => "SyncInteractionChains",
+            0x07 => "Drop packet (legacy 0x07)",
+            0x08 => "Pick-Up packet (legacy 0x08)",
             0x20 => "Entity Interact (0x20)",
             0x21 => "Entity Attack (0x21)",
             0x22 => "Entity Use (0x22)",
             0x06 => "Use Item (0x06)",
-            _    => $"C->S 0x{pktId:X2}",
+            _    => $"C->S ID {pktId}",
         };
+
         if (_suggestedTargetId != candidateId)
         {
             _suggestedTargetId = candidateId;
             _suggestedSource   = src;
             _log.Info($"[SmartDetect] Mirror -> {candidateId} from {src}");
         }
+
+        // Always update – even for confirmed items – so HoverTarget shows the latest
+        LastInteractedItemId     = candidateId;
+        LastInteractedItemSource = src;
     }
 
     // ── Entity Delta / Coord tracking ─────────────────────────────────────
@@ -784,24 +858,52 @@ public class SmartDetectionEngine : IDisposable
     private static readonly Regex SnakeCaseRx =
         new(@"^[a-z][a-z0-9]{1,15}_[a-z0-9_]{2,24}$", RegexOptions.Compiled);
 
+    /// <summary>
+    /// Lenient check for names that came from actual packet fields (PlayerSpawn,
+    /// ChatMessage etc.). Allows 3+ char names including short ones like JTM, Ciw.
+    /// Does NOT require a vowel – some real player handles have none.
+    /// Still rejects obvious garbage: dots, all-digit, too long.
+    /// </summary>
+    private static bool IsAnyQualityName(string s)
+    {
+        if (string.IsNullOrEmpty(s) || s.Length < 3 || s.Length > 32) return false;
+        if (s.All(char.IsDigit)) return false;
+        if (!s.Any(char.IsLetter)) return false;
+        if (JunkRx.IsMatch(s)) return false;   // dots = serialisation fragment
+        if (s.Distinct().Count() < 2) return false;
+        // Must start with a letter (rejects hex-like "3DFF")
+        if (!char.IsLetter(s[0])) return false;
+        // All alphanumeric or underscore
+        return s.All(c => char.IsLetterOrDigit(c) || c == '_');
+    }
+
     private static bool IsHighQualityName(string s)
     {
-        if (s.Length < 3 || s.Length > 32) return false;
+        // Hard floor: anything under 4 chars is never a real item or player name
+        if (s.Length < 4 || s.Length > 48) return false;
         if (s.All(char.IsDigit)) return false;
         // Must have at least one lowercase letter (rejects ALL_CAPS junk like DR9, FC2, etc.)
         if (!s.Any(char.IsLower)) return false;
-        if (s.Distinct().Count() < 2) return false;
+        if (s.Distinct().Count() < 3) return false;   // raised from 2 → rejects "aaa", "aab"
         if (JunkRx.IsMatch(s)) return false;
-        // Hytale namespace - always accept
+        // Hytale namespace - always accept (hytale:xxx already validated by regex)
         if (HytaleNamespaceRx.IsMatch(s)) return true;
-        // Snake-case item tag - accept
+        // Snake-case item tag (oak_log, iron_sword) - accept
         if (SnakeCaseRx.IsMatch(s)) return true;
-        // Player name format: 3-16 chars, alphanumeric, starts with letter
-        if (PlayerNameRx.IsMatch(s))
+        // Display name: "Mystica Spellblade", "Iron Sword" etc. (Title Case with spaces)
+        if (DisplayNameRx.IsMatch(s)) return true;
+        // Player / entity name: strict rules to reject 3-char garbage like "Dpk", "qrU", "FLn"
+        //   ► min 5 chars (real Hytale names: Android18, Blanketeer, GawkJuice …)
+        //   ► must contain at least one vowel or digit (rejects pure-consonant junk)
+        //   ► alphanumeric only, starts with letter
+        if (PlayerNameRx.IsMatch(s) && s.Length >= 5)
         {
-            // Reject very short all-uppercase-heavy strings (DR9, FC2, etc.)
+            // Reject strings with no vowels and no digits - pure consonant runs are junk
+            bool hasVowelOrDigit = s.Any(ch => "aeiouAEIOU0123456789".Contains(ch));
+            if (!hasVowelOrDigit) return false;
+            // Reject >50% uppercase (hex-like garbage) for names under 8 chars
             int upperCount = s.Count(char.IsUpper);
-            if (upperCount > s.Length / 2 && s.Length < 5) return false;
+            if (upperCount > s.Length / 2 && s.Length < 8) return false;
             return true;
         }
         return false;
@@ -809,6 +911,15 @@ public class SmartDetectionEngine : IDisposable
 
     private void ProcessAutoNaming(byte[] data)
     {
+        // Fast pre-check: skip packets that contain no printable ASCII text
+        // (e.g. pure binary packets like position updates). Saves ~80% of CPU
+        // since most packets never contain item/player names.
+        if (data.Length < 6) return;
+        int printable = 0;
+        for (int k = 0; k < data.Length; k++)
+            if (data[k] >= 0x20 && data[k] < 0x7F && ++printable >= 6) break;
+        if (printable < 6) return;
+
         for (int i = 1; i + 4 <= data.Length; i++)
         {
             uint id = BitConverter.ToUInt32(data, i);
@@ -830,46 +941,47 @@ public class SmartDetectionEngine : IDisposable
             try { utf8Window = Encoding.UTF8.GetString(data, winStart, winLen).Replace("\0", " "); }
             catch { }
 
-            // --- UTF-16 LE window (Update 3 may use wide strings) ---
-            string utf16Window = "";
-            try
-            {
-                // Only attempt if we have an even number of bytes
-                int w16Start = (winStart % 2 == 0) ? winStart : winStart + 1;
-                int w16Len   = Math.Min(winLen & ~1, data.Length - w16Start);
-                if (w16Len >= 4)
-                    utf16Window = Encoding.Unicode.GetString(data, w16Start, w16Len)
-                                           .Replace("\0", " ");
-            }
-            catch { }
+            // UTF-16 window intentionally removed: see scan comment below.
+            string utf16Window = "";  // kept for legacy variable reference only
 
             // --- Try both windows, collect candidates ---
             string? bestName = null;
             int     bestScore = 0;
 
-            foreach (string windowText in new[] { utf8Window, utf16Window })
+            // ── Only scan UTF-8 window (UTF-16 decode of raw binary produces garbage) ──
+            // The UTF-16 window is intentionally skipped here: decoding arbitrary packet
+            // bytes as little-endian UTF-16 creates wide-char noise that passes regex checks
+            // and floods IdNameMap with strings like "F????D???Y?(?E".
+            if (!string.IsNullOrEmpty(utf8Window))
             {
-                if (string.IsNullOrEmpty(windowText)) continue;
-                foreach (Match m in ItemNameRx.Matches(windowText))
+                // Standard item/player names: hytale:xxx, snake_case, CamelCase
+                foreach (Match m in ItemNameRx.Matches(utf8Window))
                 {
                     string candidate = m.Value;
                     if (!IsHighQualityName(candidate)) continue;
-                    // Skip blacklisted names for this ID
                     if (blacklisted != null) { lock (blacklisted) { if (blacklisted.Contains(candidate)) continue; } }
 
-                    // Score: hytale: = 100, snake_case = 60, player = 40
                     int score = HytaleNamespaceRx.IsMatch(candidate) ? 100
                               : SnakeCaseRx.IsMatch(candidate)       ? 60
                                                                       : 40;
-                    // Proximity bonus: closer to ID bytes = better
                     int dist = Math.Abs(m.Index - (i - winStart));
                     score += Math.Max(0, 50 - dist);
+                    if (score > bestScore) { bestScore = score; bestName = candidate; }
+                }
 
-                    if (score > bestScore)
-                    {
-                        bestScore = score;
-                        bestName  = candidate;
-                    }
+                // Display names: "Mystica Spellblade", "Iron Sword", custom server items
+                // Require >= 8 chars so short fragments don't pass (e.g. "QAI", "EurLnM")
+                foreach (Match m in DisplayNameScanRx.Matches(utf8Window))
+                {
+                    string candidate = m.Value;
+                    if (candidate.Length < 8) continue;   // min 2 words, e.g. "Iron Sword"
+                    if (blacklisted != null) { lock (blacklisted) { if (blacklisted.Contains(candidate)) continue; } }
+                    // Only accept if it contains at least one lowercase char and a space
+                    if (!candidate.Any(char.IsLower) || !candidate.Contains(' ')) continue;
+                    int score = 58;
+                    int dist = Math.Abs(m.Index - (i - winStart));
+                    score += Math.Max(0, 40 - dist);
+                    if (score > bestScore) { bestScore = score; bestName = candidate; }
                 }
             }
 
@@ -918,6 +1030,16 @@ public class SmartDetectionEngine : IDisposable
                 ci.NameHint  = bestName;
             if (Pkt4AEntities.TryGetValue(id, out var p4a) && string.IsNullOrEmpty(p4a.NameHint))
                 p4a.NameHint = bestName;
+            // Also push into EntityTracker so the Inspector shows the name
+            var trackerEnt = EntityTracker.Instance.GetOrCreatePublic(id);
+            if (trackerEnt != null && string.IsNullOrEmpty(trackerEnt.Name))
+            {
+                trackerEnt.Name           = bestName;
+                trackerEnt.NameConfidence = bestScore;
+                trackerEnt.NameSource     = HytaleNamespaceRx.IsMatch(bestName) || SnakeCaseRx.IsMatch(bestName)
+                                             ? ConfidenceSource.Packet
+                                             : ConfidenceSource.Inferred;
+            }
         }
     }
 
@@ -994,24 +1116,33 @@ public class SmartDetectionEngine : IDisposable
     // (e.g. from a subsequent packet or manual entry), the Name column stays
     // empty.  This method runs every loop pass and propagates new names.
 
+    // Throttle sync to avoid iterating 252k entries every 300ms background loop pass
+    private DateTime _lastFullSync = DateTime.MinValue;
+
     private void SyncNamesToConfirmedItems()
     {
+        // Only do a full pass every 5 seconds. Between passes, only sync IDs that
+        // were just added to IdNameMap (handled inline in ProcessPacket).
+        if ((DateTime.Now - _lastFullSync).TotalSeconds < 5.0) return;
+        _lastFullSync = DateTime.Now;
+
         foreach (var kv in ConfirmedItems)
         {
             if (!string.IsNullOrEmpty(kv.Value.NameHint)) continue;
             if (!IdNameMap.TryGetValue(kv.Key, out var name)) continue;
-            if (!IsHighQualityName(name)) continue;
+            if (!IsAnyQualityName(name)) continue;
             kv.Value.NameHint = name;
         }
     }
 
     private void SyncNamesToPkt4AEntities()
     {
+        // Runs on same throttle as SyncNamesToConfirmedItems (called just after in BackgroundLoop)
         foreach (var kv in Pkt4AEntities)
         {
             if (!string.IsNullOrEmpty(kv.Value.NameHint)) continue;
             if (!IdNameMap.TryGetValue(kv.Key, out var name)) continue;
-            if (!IsHighQualityName(name)) continue;
+            if (!IsAnyQualityName(name)) continue;
             kv.Value.NameHint = name;
         }
     }
@@ -1170,6 +1301,11 @@ public class SmartDetectionEngine : IDisposable
     /// so the suggested target was only set by packet mirroring (C->S interact pkts).
     /// Now memory polling feeds it directly for real-time hover tracking.
     /// </summary>
+    // Last item/entity the player interacted with via packet (C->S).
+    // Updated by ProcessInputMirroring; read by ItemInspectorTab / Hover grab.
+    public uint   LastInteractedItemId     { get; private set; } = 0;
+    public string LastInteractedItemSource { get; private set; } = "";
+
     public void SetHoverEntity(uint entityId)
     {
         if (entityId == 0 || entityId > 16_000_000) return;

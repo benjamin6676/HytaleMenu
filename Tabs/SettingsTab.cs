@@ -37,6 +37,7 @@ public class SettingsTab : ITab
     private string   _discoverKey     = "";   // which sig is being discovered
     private bool     _discoverRunning = false;
     private List<PatternCandidate> _discoverResults = new();
+    private readonly object _discoverLock = new();  // guards _discoverResults across bg thread
     private string   _discoverStatus  = "";   // progress/result message
 
     public SettingsTab(TestLog log) { _log = log; }
@@ -280,13 +281,19 @@ public class SettingsTab : ITab
 
         float col = 12f;
         ImGui.SetCursorPos(new Vector2(col, 24));
-        RenderAddrRow("EntityList",  au.EntityListAddr);
+        RenderAddrRow("EntityList",      au.EntityListAddr);
         ImGui.SetCursorPosX(col);
-        RenderAddrRow("LocalPlayer", au.LocalPlayerAddr);
+        RenderAddrRow("LocalPlayer",     au.LocalPlayerAddr);
         ImGui.SetCursorPosX(col);
-        RenderAddrRow("ItemList",    au.ItemListAddr);
+        RenderAddrRow("ItemList",        au.ItemListAddr);
         ImGui.SetCursorPosX(col);
-        RenderAddrRow("HoverID",     au.HoverIdAddr);
+        RenderAddrRow("HoverID",         au.HoverIdAddr);
+        ImGui.SetCursorPosX(col);
+        RenderAddrRow("OnChat",          au.OnChatFuncAddr);
+        ImGui.SetCursorPosX(col);
+        RenderAddrRow("SetCursorHidden", au.SetCursorHiddenAddr);
+        ImGui.SetCursorPosX(col);
+        RenderAddrRow("DoMoveCycle",     au.DoMoveCycleAddr);
 
         ImGui.EndChild();
         ImGui.Spacing();
@@ -487,7 +494,7 @@ public class SettingsTab : ITab
                     {
                         var results = AutoUpdateHandler.Instance
                                           .AutoDiscoverCandidates(sigName, reader);
-                        _discoverResults = results;
+                        lock (_discoverLock) { _discoverResults = results; }
                         _discoverStatus  = results.Count > 0
                             ? $"{results.Count} candidate(s) found - click 'Use This' to apply"
                             : "No candidates found. Game must be running.";
@@ -542,7 +549,7 @@ public class SettingsTab : ITab
         if (ImGui.SmallButton("Clear##disclear"))
         {
             _discoverKey     = "";
-            _discoverResults.Clear();
+            lock (_discoverLock) { _discoverResults.Clear(); }
             _discoverStatus  = "";
         }
 
@@ -556,8 +563,12 @@ public class SettingsTab : ITab
             ImGui.PopStyleColor();
         }
 
+        // ── THREAD-SAFETY: snapshot under lock before iteration ────────
+        List<PatternCandidate> snapshot;
+        lock (_discoverLock) { snapshot = new List<PatternCandidate>(_discoverResults); }
+
         int rank = 1;
-        foreach (var cand in _discoverResults)
+        foreach (var cand in snapshot)
         {
             // Score badge
             ImGui.PushStyleColor(ImGuiCol.Text, cand.ScoreColor);
@@ -587,7 +598,7 @@ public class SettingsTab : ITab
                 au.SetUserPattern(cand.SignatureName, cand.Pattern);
                 _editMsg         = $"Pattern for '{cand.SignatureName}' set from discovery. Run Force Rescan.";
                 _discoverKey     = "";
-                _discoverResults.Clear();
+                lock (_discoverLock) { _discoverResults.Clear(); }
                 _discoverStatus  = "";
                 _log.Success($"[AutoDiscover] Applied pattern for {cand.SignatureName}: {cand.Pattern}");
             }

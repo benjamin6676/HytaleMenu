@@ -88,7 +88,7 @@ public class EntityTracker
             }
 
             // Classify from opcode category
-            if (sp.Info != null)
+            if (sp.Info.Name != "UNKNOWN") // Lookup now returns non-null sentinel
             {
                 entity.EntityClass = sp.Info.Category switch
                 {
@@ -119,8 +119,39 @@ public class EntityTracker
             entity.AddPacketRef((byte)sp.Opcode, sp.Raw.Timestamp);
         }
 
+        // ── Propagate PlayerName / SenderName from packet fields ──────────
+        // OpcodeRegistry.Decode() extracts these from PlayerSpawn (0x02),
+        // ChatMessage (211) and similar packets. Push them into the entity
+        // so the name shows properly in Item Inspector and the ESP overlay.
+        var nameField = sp.Fields.FirstOrDefault(f =>
+            f.Name == "PlayerName" || f.Name == "SenderName");
+        if (nameField != null && !string.IsNullOrEmpty(nameField.Value))
+        {
+            // Cross-reference: find the entity ID extracted from the same packet
+            foreach (var idf in sp.ExtractedIds)
+            {
+                var ent = GetOrCreate(idf.Value);
+                if (string.IsNullOrEmpty(ent.Name) ||
+                    ent.NameConfidence < nameField.Score)
+                {
+                    ent.Name           = nameField.Value;
+                    ent.NameConfidence = nameField.Score;
+                    ent.NameSource     = ConfidenceSource.Packet;
+                    ent.EntityClass    = EntityClass.Player;
+                    idf.ResolvedName   = nameField.Value;
+                }
+            }
+        }
+
         // Slot-map update for container desync detection
         ProcessSlotMapUpdate(sp);
+    }
+
+    /// <summary>Public accessor for GetOrCreate – lets SmartDetect push names in.</summary>
+    public TrackedEntity? GetOrCreatePublic(uint id)
+    {
+        if (id == 0 || id > 16_000_000) return null;
+        return GetOrCreate(id);
     }
 
     /// <summary>
@@ -192,7 +223,7 @@ public class EntityTracker
 
     private void ProcessSlotMapUpdate(StructuredPacket sp)
     {
-        if (sp.Info?.Category != OpcodeCategory.Inventory) return;
+        if (sp.Info.Category != OpcodeCategory.Inventory) return;
         var slotField = sp.Fields.FirstOrDefault(f => f.Name == "SlotIndex");
         var itemField = sp.ExtractedIds.FirstOrDefault(f => f.Name == "ItemID");
         if (slotField == null || itemField == null) return;

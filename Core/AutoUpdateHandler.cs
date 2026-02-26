@@ -40,10 +40,14 @@ public sealed class AutoUpdateHandler
     public event Action<string, string>? OnUpdateDetected;
     public event Action<string, long>?  OnSymbolFound;
 
-    public long EntityListAddr  { get; private set; }
-    public long LocalPlayerAddr { get; private set; }
-    public long ItemListAddr    { get; private set; }
-    public long HoverIdAddr     { get; private set; }
+    public long EntityListAddr      { get; private set; }
+    public long LocalPlayerAddr     { get; private set; }
+    public long ItemListAddr        { get; private set; }
+    public long HoverIdAddr         { get; private set; }
+    // ── DLL-sourced function addresses ────────────────────────────────────
+    public long OnChatFuncAddr      { get; private set; } = 0;
+    public long SetCursorHiddenAddr { get; private set; } = 0;
+    public long DoMoveCycleAddr     { get; private set; } = 0;
 
     // ── Live memory polling ───────────────────────────────────────────────
     // BUG FIX: AOB scan finds static addresses but never reads live values from them.
@@ -182,6 +186,26 @@ public sealed class AutoUpdateHandler
         // 89 1D xx xx xx xx
         { "HoverEntityId",
           "89 1D ?? ?? ?? ?? 48 8B 0D" },
+
+        // ── Patterns sourced from Hytale.dll (Fish++ cheat, build 7935639e) ──────
+        //
+        // OnChat handler prologue - called when the local client receives a chat message.
+        // The caller passes: RCX = chat-manager obj, RDX = chat-packet ptr
+        //   byte 0x00 of RDX = sender-name-length (uint8)
+        //   bytes 0x01..    = sender name (UTF-8)
+        // Using this AOB lets the pattern scanner verify game build compatibility.
+        { "OnChat",
+          "56 53 48 83 EC ?? 48 8B F1 48 8B DA 38 1B 48 8B CB" },
+
+        // SetCursorHidden - called when game hides the cursor (e.g. entering first-person).
+        // Useful to detect game state changes (menu open vs. in-game).
+        { "SetCursorHidden",
+          "55 57 56 53 48 83 EC ?? 48 8D 6C 24 ?? 33 C0 48 89 45 ?? 48 89 45 ?? 48 8B D9 8B F2" },
+
+        // DoMoveCycle - called every client physics tick.
+        // Prologue is stable; reading LocalPlayer from nearby data gives position.
+        { "DoMoveCycle",
+          "55 41 57 41 56 41 55 41 54 57 56 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24" },
     };
 
     // User-supplied overrides (persisted to aob_patterns.json)
@@ -356,10 +380,13 @@ public sealed class AutoUpdateHandler
                     OnSymbolFound?.Invoke(name, resolvedAddr);
                     switch (name)
                     {
-                        case "EntityList":    EntityListAddr  = resolvedAddr; break;
-                        case "LocalPlayer":   LocalPlayerAddr = resolvedAddr; break;
-                        case "ItemList":      ItemListAddr    = resolvedAddr; break;
-                        case "HoverEntityId": HoverIdAddr     = resolvedAddr; break;
+                        case "EntityList":      EntityListAddr   = resolvedAddr; break;
+                        case "LocalPlayer":     LocalPlayerAddr  = resolvedAddr; break;
+                        case "ItemList":        ItemListAddr     = resolvedAddr; break;
+                        case "HoverEntityId":   HoverIdAddr      = resolvedAddr; break;
+                        case "OnChat":          OnChatFuncAddr   = resolvedAddr; break;
+                        case "SetCursorHidden": SetCursorHiddenAddr = resolvedAddr; break;
+                        case "DoMoveCycle":     DoMoveCycleAddr  = resolvedAddr; break;
                     }
                 }
                 else
@@ -370,10 +397,13 @@ public sealed class AutoUpdateHandler
                     OnSymbolFound?.Invoke(name, abs);
                     switch (name)
                     {
-                        case "EntityList":    EntityListAddr  = abs; break;
-                        case "LocalPlayer":   LocalPlayerAddr = abs; break;
-                        case "ItemList":      ItemListAddr    = abs; break;
-                        case "HoverEntityId": HoverIdAddr     = abs; break;
+                        case "EntityList":      EntityListAddr   = abs; break;
+                        case "LocalPlayer":     LocalPlayerAddr  = abs; break;
+                        case "ItemList":        ItemListAddr     = abs; break;
+                        case "HoverEntityId":   HoverIdAddr      = abs; break;
+                        case "OnChat":          OnChatFuncAddr   = abs; break;
+                        case "SetCursorHidden": SetCursorHiddenAddr = abs; break;
+                        case "DoMoveCycle":     DoMoveCycleAddr  = abs; break;
                     }
                 }
             }
@@ -389,7 +419,8 @@ public sealed class AutoUpdateHandler
             ScanProgress = (i + 1) * 100 / sigs.Count;
         }
 
-        int found = new long[] { EntityListAddr, LocalPlayerAddr, ItemListAddr, HoverIdAddr }
+        int found = new long[] { EntityListAddr, LocalPlayerAddr, ItemListAddr, HoverIdAddr,
+                                  OnChatFuncAddr, SetCursorHiddenAddr, DoMoveCycleAddr }
                         .Count(a => a != 0);
 
         ScanSummary = $"{found}/{sigs.Count} patterns found";

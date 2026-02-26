@@ -66,6 +66,21 @@ public class ProtocolMapTab : ITab
         float w = ImGui.GetContentRegionAvail().X;
         AutoScanPackets();
 
+        // ── Registry init error banner ─────────────────────────────────────
+        string initErr = OpcodeRegistry.InitError;
+        if (!string.IsNullOrEmpty(initErr))
+        {
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, new System.Numerics.Vector4(0.35f, 0.05f, 0.05f, 1f));
+            ImGui.BeginChild("##pmregerr", new System.Numerics.Vector2(w, 28), ImGuiChildFlags.Border);
+            ImGui.PopStyleColor();
+            ImGui.SetCursorPos(new System.Numerics.Vector2(8, 5));
+            ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColDanger);
+            ImGui.TextUnformatted($"⚠  OpcodeRegistry init error: {initErr}");
+            ImGui.PopStyleColor();
+            ImGui.EndChild();
+            ImGui.Spacing();
+        }
+
         RenderToolbar(w);
         ImGui.Spacing();
 
@@ -436,46 +451,66 @@ public class ProtocolMapTab : ITab
 
     private void AutoScanPackets()
     {
-        var pkts = _capture.GetPackets();
+        List<CapturedPacket> pkts;
+        try { pkts = _capture.GetPackets(); }
+        catch { return; }
+
         if (pkts.Count == _lastPktCount) return;
         if ((DateTime.Now - _lastScan).TotalMilliseconds < 500) return;
 
         int start = Math.Max(_lastPktCount, pkts.Count - 200);
         for (int i = start; i < pkts.Count; i++)
         {
-            var pkt = pkts[i];
-            if (pkt.RawBytes.Length == 0) continue;
-            int op  = pkt.RawBytes[0];
-            var dir = pkt.Direction == PacketDirection.ClientToServer
-                      ? ProtoDirection.CS : ProtoDirection.SC;
-
-            var entry = _map.GetOrAdd(op, dir, "");
-            entry.SeenCount++;
-            entry.LastSeen = DateTime.Now;
-
-            // Store sample hex (first 32 bytes)
-            if (entry.SampleHex.Length == 0)
+            try
             {
-                int take = Math.Min(32, pkt.RawBytes.Length);
-                entry.SampleHex = string.Join(" ", pkt.RawBytes.Take(take).Select(b => $"{b:X2}"));
-            }
+                var pkt = pkts[i];
 
-            // ── Auto-name from OpcodeRegistry ─────────────────────────
-            var regInfo = OpcodeRegistry.Lookup((byte)op, pkt.Direction);
-            if (regInfo != null)
-            {
-                if (string.IsNullOrEmpty(entry.Name))
-                    entry.Name = regInfo.Name;
-                if (string.IsNullOrEmpty(entry.Notes) && !string.IsNullOrEmpty(regInfo.Description))
-                    entry.Notes = regInfo.Description;
-                if (entry.Status == OpcodeStatus.Unknown)
-                    entry.Status = OpcodeStatus.Partial;  // registry knows it = at least Partial
-            }
+                // ── Guard: skip empty / malformed packets ──────────────────
+                if (pkt?.RawBytes == null || pkt.RawBytes.Length == 0) continue;
 
-            // If unknown opcode seen for first time, fire alert
-            if (entry.SeenCount == 1 && entry.Status == OpcodeStatus.Unknown)
-                AlertBus.Push(AlertBus.Sec_ProtoMap, AlertLevel.Info,
-                    $"New opcode 0x{op:X2} ({(dir == ProtoDirection.CS ? "C->S" : "S->C")})");
+                // ── Decode VarInt packet ID (Netty wire format) ────────────
+                ushort packetId = OpcodeRegistry.DecodePacketId(pkt.RawBytes, out int idBytes);
+
+                // Sanity-check: VarInt must have consumed at least 1 byte and
+                // the resulting ID must be plausible (0–65535 already guaranteed
+                // by ushort, but idBytes==0 means the array was somehow empty).
+                if (idBytes == 0) continue;
+
+                var dir = pkt.Direction == PacketDirection.ClientToServer
+                          ? ProtoDirection.CS : ProtoDirection.SC;
+
+                var entry = _map.GetOrAdd(packetId, dir, "");
+                entry.SeenCount++;
+                entry.LastSeen = DateTime.Now;
+
+                // Store sample hex (first 32 bytes)
+                if (entry.SampleHex.Length == 0)
+                {
+                    int take = Math.Min(32, pkt.RawBytes.Length);
+                    entry.SampleHex = string.Join(" ", pkt.RawBytes.Take(take).Select(b => $"{b:X2}"));
+                }
+
+                // ── Auto-name from OpcodeRegistry ──────────────────────────
+                // Lookup now always returns non-null (UNKNOWN sentinel on miss).
+                var regInfo = OpcodeRegistry.Lookup(packetId, pkt.Direction);
+                bool isKnown = regInfo.Name != "UNKNOWN";
+
+                if (isKnown)
+                {
+                    if (string.IsNullOrEmpty(entry.Name))
+                        entry.Name = regInfo.Name;
+                    if (string.IsNullOrEmpty(entry.Notes) && !string.IsNullOrEmpty(regInfo.Description))
+                        entry.Notes = regInfo.Description;
+                    if (entry.Status == OpcodeStatus.Unknown)
+                        entry.Status = OpcodeStatus.Partial;
+                }
+
+                // Alert on first sighting of a completely unknown ID
+                if (entry.SeenCount == 1 && !isKnown)
+                    AlertBus.Push(AlertBus.Sec_ProtoMap, AlertLevel.Info,
+                        $"New packet ID {packetId} ({(dir == ProtoDirection.CS ? "C->S" : "S->C")})");
+            }
+            catch { /* swallow per-packet errors — never let one bad packet crash the scanner */ }
         }
 
         _lastPktCount = pkts.Count;

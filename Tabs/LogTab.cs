@@ -53,7 +53,7 @@ public class LogTab : ITab
 
     // Filtered + pre-resolved list (only rebuilt when entries change)
     private int                       _cachedEntryCount  = -1;
-    private List<(PacketLogEntry e, ushort id, OpcodeInfo? info)> _filteredEntries = new();
+    private List<(PacketLogEntry e, ushort id, OpcodeInfo info)> _filteredEntries = new();
 
     // Learn-opcode modal
     private bool   _learnOpen   = false;
@@ -293,7 +293,7 @@ public class LogTab : ITab
                 ImGui.SameLine(0, 6);
                 var info = OpcodeRegistry.Lookup(id, PacketDirection.ClientToServer)
                          ?? OpcodeRegistry.Lookup(id, PacketDirection.ServerToClient);
-                string tag = info != null ? info.Name : $"ID {id}";
+                string tag = (info != null && info.Name != "UNKNOWN") ? info.Name : $"ID {id}";
                 ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColWarnDim);
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
                 if (ImGui.Button($"{tag} x{_spamCounts.GetValueOrDefault(id)} [x]##lpop{id}",
@@ -328,8 +328,9 @@ public class LogTab : ITab
                          :              MenuRenderer.ColAccent;
 
                 string injTag  = e.Injected ? "INJ" : "   ";
-                string namePart = info != null
-                    ? $"[{info.Name,-22}]"
+                bool   isKnown  = info != null && info.Name != "UNKNOWN";
+                string namePart = isKnown
+                    ? $"[{info!.Name,-22}]"
                     : $"[ID {id,-20}]";
 
                 ImGui.PushStyleColor(ImGuiCol.Text, col);

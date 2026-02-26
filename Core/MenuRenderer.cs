@@ -639,20 +639,51 @@ public class MenuRenderer
     // GLOBAL HOTKEY ACTIONS
     // ══════════════════════════════════════════════════════════════════════
 
-    /// <summary>F8: Insert a purple timeline marker into the capture log.</summary>
+    /// <summary>
+    /// F8: Insert a timeline marker AND capture the current hover entity + item.
+    /// The hover entity comes from live memory (AutoUpdateHandler poll).
+    /// The item in hand comes from the last MouseInteraction/InventoryAction packet.
+    /// Both are registered in SmartDetect so they appear in Item Inspector.
+    /// </summary>
     public void InsertTimelineMarker()
     {
+        uint hoverId   = AutoUpdateHandler.Instance.LiveHoverEntityId;
+        uint itemId    = _smartDetect?.LastInteractedItemId ?? 0;
+        string itemSrc = _smartDetect?.LastInteractedItemSource ?? "";
+
+        string hoverLabel = "";
+        if (hoverId != 0)
+        {
+            // Resolve name from SmartDetect
+            string name = (_smartDetect?.IdNameMap.TryGetValue(hoverId, out var n) == true && n != null)
+                ? n : $"ID {hoverId}";
+            hoverLabel = $" | Hover:{name} ({hoverId})";
+
+            // Register in SmartDetect so it appears in Inspector
+            _smartDetect?.OnLiveMemoryHoverEntity(hoverId);
+        }
+
+        string itemLabel = "";
+        if (itemId != 0 && itemId != hoverId)
+        {
+            string iname = (_smartDetect?.IdNameMap.TryGetValue(itemId, out var n2) == true && n2 != null)
+                ? n2 : $"ID {itemId}";
+            itemLabel = $" | Item:{iname} ({itemId}) [{itemSrc}]";
+        }
+
+        string label = $"[F8 MARKER] {DateTime.Now:HH:mm:ss.fff}{hoverLabel}{itemLabel}";
+
         var marker = new CapturedPacket
         {
             Timestamp   = DateTime.Now,
             IsMarker    = true,
-            MarkerLabel = $"[F8 MARKER] {DateTime.Now:HH:mm:ss.fff}",
+            MarkerLabel = label,
             MarkerColor = 0xFF9000FF,
             Direction   = PacketDirection.ServerToClient,
             RawBytes     = Array.Empty<byte>(),
         };
         _captureTab.Capture.AddPacketExternal(marker);
-        _log.Info($"[Marker] Timeline marker inserted at {DateTime.Now:HH:mm:ss.fff}");
+        _log.Success($"[Marker] {label}");
     }
 
     /// <summary>F9: Lock/pin the last hovered entity in Item Inspector.</summary>

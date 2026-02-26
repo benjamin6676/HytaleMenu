@@ -304,40 +304,46 @@ public class MemoryReader : IDisposable
                     }
                 }
 
-                // BUG FIX: widened window from +-64 to +-128 bytes
+                // Scan a tight window around each name match.
+                // Struct layout heuristic: entity ID is usually 4-64 bytes AFTER the
+                // name string (positive offset), not before it. Using +-128 was too wide
+                // and produced hundreds of spurious candidates.
                 foreach (var (idx, foundName) in nameMatches)
                 {
-                    int winStart = Math.Max(0, idx - 128);
-                    int winEnd   = Math.Min(buf.Length, idx + 128 + 8);
+                    // Primary window: 8 bytes before name (for back-ref), 72 bytes after name
+                    int winStart = Math.Max(0, idx - 8);
+                    int winEnd   = Math.Min(buf.Length, idx + foundName.Length + 72);
 
-                    // 4-byte LE uint32
+                    // 4-byte LE uint32 — primary read method
                     for (int j = winStart; j + 4 <= winEnd; j++)
                     {
-                        // BUG FIX: use uint, not signed int
                         uint val = BitConverter.ToUInt32(buf, j);
-                        if (val >= 1 && val <= 4_000_000)
-                        {
-                            int score = nameBytes != null ? 100 : 60;
-                            AddLpCandidate(results, region, offset, idx, j, val, 4, foundName, score, "LE-uint32");
-                        }
-                        // 4-byte BE uint32
-                        if (j + 4 <= winEnd)
-                        {
-                            uint valBe = (uint)(buf[j] << 24 | buf[j+1] << 16 | buf[j+2] << 8 | buf[j+3]);
-                            if (valBe != val && valBe >= 1 && valBe <= 4_000_000)
-                                AddLpCandidate(results, region, offset, idx, j, valBe, 4, foundName, nameBytes!=null?75:45, "BE-uint32");
-                        }
+                        if (val < 1 || val > 4_000_000) continue;
+
+                        // Compute struct offset relative to name start
+                        int structOff = j - idx;
+                        // Score: higher when offset is in plausible range
+                        // [0..+16] = very likely (adjacent field in struct)
+                        // [+17..+64] = possible but lower confidence
+                        // negative = unlikely (ID stored before name in memory)
+                        int baseScore = nameBytes != null ? 100 : 55;
+                        int offBonus  = structOff >= 0 && structOff <= 16  ?  20
+                                      : structOff > 16 && structOff <= 64  ?   5
+                                      : structOff < 0 && structOff >= -8   ?  -20
+                                      : -40;
+                        int score = Math.Max(10, baseScore + offBonus);
+                        AddLpCandidate(results, region, offset, idx, j, val, 4, foundName, score, "LE-uint32");
                     }
-                    // 8-byte int64 probe (64-bit entity IDs)
-                    for (int j = winStart; j + 8 <= winEnd; j++)
+                    // 4-byte BE uint32 — lower confidence
+                    for (int j = winStart; j + 4 <= winEnd; j++)
                     {
-                        long val64 = BitConverter.ToInt64(buf, j);
-                        if (val64 > 0 && val64 <= 4_000_000_000L)
-                        {
-                            uint val32 = (uint)(val64 & 0xFFFF_FFFF);
-                            if (val32 >= 1 && val32 <= 4_000_000)
-                                AddLpCandidate(results, region, offset, idx, j, val32, 8, foundName, nameBytes!=null?65:35, "int64-low32");
-                        }
+                        uint valBe = (uint)(buf[j] << 24 | buf[j+1] << 16 | buf[j+2] << 8 | buf[j+3]);
+                        uint valLe = BitConverter.ToUInt32(buf, j);
+                        if (valBe == valLe || valBe < 1 || valBe > 4_000_000) continue;
+                        int structOff = j - idx;
+                        int offBonus  = structOff >= 0 && structOff <= 32 ? 5 : -10;
+                        int score = Math.Max(5, (nameBytes != null ? 65 : 35) + offBonus);
+                        AddLpCandidate(results, region, offset, idx, j, valBe, 4, foundName, score, "BE-uint32");
                     }
                 }
 

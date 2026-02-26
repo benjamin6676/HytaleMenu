@@ -164,20 +164,31 @@ public class DiffAnalysisTab : ITab
             else UiHelper.MutedLabel("empty");
 
             ImGui.SetCursorPos(new Vector2(8, 94));
-            // Load from capture list
+            // Load from capture list - grouped by opcode to avoid spam
             var pkts = _capture.GetPackets();
             if (pkts.Count > 0)
             {
                 if (ImGui.BeginCombo($"From capture##sc{i}", ""))
                 {
-                    foreach (var (pkt, idx) in pkts.Select((p, idx) => (p, idx)).TakeLast(20))
+                    // Group packets by (opcode byte, direction) and show one representative
+                    // per group. This avoids showing hundreds of identical spam packets.
+                    var groups = pkts
+                        .Where(p => p.RawBytes != null && p.RawBytes.Length > 0 && !p.IsMarker)
+                        .GroupBy(p => (p.RawBytes[0], p.Direction))
+                        .OrderByDescending(g => g.Count())
+                        .Take(60)
+                        .ToList();
+
+                    foreach (var grp in groups)
                     {
-                        bool cs = pkt.Direction == PacketDirection.ClientToServer;
-                        string lbl = $"#{idx+1} {(cs?"C->S":"S->C")} 0x{(pkt.RawBytes.Length > 0 ? pkt.RawBytes[0].ToString("X2") : "??")} {pkt.RawBytes.Length}b";
-                        if (ImGui.Selectable(lbl))
+                        var rep = grp.Last();  // most recent instance
+                        int repIdx = pkts.IndexOf(rep);
+                        bool cs = rep.Direction == PacketDirection.ClientToServer;
+                        string lbl = $"0x{rep.RawBytes[0]:X2} {(cs?"C->S":"S->C")}  x{grp.Count()}  {rep.RawBytes.Length}b  #{repIdx+1}";
+                        if (ImGui.Selectable(lbl + $"##grp{rep.RawBytes[0]}{(int)rep.Direction}"))
                         {
-                            slot.Hex   = pkt.HexString;
-                            slot.Label = $"Pkt#{idx+1}";
+                            slot.Hex   = rep.HexString;
+                            slot.Label = $"0x{rep.RawBytes[0]:X2}_{(cs?"CS":"SC")}";
                         }
                     }
                     ImGui.EndCombo();

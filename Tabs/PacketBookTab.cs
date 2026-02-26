@@ -35,6 +35,15 @@ public class PacketBookTab : ITab
     private string _newTagInput  = "";
     private int    _sortMode     = 0;   // 0=saved-at  1=opcode  2=size  3=label
 
+    // ── Virtualized list cache (avoids re-sorting 35000+ entries every frame) ─
+    private List<SavedPacket>? _sortedCache    = null;
+    private int               _cacheStoreCount = -1;   // invalidate when store grows
+    private string            _cacheSearch     = "";
+    private string            _cacheTag        = "";
+    private int               _cacheSort       = -1;
+    private const int         PageSize         = 200;   // rows shown at once
+    private int               _pageOffset      = 0;     // first visible row index
+
     public PacketBookTab(TestLog log, PacketStore store, UdpProxy udpProxy,
                           PacketCapture capture, ServerConfig config)
     {
@@ -92,6 +101,7 @@ public class PacketBookTab : ITab
                 new Vector2(listW - 16, 22)))
             {
                 int n = _store.ClearByPrefix("Schema:");
+                _sortedCache = null;  // invalidate cache
                 _log.Info($"[Book] Cleared {n} auto-named (Schema:*) entries.");
             }
             if (ImGui.IsItemHovered())
@@ -109,6 +119,7 @@ public class PacketBookTab : ITab
             new Vector2(listW - 16, 22)))
         {
             int n = _store.ClearAll();
+            _sortedCache = null;  // invalidate cache
             _log.Warn($"[Book] Cleared ALL {n} entries from Packet Book.");
         }
         if (ImGui.IsItemHovered())
@@ -116,29 +127,41 @@ public class PacketBookTab : ITab
         ImGui.PopStyleColor(3);
         ImGui.Spacing();
 
-        // Apply search/filter
-        packets = _store.GetAll();  // re-fetch in case user just cleared
-        var filtered = packets.AsEnumerable();
-        if (_searchText.Length > 0)
+        // ── Build sorted/filtered list (cached - only re-sort when inputs change) ─
+        // With 35000+ entries, rebuilding every frame causes severe lag.
+        bool filterChanged = _searchText != _cacheSearch || _tagFilter != _cacheTag
+                          || _sortMode   != _cacheSort   || packets.Count != _cacheStoreCount;
+        if (filterChanged || _sortedCache == null)
         {
-            string su = _searchText.ToLower();
-            filtered = filtered.Where(p =>
-                p.Label.ToLower().Contains(su) ||
-                p.Notes.ToLower().Contains(su) ||
-                p.HexString.ToLower().Contains(su) ||
-                p.Tags.Any(t => t.ToLower().Contains(su)));
-        }
-        if (_tagFilter.Length > 0)
-            filtered = filtered.Where(p => p.Tags.Any(t =>
-                t.ToLower().Contains(_tagFilter.ToLower())));
+            _cacheSearch     = _searchText;
+            _cacheTag        = _tagFilter;
+            _cacheSort       = _sortMode;
+            _cacheStoreCount = packets.Count;
+            _pageOffset      = 0;   // reset page when filter changes
 
-        var sortedList = _sortMode switch
-        {
-            1 => filtered.OrderBy(p => p.ToBytes().Length > 0 ? p.ToBytes()[0] : 0).ToList(),
-            2 => filtered.OrderByDescending(p => p.ToBytes().Length).ToList(),
-            3 => filtered.OrderBy(p => p.Label).ToList(),
-            _ => filtered.OrderByDescending(p => p.SavedAt).ToList(),
-        };
+            packets = _store.GetAll();
+            var filtered = packets.AsEnumerable();
+            if (_searchText.Length > 0)
+            {
+                string su = _searchText.ToLower();
+                filtered = filtered.Where(p =>
+                    p.Label.ToLower().Contains(su) ||
+                    p.Notes.ToLower().Contains(su) ||
+                    p.Tags.Any(t => t.ToLower().Contains(su)));
+            }
+            if (_tagFilter.Length > 0)
+                filtered = filtered.Where(p => p.Tags.Any(t =>
+                    t.ToLower().Contains(_tagFilter.ToLower())));
+
+            _sortedCache = _sortMode switch
+            {
+                1 => filtered.OrderBy(p => p.ToBytes().Length > 0 ? p.ToBytes()[0] : 0).ToList(),
+                2 => filtered.OrderByDescending(p => p.ToBytes().Length).ToList(),
+                3 => filtered.OrderBy(p => p.Label).ToList(),
+                _ => filtered.OrderByDescending(p => p.SavedAt).ToList(),
+            };
+        }
+        var sortedList = _sortedCache;
 
         if (packets.Count == 0)
         {
@@ -147,21 +170,40 @@ public class PacketBookTab : ITab
             ImGui.SetCursorPosX(12);
             UiHelper.MutedLabel("Capture packets -> Item Inspector");
             ImGui.SetCursorPosX(12);
-            UiHelper.MutedLabel("-> Save to Packet Book.");
+            UiHelper.MutedLabel("<- Save to Packet Book.");
         }
 
         var dl = ImGui.GetWindowDrawList();
-        var lp = ImGui.GetWindowPos();
 
-        // Show filter hint
-        if (sortedList.Count < packets.Count)
+        // ── Pagination controls ───────────────────────────────────────────
+        int totalVisible = sortedList.Count;
+        int pageStart    = Math.Min(_pageOffset, Math.Max(0, totalVisible - 1));
+        int pageEnd      = Math.Min(pageStart + PageSize, totalVisible);
+        if (totalVisible > PageSize)
         {
             ImGui.SetCursorPosX(8);
-            UiHelper.MutedLabel($"{sortedList.Count}/{packets.Count} shown");
+            int pages = (int)Math.Ceiling((double)totalVisible / PageSize);
+            int curPg = pageStart / PageSize + 1;
+            UiHelper.MutedLabel($"{pageStart+1}-{pageEnd}/{totalVisible}  pg {curPg}/{pages}");
+            ImGui.SameLine(0, 8);
+            ImGui.BeginDisabled(_pageOffset == 0);
+            if (ImGui.SmallButton("<##pbprev")) _pageOffset = Math.Max(0, _pageOffset - PageSize);
+            ImGui.EndDisabled();
+            ImGui.SameLine(0, 2);
+            ImGui.BeginDisabled(pageEnd >= totalVisible);
+            if (ImGui.SmallButton(">##pbnext")) _pageOffset = Math.Min((pages-1)*PageSize, _pageOffset + PageSize);
+            ImGui.EndDisabled();
+            ImGui.Spacing();
+        }
+        else if (totalVisible < packets.Count)
+        {
+            ImGui.SetCursorPosX(8);
+            UiHelper.MutedLabel($"{totalVisible}/{packets.Count} shown");
             ImGui.Spacing();
         }
 
-        for (int i = 0; i < sortedList.Count; i++)
+        // ── Render only the current page ─────────────────────────────────
+        for (int i = pageStart; i < pageEnd; i++)
         {
             var  pkt = sortedList[i];
             int  globalIdx = packets.IndexOf(pkt);
@@ -190,7 +232,7 @@ public class PacketBookTab : ITab
                 {
                     ImGui.PushStyleColor(ImGuiCol.Button, MenuRenderer.ColBlueDim);
                     ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColBlue);
-                    ImGui.Button($"#{tag}##tag_{pkt.Label}_{tag}", new Vector2(0, 14));
+                    ImGui.Button($"#{tag}##tag_{i}_{tag}", new Vector2(0, 14));
                     ImGui.PopStyleColor(2);
                     ImGui.SameLine(0, 2);
                 }
@@ -199,14 +241,12 @@ public class PacketBookTab : ITab
             if (!string.IsNullOrEmpty(pkt.Notes))
             {
                 ImGui.SetCursorPosX(12);
-                UiHelper.MutedLabel(pkt.Notes.Length > 36
-                    ? pkt.Notes[..33] + "..." : pkt.Notes);
+                UiHelper.MutedLabel(pkt.Notes.Length > 36 ? pkt.Notes[..33] + "..." : pkt.Notes);
             }
 
-            // Invisible selectable over the block
             float rowH = pkt.Tags.Count > 0 ? 60 : (pkt.Notes.Length > 0 ? 60 : 48);
             ImGui.SetCursorPosY(ImGui.GetCursorPosY() - rowH);
-            if (ImGui.Selectable($"##pbs{globalIdx}", _selectedIdx == globalIdx,
+            if (ImGui.Selectable($"##pbs{i}", _selectedIdx == globalIdx,
                 ImGuiSelectableFlags.None, new Vector2(listW - 12, rowH)))
             {
                 _selectedIdx = globalIdx;

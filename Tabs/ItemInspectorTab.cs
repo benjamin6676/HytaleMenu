@@ -93,6 +93,14 @@ public class ItemInspectorTab : ITab
     // Group-by-ID toggle: collapse multiple rows for same ItemId into one
     private bool _groupById      = true;
 
+    // ── Confirmed items display cache (avoid 252k-item sort every frame) ─
+    private List<ConfirmedItem>? _ciCache       = null;
+    private int                 _ciCacheCount   = -1;
+    private bool                _ciCacheGrouped = false;
+    private int                 _ciNamedCount   = 0;
+    private const int           CiRebuildEvery  = 90;   // frames between full rebuilds
+    private int                 _ciFramesSince  = 9999; // force first build
+
     // Stack delta tracking: itemId -> (previousStack, changeTime)
     private readonly Dictionary<uint, (byte PrevStack, DateTime ChangeAt)> _stackDeltas = new();
 
@@ -623,39 +631,60 @@ public class ItemInspectorTab : ITab
     private void RenderConfirmedItemsTable(float w, float h)
     {
         // ── Build display list (with optional Group-by-ID) ────────────────
-        var rawItems = _smart.ConfirmedItems.Values
-            .OrderByDescending(i => i.PacketCount)
-            .ToList();
-
-        // Update stack delta tracker
-        foreach (var it in rawItems)
+        // ── Cache sorted/grouped display list (252k+ items is slow to sort every frame) ─
+        int ciCount = _smart.ConfirmedItems.Count;
+        var rawItems = _smart.ConfirmedItems.Values;
+        _ciFramesSince++;
+        bool ciRebuild = _ciCache == null
+                      || ciCount != _ciCacheCount
+                      || _groupById != _ciCacheGrouped
+                      || _ciFramesSince >= CiRebuildEvery;
+        if (ciRebuild)
         {
-            if (_stackDeltas.TryGetValue(it.ItemId, out var prev))
+            _ciFramesSince  = 0;
+            _ciCacheCount   = ciCount;
+            _ciCacheGrouped = _groupById;
+
+            _smart.ConfirmedItems.Values
+                .OrderByDescending(i => i.PacketCount)
+                .ToList();
+
+            // Update stack delta tracker (only on rebuild)
+            foreach (var it in rawItems)
             {
-                if (prev.PrevStack != it.StackSize)
-                    _stackDeltas[it.ItemId] = (it.StackSize, DateTime.Now);
+                if (_stackDeltas.TryGetValue(it.ItemId, out var prev))
+                {
+                    if (prev.PrevStack != it.StackSize)
+                        _stackDeltas[it.ItemId] = (it.StackSize, DateTime.Now);
+                }
+                else
+                {
+                    _stackDeltas[it.ItemId] = (it.StackSize, DateTime.MinValue);
+                }
+            }
+
+            if (_groupById)
+            {
+                _ciCache = rawItems
+                    .GroupBy(i => i.ItemId)
+                    .Select(g =>
+                    {
+                        var best = g.OrderByDescending(x => x.PacketCount).First();
+                        best.PacketCount = g.Sum(x => x.PacketCount);
+                        return best;
+                    })
+                    .OrderByDescending(i => i.PacketCount)
+                    .ToList();
             }
             else
             {
-                _stackDeltas[it.ItemId] = (it.StackSize, DateTime.MinValue);
+                _ciCache = rawItems.ToList();
             }
+            _ciNamedCount = _ciCache.Count(i => !string.IsNullOrEmpty(i.NameHint));
         }
-
-        // Group-by-ID: merge all entries with same ItemId
-        var displayItems = rawItems; // default: ungrouped
-        if (_groupById)
-        {
-            displayItems = rawItems
-                .GroupBy(i => i.ItemId)
-                .Select(g =>
-                {
-                    var best = g.OrderByDescending(x => x.PacketCount).First();
-                    best.PacketCount = g.Sum(x => x.PacketCount); // aggregate count
-                    return best;
-                })
-                .OrderByDescending(i => i.PacketCount)
-                .ToList();
-        }
+        // Use the cached list for rendering (re-read rawItems just for the count label)
+        rawItems = _smart.ConfirmedItems.Values;   // cheap, no alloc
+        var displayItems = _ciCache!;
 
         // ── Header box ────────────────────────────────────────────────────
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
@@ -668,9 +697,8 @@ public class ItemInspectorTab : ITab
         ImGui.SetCursorPosX(8);
 
         // Smart auto-pin notice
-        int namedCount = rawItems.Count(i => !string.IsNullOrEmpty(i.NameHint));
-        UiHelper.MutedLabel($"{displayItems.Count} shown ({rawItems.Count} total)  ·  " +
-                            $"{namedCount} named  ·  Smart auto-pin: named + slotted only");
+        UiHelper.MutedLabel($"{displayItems.Count} shown ({rawItems.Count()} total)  ·  " +
+                            $"{_ciNamedCount} named  ·  Smart auto-pin: named + slotted only");
 
         ImGui.SetCursorPosX(8);
         if (_smart.ForceScanRunning)
