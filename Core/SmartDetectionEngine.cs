@@ -286,9 +286,7 @@ public class SmartDetectionEngine : IDisposable
         && sp.Opcode <= RegistrySyncParser.RegistryOpcodeMax
         && data.Length >= 4)
         {
-            Console.WriteLine($"[DECOMP] opcode=0x{sp.Opcode:X2} out={(data?.Length ?? 0)}");
-
-
+           
             RegistrySyncParser.TryParse((byte)sp.Opcode, data, IdNameMap);
         }
 

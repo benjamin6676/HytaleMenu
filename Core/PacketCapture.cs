@@ -186,12 +186,23 @@ public class PacketCapture
 
                 var packet = new CapturedPacket
                 {
-                    Timestamp    = DateTime.Now,
-                    Direction    = direction,
-                    RawBytes     = chunk,
-                    HexString    = ToHex(chunk),
+                    Timestamp = DateTime.Now,
+                    Direction = direction,
+                    RawBytes = chunk,
+                    HexString = ToHex(chunk),
                     AsciiPreview = ToAscii(chunk),
                 };
+
+                // Extract opcode (first byte of packet)
+                byte opcode = packet.RawBytes.Length > 0 ? packet.RawBytes[0] : (byte)0;
+
+                // Log raw packet
+                Console.WriteLine($"[RAW] opcode=0x{opcode:X2} len={packet.RawBytes.Length}");
+
+                // Try decompress
+                var data = PacketAnalyser.TryDecompress(packet.RawBytes, out string method);
+                
+
 
                 lock (_packetsLock) _packets.Add(packet);
                 OnPacket?.Invoke(packet);
@@ -231,23 +242,30 @@ public class PacketCapture
 
 public class CapturedPacket
 {
-    public DateTime        Timestamp    { get; set; }
-    public PacketDirection Direction    { get; set; }
-    public byte[]          RawBytes     { get; set; } = Array.Empty<byte>();
-    public string          HexString    { get; set; } = "";
-    public string          AsciiPreview { get; set; } = "";
-    /// True when this packet was manually injected by the tool (not organic traffic)
-    public bool            Injected     { get; set; } = false;
-    /// User-supplied comment (set via double-click in CaptureTab)
+    public DateTime Timestamp { get; set; }
+    public PacketDirection Direction { get; set; }
+    public byte[] RawBytes { get; set; } = Array.Empty<byte>();
+    public string HexString { get; set; } = "";
+    public string AsciiPreview { get; set; } = "";
+    public bool Injected { get; set; } = false;
     public string Comment { get; set; } = "";
     public bool IsMarker { get; set; } = false;
     public string MarkerLabel { get; set; } = "";
     public uint MarkerColor { get; set; } = 0xFF800080;
 
-    public string DirectionLabel =>
-        Direction == PacketDirection.ClientToServer ? "C->S" : "S->C";
-    public string TimestampLabel =>
-        Timestamp.ToString("HH:mm:ss.fff");
+    // NEW: Parsed packet data (optional, for display)
+    public ushort Opcode { get; set; }
+    public string OpcodeName { get; set; } = "UNKNOWN";
+
+    // NEW: Extracted entities/items/players from this packet
+    public List<EntityClass> Entities { get; set; } = new();
+
+    public string DirectionLabel => Direction == PacketDirection.ClientToServer ? "C->S" : "S->C";
+    public string TimestampLabel => Timestamp.ToString("HH:mm:ss.fff");
+
+    // NEW: Display summary for UI
+    public string Summary => $"{OpcodeLabel} | {Entities.Count} entities";
+    public string OpcodeLabel => OpcodeName != "UNKNOWN" ? $"[0x{Opcode:X2}] {OpcodeName}" : $"[0x{Opcode:X2}]";
 }
 
 public enum PacketDirection

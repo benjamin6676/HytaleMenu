@@ -19,7 +19,7 @@ public class CaptureTab : ITab
 
     public PacketCapture Capture => _capture;
 
-    private int _listenPort = 5521;
+    private int _listenPort = 5520;
 
     private enum CaptureMode { Udp, Tcp, Tls }
     private CaptureMode _mode = CaptureMode.Udp;
