@@ -14,6 +14,7 @@ namespace HytaleSecurityTester.Core;
 ///  - ASCII-only log messages.
 ///  - ScanSummary property for Settings tab status display.
 /// </summary>
+
 public sealed class AutoUpdateHandler
 {
     // ── Singleton ─────────────────────────────────────────────────────────
@@ -24,7 +25,22 @@ public sealed class AutoUpdateHandler
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                      "HytaleSecurityTester");
     private static readonly string CachePath  = Path.Combine(CacheDir, "aob_cache.json");
-    private static readonly string SigsPath   = Path.Combine(CacheDir, "aob_patterns.json");
+    private static readonly string SigsPath = Path.Combine(CacheDir, "aob_patterns.json");
+
+    // ── Player related ───────────────────────────────────────────────────
+    public int PlayerCoordsAddr { get; private set; }
+    public float PlayerX { get; private set; }
+    public float PlayerY { get; private set; }
+    public float PlayerZ { get; private set; }
+    public int PlayerVelAddr { get; private set; }
+    public int PlayerFlightAddr { get; private set; }
+    public bool IsFlying { get; private set; }
+    public int StaminaAddr { get; private set; }
+    public float Stamina { get; private set; }
+    public int GamemodeAddr { get; private set; }
+    public int Gamemode { get; private set; }
+
+
 
     // ── State ─────────────────────────────────────────────────────────────
     public string LastGameHash    { get; private set; } = "";
@@ -130,6 +146,67 @@ public sealed class AutoUpdateHandler
                             }
                         }
                     }
+
+                    // ── Haxtale pCords: RAX was stored at PlayerCoordsAddr ──────
+                    // Pattern: player_pCords AOB captures RAX = ptr to player coordinate struct.
+                    // [RAX+0x27C]=X, [RAX+0x280]=Y, [RAX+0x284]=Z (all float32 LE).
+                    // Entity ID search: scan [RAX-0x200 .. RAX+0x200] for uint in player-ID range.
+                    if (PlayerCoordsAddr != 0)
+                    {
+                        // Read the stored RAX pointer
+                        if (reader.ReadInt64(new IntPtr(PlayerCoordsAddr), out long pCords) && pCords > 0x10000)
+                        {
+                            if (reader.ReadSingle(new IntPtr(pCords + 0x27C), out float px) &&
+                                reader.ReadSingle(new IntPtr(pCords + 0x280), out float py) &&
+                                reader.ReadSingle(new IntPtr(pCords + 0x284), out float pz))
+                            {
+                                // Sanity check: Hytale world coords typically in [-100000..100000]
+                                if (Math.Abs(px) < 1e6f && Math.Abs(py) < 1e6f && Math.Abs(pz) < 1e6f)
+                                {
+                                    PlayerX = px; PlayerY = py; PlayerZ = pz;
+                                }
+                            }
+
+                            // Scan nearby struct for EntityID if not found yet
+                            if (lastLocalId == 0)
+                            {
+                                // Entity ID likely stored near the coord struct base.
+                                // Scan [-0x200 .. +0x200] in steps of 4.
+                                for (int off = -0x200; off <= 0x200; off += 4)
+                                {
+                                    if (reader.ReadUInt32(new IntPtr(pCords + off), out uint candidate)
+                                        && IdRanges.IsPlayerId(candidate))
+                                    {
+                                        lastLocalId       = candidate;
+                                        LiveLocalPlayerId = candidate;
+                                        OnLocalPlayerIdChanged?.Invoke(candidate);
+                                        _log?.Info($"[Poll-pCords] LocalPlayerEntityId -> {candidate} (pCords+0x{off:X3})");
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Flight + Stamina + Gamemode (Haxtale struct offsets) ───
+                    if (PlayerFlightAddr != 0 &&
+                        reader.ReadInt64(new IntPtr(PlayerFlightAddr), out long flightBase) && flightBase > 0x10000)
+                    {
+                        if (reader.ReadByte(new IntPtr(flightBase + 0xA7), out byte flyByte))
+                            IsFlying = flyByte != 0;
+                    }
+                    if (StaminaAddr != 0 &&
+                        reader.ReadInt64(new IntPtr(StaminaAddr), out long staminaBase) && staminaBase > 0x10000)
+                    {
+                        if (reader.ReadSingle(new IntPtr(staminaBase + 0x10), out float stam))
+                            Stamina = stam;
+                    }
+                    if (GamemodeAddr != 0 &&
+                        reader.ReadInt64(new IntPtr(GamemodeAddr), out long gmBase) && gmBase > 0x10000)
+                    {
+                        if (reader.ReadByte(new IntPtr(gmBase + 0x0A), out byte gm))
+                            Gamemode = gm;
+                    }
                 }
                 catch (OperationCanceledException) { break; }
                 catch { /* non-fatal polling error */ }
@@ -206,6 +283,34 @@ public sealed class AutoUpdateHandler
         // Prologue is stable; reading LocalPlayer from nearby data gives position.
         { "DoMoveCycle",
           "55 41 57 41 56 41 55 41 54 57 56 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24" },
+
+        // ── Haxtale (v0.2) confirmed patterns ─────────────────────────────
+        // Source: Haxtale_v0_2.ct Cheat Engine table, community-sourced 2025.
+        //
+        // player_pCords: AOB of movlps xmm6,[rax+0x27C] instruction.
+        // When matched, RAX = pointer to player coordinate struct.
+        // X=+0x27C, Y=+0x280, Z=+0x284 (all float32 LE).
+        // Entity ID is usually nearby: scan [-0x100..+0x100] for uint in player-id range.
+        { "player_pCords",
+          "0F 12 ?? ?? ?? ?? ?? 0F 28 ?? F3 ?? ?? ?? F3 ?? ?? ?? E8" },
+
+        // player_vel: movss xmm0,[rbx+0xE0] - player velocity struct pointer.
+        // RBX = velocity component base; [RBX+0xE0] = speed value (float32).
+        { "player_vel",
+          "F3 ?? ?? ?? ?? ?? ?? ?? F3 ?? ?? ?? F3 ?? ?? ?? ?? ?? ?? ?? F3 ?? ?? ?? F3 ?? ?? ?? F3" },
+
+        // setGamemode: cmp byte [rcx+0x0A], 01 → RCX = local gamemode object.
+        // [RCX+0x0A] = 01 means creative/spectator, 0 = survival.
+        { "setGamemode",
+          "80 ?? ?? ?? 74 ?? 48 8B ?? ?? 40 38" },
+
+        // player_stamina: movss xmm0,[rbp+0x10] - stamina float pointer.
+        { "player_stamina",
+          "F3 ?? ?? ?? ?? F3 ?? ?? ?? ?? F3 ?? ?? ?? ?? F3 ?? ?? ?? ?? 0F 2E" },
+
+        // player_flight: cmp byte[rbx+0xA7],00 - is player flying bool.
+        { "player_flight",
+          "80 ?? ?? ?? ?? ?? ?? 74 ?? 80 ?? ?? ?? 0F 85" },
     };
 
     // User-supplied overrides (persisted to aob_patterns.json)
@@ -387,6 +492,12 @@ public sealed class AutoUpdateHandler
                         case "OnChat":          OnChatFuncAddr   = resolvedAddr; break;
                         case "SetCursorHidden": SetCursorHiddenAddr = resolvedAddr; break;
                         case "DoMoveCycle":     DoMoveCycleAddr  = resolvedAddr; break;
+                        // Haxtale patterns
+                        case "player_pCords":   PlayerCoordsAddr = (int)resolvedAddr; break;
+                        case "player_vel":      PlayerVelAddr    = (int)resolvedAddr; break;
+                        case "setGamemode":     GamemodeAddr     = (int)resolvedAddr; break;
+                        case "player_stamina":  StaminaAddr      = (int)resolvedAddr; break;
+                        case "player_flight":   PlayerFlightAddr = (int)resolvedAddr; break;
                     }
                 }
                 else
@@ -565,6 +676,9 @@ public sealed class AutoUpdateHandler
         BuiltInSignatures.Keys.Concat(
             UserSignatures.Keys.Where(k => !BuiltInSignatures.ContainsKey(k)))
         .Distinct().ToList();
+
+   
+
 
     private void SaveUserSignatures()
     {

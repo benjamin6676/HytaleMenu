@@ -89,24 +89,27 @@ public class PacketBookTab : ITab
 
         // ── Clear buttons ─────────────────────────────────────────────────
         var packets = _store.GetAll();
-        int schemaCount = packets.Count(p => p.Label.StartsWith("Schema:", StringComparison.OrdinalIgnoreCase));
+        int autoCount = packets.Count(p =>
+            p.Label.StartsWith("Schema:", StringComparison.OrdinalIgnoreCase) ||
+            p.Label.StartsWith("AutoPin:", StringComparison.OrdinalIgnoreCase));
 
-        // Clear auto-named (Schema:) entries only
-        if (schemaCount > 0)
+        // Clear auto-named (Schema: and AutoPin:) entries only
+        if (autoCount > 0)
         {
             ImGui.PushStyleColor(ImGuiCol.Button,        MenuRenderer.ColWarnDim);
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, MenuRenderer.ColWarn with { W = 0.35f });
             ImGui.PushStyleColor(ImGuiCol.Text,          MenuRenderer.ColWarn);
-            if (ImGui.Button($"Clear auto-names ({schemaCount})##pbclrsch",
+            if (ImGui.Button($"Clear auto-names ({autoCount})##pbclrsch",
                 new Vector2(listW - 16, 22)))
             {
-                int n = _store.ClearByPrefix("Schema:");
-                _sortedCache = null;  // invalidate cache
-                _log.Info($"[Book] Cleared {n} auto-named (Schema:*) entries.");
+                int n  = _store.ClearByPrefix("Schema:");
+                    n += _store.ClearByPrefix("AutoPin:");
+                _sortedCache = null;
+                _log.Info($"[Book] Cleared {n} auto-named (Schema:* + AutoPin:*) entries.");
             }
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Remove all Schema:xxx=yyy auto-named entries.\n" +
-                    "Manual entries are kept. Re-run capture to rebuild from scratch.");
+                ImGui.SetTooltip("Remove all auto-named entries (Schema:xxx and AutoPin:xxx).\n" +
+                    "Manual entries are kept.");
             ImGui.PopStyleColor(3);
             ImGui.Spacing();
         }

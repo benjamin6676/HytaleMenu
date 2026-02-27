@@ -102,13 +102,28 @@ public class EntityTracker
                 };
             }
 
-            // Resolve name from shared IdNameMap
+            // Resolve name from shared stores (in priority order)
             if (string.IsNullOrEmpty(entity.Name))
             {
-                // EntityTracker doesn't hold a SmartDetect ref - check GlobalConfig
-                var cfgName = GlobalConfig.Instance.GetName(field.Value);
-                if (!string.IsNullOrEmpty(cfgName))
-                    entity.Name = cfgName;
+                // 1. Registry (highest: from server's own item table)
+                if (RegistrySyncParser.NumericIdToName.TryGetValue(field.Value, out var regName)
+                    && !string.IsNullOrEmpty(regName))
+                {
+                    entity.Name           = regName;
+                    entity.NameConfidence = 100;
+                    entity.NameSource     = ConfidenceSource.Packet;
+                }
+                // 2. GlobalConfig (persisted manual names + auto-named names)
+                else
+                {
+                    var cfgName = GlobalConfig.Instance.GetName(field.Value);
+                    if (!string.IsNullOrEmpty(cfgName))
+                    {
+                        entity.Name           = cfgName;
+                        entity.NameConfidence = 80;
+                        entity.NameSource     = ConfidenceSource.Packet;
+                    }
+                }
             }
 
             // Back-fill field's ResolvedName

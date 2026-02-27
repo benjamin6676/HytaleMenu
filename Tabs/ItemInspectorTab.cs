@@ -343,7 +343,7 @@ public class ItemInspectorTab : ITab
 
         // ── Registry sync status ──────────────────────────────────────────
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
-        ImGui.BeginChild("##regstat", new Vector2(w - 4, 62), ImGuiChildFlags.Border);
+        ImGui.BeginChild("##regstat", new Vector2(w - 4, 80), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
         ImGui.SetCursorPos(new Vector2(8, 3));
         int builtIn    = RegistrySyncParser.BuiltInNames.Count;
@@ -351,29 +351,32 @@ public class ItemInspectorTab : ITab
         int numericMap = RegistrySyncParser.NumericIdToName.Count;
         int dumpCount  = RegistrySyncParser.DumpedPacketCount;
         int seenOps    = RegistrySyncParser.SeenRegistryOpcodes.Count;
+        int totalNamed = EntityTracker.Instance.Entities.Count(e => !string.IsNullOrEmpty(e.Value.Name));
         if (RegistrySyncParser.HasLiveData)
         {
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.18f, 0.95f, 0.45f, 1f));
-            ImGui.TextUnformatted($"[REG] {liveNames} live strings  {numericMap} ID→name pairs");
+            ImGui.TextUnformatted($"[REG] {liveNames} strings  {numericMap} ID→name  {builtIn} built-in");
             ImGui.PopStyleColor();
         }
         else
         {
             ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColWarn);
-            ImGui.TextUnformatted($"[REG] {builtIn} built-in names  (reconnect for live)");
+            ImGui.TextUnformatted($"[REG] {builtIn} built-in  {_smart.IdNameMap.Count} from pkts  (reconnect)");
             ImGui.PopStyleColor();
         }
         ImGui.SetCursorPosX(8);
-        UiHelper.MutedLabel($"{seenOps} registry pkts seen  •  {dumpCount} dumped to %AppData%\\HytaleMenu\\registry_dump");
+        UiHelper.MutedLabel($"{seenOps} reg pkts  •  {totalNamed} entities named  •  {dumpCount} raw dumps");
         ImGui.SetCursorPosX(8);
-        UiHelper.MutedLabel("Dumps = raw registry bytes for format analysis");
+        UiHelper.MutedLabel($"IdNameMap: {_smart.IdNameMap.Count}  GlobalCfg: {GlobalConfig.Instance.GetIdNameMapSnapshot().Count}");
+        ImGui.SetCursorPosX(8);
+        UiHelper.MutedLabel("Dump: %AppData%\\HytaleMenu\\registry_dump");
         ImGui.EndChild();
 
         ImGui.Spacing();
 
         // ── Manual name overrides quick-access ────────────────────────────
         ImGui.PushStyleColor(ImGuiCol.ChildBg, MenuRenderer.ColBg2);
-        ImGui.BeginChild("##namefile", new Vector2(w - 4, 44), ImGuiChildFlags.Border);
+        ImGui.BeginChild("##namefile", new Vector2(w - 4, 72), ImGuiChildFlags.Border);
         ImGui.PopStyleColor();
         ImGui.SetCursorPos(new Vector2(8, 4));
         UiHelper.MutedLabel("Manual names: %AppData%\\HytaleMenu\\item_names.txt");
@@ -404,22 +407,64 @@ public class ItemInspectorTab : ITab
                 System.Diagnostics.Process.Start("explorer.exe", d);
             } catch { }
         }
+        ImGui.SetCursorPos(new Vector2(8, 44));
+        ImGui.PushStyleColor(ImGuiCol.Button,  new Vector4(0.15f, 0.45f, 0.85f, 0.75f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.2f, 0.55f, 1.0f, 0.85f));
+        ImGui.PushStyleColor(ImGuiCol.Text,    new Vector4(0.75f, 0.92f, 1.0f, 1f));
+        if (ImGui.Button("  Dump Full Diagnostics to Log  ##diagbtn", new Vector2(w - 20, 22)))
+            DumpDiagnosticsToLog();
+        ImGui.PopStyleColor(3);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Writes a full analysis snapshot to the General Log tab.\n" +
+                             "Shows: registry state, item IDs, entity names, LocalPlayer,\n" +
+                             "decompression results, and AOB scan status.\n" +
+                             "Screenshot the log and share for debugging.");
         ImGui.EndChild();
 
         ImGui.Spacing();
 
         // ── LocalPlayer status pill ───────────────────────────────────────
-        if (_config.HasLocalPlayer)
         {
-            ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.04f, 0.10f, 0.20f, 1f));
-            ImGui.BeginChild("##sdlp", new Vector2(w - 4, 28), ImGuiChildFlags.Border);
+            var aoh = AutoUpdateHandler.Instance;
+            bool hasLP = _config.HasLocalPlayer;
+            float pillH = hasLP ? (aoh.PlayerCoordsAddr != 0 ? 58f : 42f) : 42f;
+            var pillBg = hasLP
+                ? new Vector4(0.04f, 0.10f, 0.20f, 1f)
+                : new Vector4(0.15f, 0.05f, 0.05f, 1f);
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, pillBg);
+            ImGui.BeginChild("##sdlp", new Vector2(w - 4, pillH), ImGuiChildFlags.Border);
             ImGui.PopStyleColor();
-            ImGui.SetCursorPos(new Vector2(8, 5));
-            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.18f, 0.65f, 0.95f, 1f));
-            ImGui.TextUnformatted(
-                $"[*] LocalPlayer  ID {_config.LocalPlayerEntityId}" +
-                (string.IsNullOrEmpty(_config.LocalPlayerName) ? "" : $"  ({_config.LocalPlayerName})"));
-            ImGui.PopStyleColor();
+            ImGui.SetCursorPos(new Vector2(8, 4));
+            if (hasLP)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.18f, 0.65f, 0.95f, 1f));
+                ImGui.TextUnformatted(
+                    $"[*] LocalPlayer  ID {_config.LocalPlayerEntityId}" +
+                    (string.IsNullOrEmpty(_config.LocalPlayerName) ? "" : $"  ({_config.LocalPlayerName})"));
+                ImGui.PopStyleColor();
+                ImGui.SetCursorPos(new Vector2(8, 21));
+                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
+                ImGui.TextUnformatted($"AOB Polls: LP=0x{aoh.LocalPlayerAddr:X6}  pCords=0x{aoh.PlayerCoordsAddr:X6}");
+                ImGui.PopStyleColor();
+                if (aoh.PlayerCoordsAddr != 0)
+                {
+                    ImGui.SetCursorPos(new Vector2(8, 38));
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.5f, 1.0f, 0.7f, 1f));
+                    ImGui.TextUnformatted($"XYZ: {aoh.PlayerX:F1}, {aoh.PlayerY:F1}, {aoh.PlayerZ:F1}" +
+                        $"  Fly:{aoh.IsFlying}  GM:{aoh.Gamemode}  Stam:{aoh.Stamina:F0}");
+                    ImGui.PopStyleColor();
+                }
+            }
+            else
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.4f, 0.3f, 1f));
+                ImGui.TextUnformatted("✗ LocalPlayer NOT found");
+                ImGui.PopStyleColor();
+                ImGui.SetCursorPos(new Vector2(8, 21));
+                ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColTextMuted);
+                ImGui.TextUnformatted("→ Memory tab → LocalPlayer  OR  AOB scan for pCords");
+                ImGui.PopStyleColor();
+            }
             ImGui.EndChild();
         }
 
@@ -516,6 +561,17 @@ public class ItemInspectorTab : ITab
                     : ent.IsDynamic ? MenuRenderer.ColAccent : MenuRenderer.ColWarn;
 
                 string displayIcon = ent.IsLocalPlayer ? "[*]" : ent.IsDynamic ? ">" : "[=]";
+                // Pull name from EntityTracker if EspEntity.NameHint is not yet populated
+                if (string.IsNullOrEmpty(ent.NameHint)
+                    && EntityTracker.Instance.Entities.TryGetValue(ent.EntityId, out var teEnt)
+                    && !string.IsNullOrEmpty(teEnt.Name))
+                    ent.NameHint = teEnt.Name;
+                // Also try RegistrySyncParser
+                if (string.IsNullOrEmpty(ent.NameHint))
+                {
+                    var rn = RegistrySyncParser.LookupName(ent.EntityId);
+                    if (rn != null) ent.NameHint = rn;
+                }
                 string displayHint = ent.IsLocalPlayer
                     ? " LocalPlayer"
                     : string.IsNullOrEmpty(ent.NameHint) ? ""
@@ -863,13 +919,32 @@ public class ItemInspectorTab : ITab
                 Vector4 nameColor = MenuRenderer.ColText;
                 if (string.IsNullOrEmpty(it.NameHint))
                 {
-                    // Try registry lookup for names not yet propagated
+                    // 1. Try RegistrySyncParser (server's authoritative item table)
                     var regName = RegistrySyncParser.LookupName(it.ItemId);
                     if (regName != null)
                     {
                         it.NameHint       = regName;
                         it.NameConfidence = 100;
                         it.NameSource     = ConfidenceSource.Packet;
+                    }
+                    // 2. Try EntityTracker (names from PlayerSpawn, Chat, auto-naming)
+                    else if (EntityTracker.Instance.Entities.TryGetValue(it.ItemId, out var te)
+                             && !string.IsNullOrEmpty(te.Name))
+                    {
+                        it.NameHint       = te.Name;
+                        it.NameConfidence = te.NameConfidence;
+                        it.NameSource     = te.NameSource;
+                    }
+                    // 3. Try GlobalConfig (manual names from previous sessions)
+                    else
+                    {
+                        var cfgName = GlobalConfig.Instance.GetName(it.ItemId);
+                        if (!string.IsNullOrEmpty(cfgName))
+                        {
+                            it.NameHint       = cfgName;
+                            it.NameConfidence = 80;
+                            it.NameSource     = ConfidenceSource.Packet;
+                        }
                     }
                 }
                 nameStr = string.IsNullOrEmpty(it.NameHint) ? "-" : it.NameHint;
@@ -1042,7 +1117,7 @@ public class ItemInspectorTab : ITab
         ImGui.PopStyleColor();
         ImGui.SetCursorPos(new Vector2(8, 4));
         ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColAccentMid);
-        ImGui.TextUnformatted("0x4A DEDICATED PARSER  -  LE + BE endianness, size 7-174 bytes  ·  Proxy Sync: auto");
+        ImGui.TextUnformatted("0x4A ENTITY POSITION UPDATES  —  LE + BE endianness  ·  These are entity IDs seen in opcode 0x4A move/update packets");
         ImGui.PopStyleColor();
         ImGui.SetCursorPosX(8);
         UiHelper.MutedLabel($"{entries.Count} entities extracted from 0x4A packets");
@@ -1100,7 +1175,12 @@ public class ItemInspectorTab : ITab
                 ImGui.PopStyleColor();
                 ImGui.SameLine(0, 4);
 
-                string nameHint = !string.IsNullOrEmpty(e.NameHint) ? $"  [{e.NameHint}]" : "";
+                string nameHint = !string.IsNullOrEmpty(e.NameHint) ? $"  [{e.NameHint}]"
+                    : EntityTracker.Instance.Entities.TryGetValue(e.EntityId, out var te4a) && !string.IsNullOrEmpty(te4a.Name)
+                        ? $"  [{te4a.Name}]"
+                    : RegistrySyncParser.LookupName(e.EntityId) is string rn4a
+                        ? $"  [{rn4a}]"
+                    : "";
                 ImGui.PushStyleColor(ImGuiCol.Text, MenuRenderer.ColBlue);
                 ImGui.Selectable(
                     $"  {e.EntityId,-14}{nameHint,-14} {e.PacketCount,-9}" +
@@ -1895,6 +1975,116 @@ public class ItemInspectorTab : ITab
         };
         _log.Success($"[Inspector] F9 locked entity {_lastHoveredEntityId}" +
             (string.IsNullOrEmpty(_lastHoveredName) ? "" : $" ({_lastHoveredName})"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    /// <summary>
+    /// Dumps a full diagnostic snapshot to the General Log so it can be read and
+    /// copy-pasted into chat for protocol analysis. Covers:
+    ///   - Registry state (live names, numeric ID→name)
+    ///   - Confirmed items (IDs, stack, slot, name hint)
+    ///   - 0x4A entities (IDs, names)
+    ///   - IdNameMap sample
+    ///   - LocalPlayer state
+    ///   - Recent packet opcodes seen
+    /// </summary>
+    private void DumpDiagnosticsToLog()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("╔══════════════════════════════════════════════════════════════╗");
+        sb.AppendLine("║  HYTALE MENU  DIAGNOSTIC DUMP  ← share with dev for analysis║");
+        sb.AppendLine("╚══════════════════════════════════════════════════════════════╝");
+        sb.AppendLine($"  Timestamp   : {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        sb.AppendLine($"  Server      : {_config.ServerIp}:{_config.ServerPort}");
+        sb.AppendLine($"  LocalPlayer : ID={_config.LocalPlayerEntityId}  Name={_config.LocalPlayerName}");
+        sb.AppendLine();
+
+        // ── Registry state ──────────────────────────────────────────────
+        sb.AppendLine($"── REGISTRY ────────────────────────────────────────────");
+        sb.AppendLine($"  LiteralNames   : {RegistrySyncParser.LiteralNames.Count}");
+        sb.AppendLine($"  LiveNameMap    : {RegistrySyncParser.LiveNameMap.Count}");
+        sb.AppendLine($"  NumericIdToName: {RegistrySyncParser.NumericIdToName.Count}");
+        sb.AppendLine($"  SeenOpcodes    : {string.Join(", ", RegistrySyncParser.SeenRegistryOpcodes.Select(k => $"0x{k.Key:X2}×{k.Value}"))}");
+        sb.AppendLine($"  HasLiveData    : {RegistrySyncParser.HasLiveData}");
+        if (RegistrySyncParser.NumericIdToName.Count > 0)
+        {
+            sb.AppendLine("  First 20 numeric ID→name mappings:");
+            foreach (var kv in RegistrySyncParser.NumericIdToName.Take(20))
+                sb.AppendLine($"    [{kv.Key}] → {kv.Value}");
+        }
+        sb.AppendLine();
+
+        // ── IdNameMap sample ────────────────────────────────────────────
+        sb.AppendLine($"── IdNameMap ({_smart.IdNameMap.Count} total) ─────────────────");
+        var hqNames = _smart.IdNameMap
+            .Where(kv => kv.Value.Contains('_') || kv.Value.Any(char.IsUpper))
+            .Take(25).ToList();
+        if (hqNames.Any())
+        {
+            sb.AppendLine("  High-quality names (item IDs with _ or mixed case):");
+            foreach (var kv in hqNames)
+                sb.AppendLine($"    [{kv.Key}] → {kv.Value}");
+        }
+        else sb.AppendLine("  ⚠ No high-quality names in IdNameMap yet.");
+        sb.AppendLine();
+
+        // ── Confirmed items ─────────────────────────────────────────────
+        sb.AppendLine($"── CONFIRMED ITEMS ({_smart.ConfirmedItems.Count} total) ─────────");
+        var namedItems = _smart.ConfirmedItems.Values
+            .Where(i => !string.IsNullOrEmpty(i.NameHint)).Take(20).ToList();
+        var unnamedItems = _smart.ConfirmedItems.Values
+            .Where(i => string.IsNullOrEmpty(i.NameHint))
+            .OrderByDescending(i => i.PacketCount).Take(10).ToList();
+        sb.AppendLine($"  Named: {namedItems.Count}  Unnamed: {_smart.ConfirmedItems.Count - namedItems.Count}");
+        foreach (var it in namedItems)
+            sb.AppendLine($"    ID={it.ItemId} stack={it.StackSize} slot={it.SlotIndex} name={it.NameHint} pkts={it.PacketCount}");
+        if (unnamedItems.Any())
+        {
+            sb.AppendLine("  Top unnamed (highest packet count):");
+            foreach (var it in unnamedItems)
+                sb.AppendLine($"    ID={it.ItemId} stack={it.StackSize} slot={it.SlotIndex} pkts={it.PacketCount}");
+        }
+        sb.AppendLine();
+
+        // ── 0x4A entities ───────────────────────────────────────────────
+        sb.AppendLine($"── 0x4A ENTITIES ({_smart.Pkt4AEntities.Count} total) ──────────────");
+        sb.AppendLine("  (0x4A = entity position update packet, contains entity IDs + coords)");
+        foreach (var e in _smart.Pkt4AEntities.Values.OrderByDescending(e => e.PacketCount).Take(15))
+            sb.AppendLine($"    ID={e.EntityId}(0x{e.EntityId:X8}) name={e.NameHint} pkts={e.PacketCount}");
+        sb.AppendLine();
+
+        // ── Active entities (ESP) ───────────────────────────────────────
+        sb.AppendLine($"── ACTIVE ENTITIES (ESP, {_smart.ActiveEntities.Count} total) ───────");
+        foreach (var e in _smart.ActiveEntities.Values.Take(10))
+            sb.AppendLine($"    ID={e.EntityId} name={e.NameHint} class={e.EntityClass} dyn={e.IsDynamic}");
+        sb.AppendLine();
+
+        // ── EntityTracker ───────────────────────────────────────────────
+        var allTracked = EntityTracker.Instance.Entities.Values.ToList();
+        var named = allTracked.Where(e => !string.IsNullOrEmpty(e.Name)).ToList();
+        sb.AppendLine($"── ENTITY TRACKER ({allTracked.Count} total, {named.Count} named) ─");
+        foreach (var e in named.OrderByDescending(e => e.NameConfidence).Take(20))
+            sb.AppendLine($"    ID={e.Id} name={e.Name} conf={e.NameConfidence} src={e.NameSource}");
+        sb.AppendLine();
+
+        // ── Protocol diagnostic ─────────────────────────────────────────
+        sb.AppendLine("── PROTOCOL HINTS ──────────────────────────────────────");
+        sb.AppendLine("  Hytale real item ID format: Category_Subcategory_Material");
+        sb.AppendLine("  Examples: Weapon_Sword_Iron, Tool_Pickaxe_Cobalt, Ore_Copper,");
+        sb.AppendLine("            Armor_Iron_Chest, Ingredient_Bar_Adamantite");
+        sb.AppendLine("  Wire format: [4B length LE][4B packet ID LE][Zstd payload]");
+        sb.AppendLine("  Strings: VarInt-prefixed UTF-8 (PacketIO.readVarString)");
+        sb.AppendLine("  Registry: opcodes 0x28-0x55 sent once at login");
+        sb.AppendLine();
+        sb.AppendLine("╔══════════════════════════════════════════════════════════════╗");
+        sb.AppendLine("║  END DIAGNOSTIC DUMP - copy from dashboard General Log tab  ║");
+        sb.AppendLine("╚══════════════════════════════════════════════════════════════╝");
+
+        // Log each line individually so it appears in the UI log
+        foreach (var line in sb.ToString().Split('\n'))
+            if (line.Trim().Length > 0) _log.Info(line.TrimEnd());
+
+        _log.Success("[Diag] Dump complete. See General Log.");
     }
 }
 

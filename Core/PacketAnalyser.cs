@@ -294,7 +294,6 @@ public static class PacketAnalyser
     /// </summary>
     public static byte[]? TryDecompress(byte[] data, out string method)
     {
-
         method = "none";
         if (data.Length < 4) return null;
 
@@ -304,32 +303,14 @@ public static class PacketAnalyser
             method = "gzip";
             try
             {
-                using var ms = new MemoryStream(data);
-                using var gz = new GZipStream(ms, CompressionMode.Decompress);
+                using var ms  = new MemoryStream(data);
+                using var gz  = new GZipStream(ms, CompressionMode.Decompress);
                 using var out_ = new MemoryStream();
                 gz.CopyTo(out_);
                 return out_.ToArray();
             }
             catch { return null; }
         }
-
-        // Zstd magic: 28 B5 2F FD
-        if (data[0] == 0x28 && data[1] == 0xB5 &&
-            data[2] == 0x2F && data[3] == 0xFD)
-        {
-            method = "zstd";
-            try
-            {
-                using var d = new ZstdSharp.Decompressor();
-                using var ms = new MemoryStream();
-                using var zs = new ZstdSharp.DecompressionStream(new MemoryStream(data), d);
-                zs.CopyTo(ms);
-                return ms.ToArray();
-            }
-            catch { return null; }
-
-        }
-
 
         // ── Zlib (78 xx) ──────────────────────────────────────────────────
         if (data[0] == 0x78 &&
@@ -340,32 +321,14 @@ public static class PacketAnalyser
             try
             {
                 // Skip 2-byte zlib header before DeflateStream
-                using var ms = new MemoryStream(data, 2, data.Length - 2);
-                using var df = new DeflateStream(ms, CompressionMode.Decompress);
+                using var ms   = new MemoryStream(data, 2, data.Length - 2);
+                using var df   = new DeflateStream(ms, CompressionMode.Decompress);
                 using var out_ = new MemoryStream();
                 df.CopyTo(out_);
                 return out_.ToArray();
             }
             catch { return null; }
         }
-
-
-        // Zstd magic: 28 B5 2F FD
-        if (data[0] == 0x28 && data[1] == 0xB5 &&
-            data[2] == 0x2F && data[3] == 0xFD)
-        {
-            method = "zstd";
-            try
-            {
-                using var d = new ZstdSharp.Decompressor();
-                using var ms = new MemoryStream();
-                using var zs = new ZstdSharp.DecompressionStream(new MemoryStream(data), d);
-                zs.CopyTo(ms);
-                return ms.ToArray();
-            }
-            catch { return null; }
-        }
-
 
         // ── LZ4 frame magic (04 22 4D 18) ────────────────────────────────
         if (data[0] == 0x04 && data[1] == 0x22 &&
@@ -382,8 +345,8 @@ public static class PacketAnalyser
         method = "deflate(try)";
         try
         {
-            using var ms = new MemoryStream(data);
-            using var df = new DeflateStream(ms, CompressionMode.Decompress);
+            using var ms   = new MemoryStream(data);
+            using var df   = new DeflateStream(ms, CompressionMode.Decompress);
             using var out_ = new MemoryStream();
             df.CopyTo(out_);
             var result = out_.ToArray();
@@ -393,9 +356,7 @@ public static class PacketAnalyser
 
         method = "none";
         return null;
-
     }
-
 
     /// <summary>
     /// Minimal managed LZ4 frame decompressor.

@@ -1,6 +1,7 @@
 using ImGuiNET;
 using HytaleSecurityTester.Core;
 using System.Numerics;
+using System.Linq;
 
 namespace HytaleSecurityTester.Tabs;
 
@@ -903,12 +904,53 @@ public class MemoryTab : ITab
 
     // ── AOB Scan ──────────────────────────────────────────────────────────
 
+    // ── Haxtale-sourced AOB presets (from Haxtale_v0_2.ct) ───────────────
+    private static readonly (string Name, string Pattern, string Desc)[] HaxtalePresets =
+    {
+        ("player_pCords",  "0F 12 ?? ?? ?? ?? ?? 0F 28 ?? F3 ?? ?? ?? F3 ?? ?? ?? E8",
+         "Player coords ptr. RAX=[ptr]. [ptr+0x27C]=X  [ptr+0x280]=Y  [ptr+0x284]=Z"),
+        ("player_vel",     "F3 ?? ?? ?? ?? ?? ?? ?? F3 ?? ?? ?? F3 ?? ?? ?? ?? ?? ?? ?? F3",
+         "Player velocity. RBX=[ptr]. [RBX+0xE0]=speed (float32)"),
+        ("player_flight",  "80 ?? ?? ?? ?? ?? ?? 74 ?? 80 ?? ?? ?? 0F 85",
+         "Flight bool. RBX=[player]. [RBX+0xA7]=0 means grounded, nonzero=flying"),
+        ("player_stamina", "F3 ?? ?? ?? ?? F3 ?? ?? ?? ?? F3 ?? ?? ?? ?? F3 ?? ?? ?? ?? 0F 2E",
+         "Stamina. RBP=[ptr]. [RBP+0x10]=stamina float. Check [RBP+0x13C]!=0 for filter"),
+        ("setGamemode",    "80 ?? ?? ?? 74 ?? 48 8B ?? ?? 40 38",
+         "Gamemode. RCX=[obj]. [RCX+0x0A]=mode byte (0=survival 1=creative)"),
+    };
+
     private void RenderAobScan(float w)
     {
-        UiHelper.SectionBox("AOB SIGNATURE SCAN", w, 160, () =>
+        UiHelper.SectionBox("AOB SIGNATURE SCAN", w, 200, () =>
         {
             UiHelper.MutedLabel("High-performance module scan using ReadOnlySpan. Fast zero-allocation search.");
             UiHelper.MutedLabel("Pattern: hex bytes with '??' wildcards - e.g.  48 8B ?? 48 89 C3 ?? 00");
+
+            // Haxtale preset buttons
+            ImGui.Spacing();
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.5f, 0.9f, 1f, 1f));
+            ImGui.TextUnformatted("Haxtale presets (from community CT):  ");
+            ImGui.PopStyleColor();
+            ImGui.SameLine(0,4);
+            foreach (var (name, pat, desc) in HaxtalePresets)
+            {
+                if (ImGui.SmallButton($"{name}##haxt{name}"))
+                {
+                    _aobPattern = pat;
+                    _aobAllModules = false;
+                    if (_reader.IsAttached)
+                    {
+                        var mods = _reader.GetModules();
+                        var hytale = mods.FirstOrDefault(m =>
+                            m.Name.StartsWith("HytaleClient", StringComparison.OrdinalIgnoreCase));
+                        if (hytale != null) _aobModule = hytale.Name;
+                        _aobModules = mods;
+                    }
+                }
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip(desc);
+                ImGui.SameLine(0,4);
+            }
+            ImGui.NewLine();
             ImGui.Spacing();
 
             // Load modules
@@ -1616,8 +1658,8 @@ public class MemoryTab : ITab
     // ══════════════════════════════════════════════════════════════════════
 
     private string            _ssFilter    = "";
-    private int               _ssMinLen    = 4;
-    private int               _ssMaxLen    = 64;
+    private int               _ssMinLen    = 5;   // min 5 to catch "Ore_X" type IDs
+    private int               _ssMaxLen    = 120; // max 120 to catch full item IDs
     private bool              _ssUtf8      = true;
     private bool              _ssUtf16     = true;
     private bool              _ssScanning  = false;
@@ -1626,7 +1668,7 @@ public class MemoryTab : ITab
 
     private void RenderStringScan(float w)
     {
-        UiHelper.SectionBox("STRING-TO-POINTER SCANNER", w, 130, () =>
+        UiHelper.SectionBox("STRING-TO-POINTER SCANNER", w, 185, () =>
         {
             UiHelper.MutedLabel("Scans all readable heap memory for UTF-8 and UTF-16 strings.");
             UiHelper.MutedLabel("Use the filter to find custom item names, entity names, or protocol strings.");
@@ -1649,6 +1691,24 @@ public class MemoryTab : ITab
             UiHelper.WarnButton(_ssScanning ? "Scanning...##ssscan" : "Scan##ssscan",
                 90, 26, StartStringScan);
             ImGui.EndDisabled();
+
+            // Quick filter buttons for common Hytale ID prefixes
+            ImGui.Spacing();
+            ImGui.PushStyleColor(ImGuiCol.Text, new System.Numerics.Vector4(0.5f, 0.9f, 0.7f, 1f));
+            ImGui.TextUnformatted("Quick filters: ");
+            ImGui.PopStyleColor();
+            ImGui.SameLine(0, 4);
+            void QuickFilter(string f) { _ssFilter = _ssFilter == f ? "" : f; }
+            string[] filters = ["Weapon_", "Tool_", "Armor_", "Ore_", "Ingredient_", "Food_", "Potion_", "Plant_"];
+            foreach (var f in filters)
+            {
+                bool active = _ssFilter == f;
+                if (active) ImGui.PushStyleColor(ImGuiCol.Button, new System.Numerics.Vector4(0.2f, 0.6f, 0.3f, 0.8f));
+                if (ImGui.SmallButton($"{f}##ssqf{f}")) QuickFilter(f);
+                if (active) ImGui.PopStyleColor();
+                ImGui.SameLine(0, 3);
+            }
+            ImGui.NewLine();
 
             if (_ssStatus.Length > 0)
             {

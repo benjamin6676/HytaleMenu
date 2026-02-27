@@ -16,6 +16,7 @@ public class SmartDetectionEngine : IDisposable
     private readonly TestLog       _log;     // Main log - important events only
     private readonly TestLog       _sdLog;   // SmartDetect noise log (auto-naming etc)
     private readonly ServerConfig  _config;
+    private          PacketLog?    _pktLog;  // Optional enriched packet log (set externally)
 
     /// <summary>Dedicated log for SmartDetect auto-naming / scoring noise.</summary>
     public TestLog SmartLog => _sdLog;
@@ -89,7 +90,17 @@ public class SmartDetectionEngine : IDisposable
     //   - Strings shorter than 4 chars (unless namespace-prefixed)
     //   - Strings containing only uppercase (likely hex junk)
     private static readonly Regex ItemNameRx =
-        new(@"(?:hytale:[a-z][a-z0-9_]{2,31})|(?:[a-z][a-z0-9]{1,6}_[a-z0-9_]{2,24})|(?:[A-Za-z][A-Za-z0-9]{2,15})",
+        // Matches real Hytale item IDs: Weapon_Sword_Iron, Tool_Pickaxe_Cobalt, Ore_Copper,
+        // Armor_Iron_Chest, Plant_Fruit_Apple, Ingredient_Bar_Adamantite, hytale:xxx, snake_case
+        new(@"(?:hytale:[a-z][a-z0-9_]{2,31})" +
+            @"|(?:[A-Z][a-zA-Z0-9]{1,20}(?:_[A-Za-z0-9][a-zA-Z0-9]{1,20}){1,5})" +   // PascalCase_Segments_Like_This
+            @"|(?:[a-z][a-z0-9]{1,6}_[a-z0-9_]{2,24})",                                // snake_case fallback
+            RegexOptions.Compiled);
+
+    // Real Hytale item IDs: Weapon_Sword_Iron, Tool_Pickaxe_Cobalt, Ore_Copper, Armor_Iron_Chest
+    // Pattern: PascalWord + 1-5 underscore-separated PascalWord segments, no spaces, no dots
+    private static readonly Regex HytaleItemIdRx =
+        new(@"^[A-Z][a-zA-Z0-9]{1,24}(?:_[A-Za-z0-9][a-zA-Z0-9]{0,24}){1,5}$",
             RegexOptions.Compiled);
 
     // Display names: up to 5 capitalised words separated by single spaces.
@@ -122,6 +133,9 @@ public class SmartDetectionEngine : IDisposable
         };
         _thread.Start();
     }
+
+    /// <summary>Wire in the enriched PacketLog after construction.</summary>
+    public void SetPacketLog(PacketLog pktLog) => _pktLog = pktLog;
 
     // ── Background loop ───────────────────────────────────────────────────
 
@@ -165,6 +179,7 @@ public class SmartDetectionEngine : IDisposable
                 AutoPinHighConfidenceItems();
                 SyncNamesToConfirmedItems();     // back-fill NameHints once IdNameMap has data
                 SyncNamesToPkt4AEntities();
+                SyncNamesToEntityTracker();      // propagate IdNameMap → EntityTracker.Entities
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -183,10 +198,36 @@ public class SmartDetectionEngine : IDisposable
         if (data.Length < 2) return;
         bool cs = pkt.Direction == PacketDirection.ClientToServer;
 
+        // ── Decompress payload if needed ────────────────────────────────
+        // Hytale packet HEADERS (opcode byte) are always uncompressed, but
+        // the BODY of registry/sync packets is Zstd or deflate compressed.
+        // We keep pkt.RawBytes intact (forwarding must not be broken) and
+        // work on a decompressed copy for field extraction only.
+        byte[] decompressed = PacketAnalyser.TryDecompress(data, out string decompMethod) ?? data;
         // ── Structured decode (OpcodeRegistry) ──────────────────────────
         // Decodes to StructuredPacket with named fields, extracted IDs,
         // XYZ coords, and initial confidence score.
+        // Use ORIGINAL pkt so opcode byte[0] is always correct (never compressed).
         var sp = OpcodeRegistry.Decode(pkt);
+
+        // ── Feed enriched data to PacketLog (Deep Log tab) ───────────────
+        if (_pktLog != null)
+        {
+            string pkName = sp.Label.Length > 0 ? sp.Label : $"0x{sp.Opcode:X2}";
+            _pktLog.AddAnalyzed(pkt.Direction, pkt.RawBytes, decompressed,
+                                decompMethod, (ushort)sp.Opcode, pkName);
+        }
+
+        // ── Per-packet log line (visible in Smart Log tab) ───────────────
+        if (sp.ExtractedIds.Count > 0)
+        {
+            string dir  = cs ? "C->S" : "S->C";
+            string ids  = string.Join(", ", sp.ExtractedIds.Select(f =>
+                IdNameMap.TryGetValue(f.Value, out var n) && !string.IsNullOrEmpty(n)
+                    ? $"{n}:{f.Value}"
+                    : $"ID?:{f.Value}"));
+            _sdLog.Info($"[PACKET] {dir} {sp.Label} [{ids}]");
+        }
 
         // ── EntityTracker feed ───────────────────────────────────────────
         // Cross-references extracted IDs with movement/state history.
@@ -198,6 +239,19 @@ public class SmartDetectionEngine : IDisposable
         {
             if (field.ResolvedName != null && !IdNameMap.ContainsKey(field.Value))
                 IdNameMap[field.Value] = field.ResolvedName;
+            // Also push from IdNameMap back into EntityTracker immediately
+            // (EntityTracker only reads GlobalConfig; we bridge here)
+            if (IdNameMap.TryGetValue(field.Value, out var knownName)
+                && !string.IsNullOrEmpty(knownName))
+            {
+                var trackedEnt = EntityTracker.Instance.GetOrCreatePublic(field.Value);
+                if (trackedEnt != null && string.IsNullOrEmpty(trackedEnt.Name))
+                {
+                    trackedEnt.Name           = knownName;
+                    trackedEnt.NameConfidence = 70;
+                    trackedEnt.NameSource     = ConfidenceSource.Packet;
+                }
+            }
         }
 
         // ── Also extract PlayerName / SenderName directly from packet fields ─
@@ -250,49 +304,71 @@ public class SmartDetectionEngine : IDisposable
         // A BE protocol puts the opcode at byte 0 too (same position), not the end.
         // Having 0x4A as the last byte is coincidental data, not a BE opcode indicator.
         // Removed false-positive BE path; kept LE check + generic heuristic fallback.
-        if (data.Length >= 5)
+        // Use decompressed bytes so 0x4A inside compressed payloads is also caught.
+        byte[] scanData = decompressed;  // alias for clarity in all scanners below
+        if (scanData.Length >= 5)
         {
             if (data[0] == 0x4A)
-                Process0x4A(data, pkt.Timestamp, false);   // standard LE
-            else if (data.Length >= 7 && data.Length <= 174)
-                TryParseAs0x4A(data, pkt.Timestamp);       // heuristic fallback
+                Process0x4A(scanData, pkt.Timestamp, false);   // standard LE
+            else if (scanData.Length >= 7 && scanData.Length <= 174)
+                TryParseAs0x4A(scanData, pkt.Timestamp);       // heuristic fallback
         }
 
         // 2. Sequence correlation (LE + BE + VarInt)
-        ProcessSequenceCorrelation(data, pkt.Timestamp, pktIndex);
+        ProcessSequenceCorrelation(scanData, pkt.Timestamp, pktIndex);
 
         // 3. Input mirroring – use VarInt-decoded opcode (sp.Opcode) so real
         //    Hytale IDs 111/175/179/290 are recognised correctly.
-        if (cs) ProcessInputMirroring(sp.Opcode, data);
+        if (cs) ProcessInputMirroring(sp.Opcode, scanData);
 
         // 4. Entity coords
-        ProcessEntityCoords(data, pkt.Timestamp, hint);
+        ProcessEntityCoords(scanData, pkt.Timestamp, hint);
 
-        // 5. Auto-naming
-        ProcessAutoNaming(data);
+        // 5. Auto-naming - scan decompressed body for PascalCase / namespace strings
+        ProcessAutoNaming(scanData);
 
         // 6. String correlation
-        ProcessStringCorrelation(data);
+        ProcessStringCorrelation(scanData);
 
         // 7. Delta watcher
-        ProcessDeltaWatcher(data);
+        ProcessDeltaWatcher(scanData);
 
         // 8. Permission bit sniffer
-        if (!cs) ProcessPermissionBits(data);
+        if (!cs) ProcessPermissionBits(scanData);
 
         // 9. Registry sync: capture item-name mappings from login-phase packets (IDs 40–85)
-        //    Only Zstd-magic packets are processed (gate prevents entity-update false positives).
+        //    Pass DECOMPRESSED bytes so RegistrySyncParser can read the body even when
+        //    the payload is Zstd/deflate compressed (common for registry packets at login).
         if (!cs && sp.Opcode >= RegistrySyncParser.RegistryOpcodeMin
-        && sp.Opcode <= RegistrySyncParser.RegistryOpcodeMax
-        && data.Length >= 4)
+                && sp.Opcode <= RegistrySyncParser.RegistryOpcodeMax
+                && decompressed.Length >= 4)
         {
-           
-            RegistrySyncParser.TryParse((byte)sp.Opcode, data, IdNameMap);
+            bool parsed = RegistrySyncParser.TryParse((byte)sp.Opcode, decompressed, IdNameMap);
+            if (parsed && RegistrySyncParser.NumericIdToName.Count > 0)
+            {
+                // Immediately propagate newly-resolved names to all display stores
+                foreach (var kv in RegistrySyncParser.NumericIdToName)
+                {
+                    IdNameMap.TryAdd(kv.Key, kv.Value);
+                    GlobalConfig.Instance.SetName(kv.Key, kv.Value);
+
+                    // Push to EntityTracker
+                    var te = EntityTracker.Instance.GetOrCreatePublic(kv.Key);
+                    if (te != null && string.IsNullOrEmpty(te.Name))
+                    {
+                        te.Name = kv.Value; te.NameConfidence = 100;
+                        te.NameSource = ConfidenceSource.Packet;
+                    }
+                    // Push to ConfirmedItems / ActiveEntities
+                    if (ConfirmedItems.TryGetValue(kv.Key, out var ci) && string.IsNullOrEmpty(ci.NameHint))
+                    { ci.NameHint = kv.Value; ci.NameConfidence = 100; ci.NameSource = ConfidenceSource.Packet; }
+                    if (ActiveEntities.TryGetValue(kv.Key, out var ae) && string.IsNullOrEmpty(ae.NameHint))
+                        ae.NameHint = kv.Value;
+                    if (Pkt4AEntities.TryGetValue(kv.Key, out var p4a) && string.IsNullOrEmpty(p4a.NameHint))
+                        p4a.NameHint = kv.Value;
+                }
+            }
         }
-
-
-
-
     }
 
     // ── FORCE SCAN (processes all existing packets from scratch) ──────────
@@ -897,28 +973,27 @@ public class SmartDetectionEngine : IDisposable
     private static bool IsHighQualityName(string s)
     {
         // Hard floor: anything under 4 chars is never a real item or player name
-        if (s.Length < 4 || s.Length > 48) return false;
+        if (s.Length < 4 || s.Length > 64) return false;
         if (s.All(char.IsDigit)) return false;
-        // Must have at least one lowercase letter (rejects ALL_CAPS junk like DR9, FC2, etc.)
-        if (!s.Any(char.IsLower)) return false;
-        if (s.Distinct().Count() < 3) return false;   // raised from 2 → rejects "aaa", "aab"
+        if (s.Distinct().Count() < 3) return false;
         if (JunkRx.IsMatch(s)) return false;
-        // Hytale namespace - always accept (hytale:xxx already validated by regex)
+        // Hytale namespace - always accept
         if (HytaleNamespaceRx.IsMatch(s)) return true;
-        // Snake-case item tag (oak_log, iron_sword) - accept
+        // REAL Hytale item IDs: Weapon_Sword_Iron, Tool_Pickaxe_Cobalt, Ore_Copper,
+        // Armor_Iron_Chest, Ingredient_Bar_Gold, Plant_Fruit_Apple, etc.
+        // Pattern: starts uppercase, has 1+ underscore-separated segments, mixed case
+        if (HytaleItemIdRx.IsMatch(s)) return true;
+        // Snake-case item tag (old style, kept for compatibility)
         if (SnakeCaseRx.IsMatch(s)) return true;
-        // Display name: "Mystica Spellblade", "Iron Sword" etc. (Title Case with spaces)
+        // Display name: "Iron Sword", "Copper Ore" (Title Case with spaces)
         if (DisplayNameRx.IsMatch(s)) return true;
-        // Player / entity name: strict rules to reject 3-char garbage like "Dpk", "qrU", "FLn"
-        //   ► min 5 chars (real Hytale names: Android18, Blanketeer, GawkJuice …)
-        //   ► must contain at least one vowel or digit (rejects pure-consonant junk)
-        //   ► alphanumeric only, starts with letter
+        // Must have at least one lowercase letter after here (rejects ALL_CAPS)
+        if (!s.Any(char.IsLower)) return false;
+        // Player / entity name
         if (PlayerNameRx.IsMatch(s) && s.Length >= 5)
         {
-            // Reject strings with no vowels and no digits - pure consonant runs are junk
             bool hasVowelOrDigit = s.Any(ch => "aeiouAEIOU0123456789".Contains(ch));
             if (!hasVowelOrDigit) return false;
-            // Reject >50% uppercase (hex-like garbage) for names under 8 chars
             int upperCount = s.Count(char.IsUpper);
             if (upperCount > s.Length / 2 && s.Length < 8) return false;
             return true;
@@ -1226,6 +1301,7 @@ public class SmartDetectionEngine : IDisposable
                 ci.NameHint       = regName;
                 ci.NameConfidence = 100;
                 ci.NameSource     = ConfidenceSource.Packet;
+                PushNameToAllStores(kv.Key, regName, 100, ConfidenceSource.Packet);
                 continue;
             }
 
@@ -1240,9 +1316,36 @@ public class SmartDetectionEngine : IDisposable
                     ci.NameHint       = name;
                     ci.NameConfidence = newConf;
                     ci.NameSource     = ConfidenceSource.Inferred;
+                    PushNameToAllStores(kv.Key, name, newConf, ConfidenceSource.Inferred);
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Push a resolved name to ALL display stores simultaneously:
+    /// EntityTracker, ActiveEntities, Pkt4AEntities.
+    /// Called whenever a name is confirmed for an ID so every view updates together.
+    /// </summary>
+    private void PushNameToAllStores(uint id, string name, int confidence, ConfidenceSource source)
+    {
+        // EntityTracker
+        var te = EntityTracker.Instance.GetOrCreatePublic(id);
+        if (te != null && (string.IsNullOrEmpty(te.Name) || te.NameConfidence < confidence))
+        {
+            te.Name           = name;
+            te.NameConfidence = confidence;
+            te.NameSource     = source;
+        }
+        // GlobalConfig (persisted across restarts)
+        if (confidence >= 70)
+            GlobalConfig.Instance.SetName(id, name);
+        // ActiveEntities ESP overlay
+        if (ActiveEntities.TryGetValue(id, out var ae) && string.IsNullOrEmpty(ae.NameHint))
+            ae.NameHint = name;
+        // Pkt4A entities
+        if (Pkt4AEntities.TryGetValue(id, out var p4a) && string.IsNullOrEmpty(p4a.NameHint))
+            p4a.NameHint = name;
     }
 
     private void SyncNamesToPkt4AEntities()
@@ -1254,6 +1357,46 @@ public class SmartDetectionEngine : IDisposable
             if (!IdNameMap.TryGetValue(kv.Key, out var name)) continue;
             if (!IsAnyQualityName(name)) continue;
             kv.Value.NameHint = name;
+        }
+    }
+
+    /// <summary>
+    /// Propagates every name in IdNameMap to EntityTracker.Entities and ActiveEntities.
+    /// EntityTracker only reads GlobalConfig by default; this bridges the gap so
+    /// names extracted from PlayerSpawn/Chat/RegistrySync appear in every UI view.
+    /// Runs every background loop pass (cheap: only touches entries missing a name).
+    /// </summary>
+    private void SyncNamesToEntityTracker()
+    {
+        foreach (var kv in IdNameMap)
+        {
+            if (string.IsNullOrEmpty(kv.Value)) continue;
+
+            // EntityTracker
+            var te = EntityTracker.Instance.GetOrCreatePublic(kv.Key);
+            if (te != null && string.IsNullOrEmpty(te.Name))
+            {
+                te.Name           = kv.Value;
+                te.NameConfidence = IsHighQualityName(kv.Value) ? 70 : 45;
+                te.NameSource     = ConfidenceSource.Inferred;
+            }
+
+            // ActiveEntities ESP store
+            if (ActiveEntities.TryGetValue(kv.Key, out var ae) && string.IsNullOrEmpty(ae.NameHint))
+                ae.NameHint = kv.Value;
+        }
+
+        // Also push RegistrySync names that arrived after entity creation
+        foreach (var kv in RegistrySyncParser.NumericIdToName)
+        {
+            if (string.IsNullOrEmpty(kv.Value)) continue;
+            var te = EntityTracker.Instance.GetOrCreatePublic(kv.Key);
+            if (te != null && (string.IsNullOrEmpty(te.Name) || te.NameConfidence < 100))
+            {
+                te.Name = kv.Value; te.NameConfidence = 100; te.NameSource = ConfidenceSource.Packet;
+            }
+            if (ActiveEntities.TryGetValue(kv.Key, out var ae) && string.IsNullOrEmpty(ae.NameHint))
+                ae.NameHint = kv.Value;
         }
     }
 
@@ -1270,9 +1413,13 @@ public class SmartDetectionEngine : IDisposable
         IdNameMap[id] = name;
         GlobalConfig.Instance.SetName(id, name);
         _blacklistedNames.TryRemove(id, out _);
-        // Back-fill any existing entries
-        if (ConfirmedItems.TryGetValue(id, out var ci))  ci.NameHint  = name;
+        // Back-fill ALL display stores immediately
+        if (ConfirmedItems.TryGetValue(id, out var ci))  { ci.NameHint = name; ci.NameConfidence = 90; }
         if (Pkt4AEntities.TryGetValue(id, out var p4a)) p4a.NameHint = name;
+        if (ActiveEntities.TryGetValue(id, out var ae)) ae.NameHint = name;
+        // EntityTracker
+        var te = EntityTracker.Instance.GetOrCreatePublic(id);
+        if (te != null) { te.Name = name; te.NameConfidence = 90; te.NameSource = ConfidenceSource.Packet; }
         _log.Success($"[SmartDetect] Manual name: ID {id} -> '{name}' saved to config.json.");
     }
 
@@ -1325,8 +1472,8 @@ public class SmartDetectionEngine : IDisposable
                     (string.IsNullOrEmpty(item.NameHint) ? "" : $" ({item.NameHint})") +
                     $" - stackx{item.StackSize}, slot {item.SlotIndex}",
                     payload, PacketDirection.ServerToClient);
-                //_log.Success($"[SmartDetect] Auto-pinned {item.ItemId}" +
-                             //$"{(string.IsNullOrEmpty(item.NameHint) ? "" : $" ({item.NameHint})")}");
+                _sdLog.Info($"[AutoPin] {item.ItemId}" +
+                            $"{(string.IsNullOrEmpty(item.NameHint) ? "" : $" ({item.NameHint})")}");
             }
         }
     }

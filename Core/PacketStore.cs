@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Threading.Tasks;
 
 namespace HytaleSecurityTester.Core;
 
@@ -59,7 +60,7 @@ public class PacketStore
         {
             int removed = _packets.RemoveAll(p =>
                 p.Label.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
-            if (removed > 0) Persist();
+            if (removed > 0) Task.Run(Persist);  // async persist - don't freeze UI
             return removed;
         }
     }
@@ -71,7 +72,8 @@ public class PacketStore
         {
             int count = _packets.Count;
             _packets.Clear();
-            Persist();
+            // Delete the file instead of writing empty JSON to avoid freeze with huge files
+            try { if (File.Exists(SaveFile)) File.Delete(SaveFile); } catch { }
             return count;
         }
     }

@@ -134,7 +134,28 @@ public class MenuRenderer
         {
             _smartDetect?.SetHoverEntity(hoverId);
             _smartDetect?.OnLiveMemoryHoverEntity(hoverId);
-            _log.Info($"[MemPoll] HoverEntity -> {hoverId}");
+
+            // ── Hover item/entity diagnostic log ─────────────────────────
+            string hoverName = "";
+            if (_smartDetect != null)
+            {
+                _smartDetect.IdNameMap.TryGetValue(hoverId, out hoverName!);
+                if (string.IsNullOrEmpty(hoverName))
+                    RegistrySyncParser.NumericIdToName.TryGetValue(hoverId, out hoverName!);
+            }
+
+            bool isItem    = IdRanges.IsItemId(hoverId);
+            bool isPlayer  = IdRanges.IsPlayerId(hoverId);
+            bool isBlock   = IdRanges.IsBlockId(hoverId);
+            string kind    = isItem ? "ITEM" : isPlayer ? "PLAYER" : isBlock ? "BLOCK" : "ENTITY";
+
+            if (!string.IsNullOrEmpty(hoverName))
+                _log.Success($"[Hover] {kind} ID={hoverId}  Name={hoverName}  ← hover detected!");
+            else
+                _log.Info($"[Hover] {kind} ID={hoverId}  (name unknown - registry has {RegistrySyncParser.NumericIdToName.Count} IDs)");
+
+            if (!_config.HasLocalPlayer)
+                _log.Info($"[Hover] ⚠ LocalPlayer not set - hover-based inventory detection disabled. Run Memory→LocalPlayer scan.");
         };
         AutoUpdateHandler.Instance.OnLocalPlayerIdChanged += playerId =>
         {
@@ -154,6 +175,9 @@ public class MenuRenderer
         _captureTab.UdpProxy.OnPacket += _tracker.Feed;
         _captureTab.Capture.OnPacket  += _tracker.Feed;
         _captureTab.Capture.OnPacket  += _stats.OnPacket;
+        // NOTE: SmartDetectionEngine polls PacketCapture on its background thread.
+        // UdpProxy packets already flow into PacketCapture via CaptureTab's bridge.
+        // (UdpProxy.OnPacket → _capture.AddPacketExternal → SmartDetect.BackgroundLoop polls)
 
         _dashboardTab        = new DashboardTab(_log, _config, _stats);
         _packetTab           = new PacketTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config);
@@ -161,6 +185,7 @@ public class MenuRenderer
         _abuseEngineTab      = new AbuseEngineTab(_log, _captureTab.UdpProxy, _captureTab.Capture, _store, _config);
         _privilegeTab        = new PrivilegeTab(_log, _captureTab.Capture, _captureTab.UdpProxy, _config, _store);
         _smartDetect         = new SmartDetectionEngine(_captureTab.Capture, _store, _log, _config);
+        _smartDetect.SetPacketLog(_pktLog);  // Enable enriched per-packet logging for Deep Log tab
 
         _smartDetect.OnAdminOpCodeDetected += (op, _) =>
             AlertBus.Push(AlertBus.Sec_Inspector, AlertLevel.Critical,
@@ -177,7 +202,7 @@ public class MenuRenderer
                                    _captureTab.UdpProxy, _store, _config);
         _diffAnalysisTab     = new DiffAnalysisTab(_log, _store, _captureTab.Capture);
         _captureTab.SetDiffTab(_diffAnalysisTab);
-        _logTab              = new LogTab(_log, _pktLog, _smartDetect.SmartLog);
+        _logTab              = new LogTab(_log, _pktLog, _smartDetect.SmartLog, _smartDetect, _config);
         _memoryTab           = new MemoryTab(_log, _store, _config);
         _visualsTab          = new VisualsTab(_log, _config, _smartDetect);
         _protocolMapTab      = new ProtocolMapTab(_log, _captureTab.Capture);

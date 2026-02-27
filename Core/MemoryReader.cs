@@ -170,6 +170,19 @@ public class MemoryReader : IDisposable
         return true;
     }
 
+    /// <summary>Alias for ReadFloat - used by Haxtale struct polling (float32 coords).</summary>
+    public bool ReadSingle(IntPtr address, out float value) => ReadFloat(address, out value);
+
+    /// <summary>Read a single byte from process memory.</summary>
+    public bool ReadByte(IntPtr address, out byte value)
+    {
+        value = 0;
+        var buf = new byte[1];
+        if (!ReadBytes(address, buf)) return false;
+        value = buf[0];
+        return true;
+    }
+
     public bool ReadFloat(IntPtr address, out float value)
     {
         value = 0;

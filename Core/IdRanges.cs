@@ -84,4 +84,9 @@ public static class IdRanges
 
     /// Cast the lower 32 bits of a UUID lower half as a uint32 entity ID.
     public static uint UuidLo32(ulong lo) => (uint)(lo & 0xFFFF_FFFF);
+
+    internal static bool IsBlockId(uint hoverId)
+    {
+        throw new NotImplementedException();
+    }
 }

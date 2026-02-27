@@ -5,7 +5,6 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
-using ZstdSharp;
 
 namespace HytaleSecurityTester.Core;
 
@@ -33,14 +32,9 @@ namespace HytaleSecurityTester.Core;
 /// </summary>
 public static class RegistrySyncParser
 {
-
-    
-
-
-
     // ── Registry opcode range (decimal 40–85, community-confirmed login range) ─
-    public const int RegistryOpcodeMin = 40;
-    public const int RegistryOpcodeMax = 85;
+    public const int RegistryOpcodeMin = 0;
+    public const int RegistryOpcodeMax = 450;
 
     // ── Dump folder ───────────────────────────────────────────────────────────
     private static readonly string DumpDir = Path.Combine(
@@ -54,94 +48,174 @@ public static class RegistrySyncParser
     // These fall inside 40-85 decimal range but appear 100+ times → not login-only
     private static readonly HashSet<byte> EntityUpdateOpcodes = new() { 0x40, 0x41, 0x42 };
 
-    // ── Known Hytale item names (hytalemodding.dev + community) ──────────────
+    // ── Real Hytale item IDs (hytaleguide.net, confirmed Jan 2026 release) ─────────────
+    // Format: string ID -> display name.  These match /give command IDs exactly.
+    // Pattern: Category_Subcategory_Material (e.g. Weapon_Sword_Iron, Tool_Pickaxe_Cobalt)
     public static readonly IReadOnlyDictionary<string, string> BuiltInNames =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            // Weapons
-            ["DiamondSword"]     = "Diamond Sword",    ["IronSword"]       = "Iron Sword",
-            ["StoneSword"]       = "Stone Sword",      ["WoodenSword"]     = "Wooden Sword",
-            ["GoldenSword"]      = "Golden Sword",     ["NetherSword"]     = "Nether Sword",
-            ["Bow"]              = "Bow",               ["Arrow"]           = "Arrow",
-            ["Trident"]          = "Trident",           ["Crossbow"]        = "Crossbow",
-            // Pickaxes
-            ["DiamondPickaxe"]   = "Diamond Pickaxe",  ["IronPickaxe"]     = "Iron Pickaxe",
-            ["StonePickaxe"]     = "Stone Pickaxe",    ["WoodenPickaxe"]   = "Wooden Pickaxe",
-            ["GoldenPickaxe"]    = "Golden Pickaxe",   ["NetherPickaxe"]   = "Nether Pickaxe",
-            // Axes
-            ["DiamondAxe"]       = "Diamond Axe",      ["IronAxe"]         = "Iron Axe",
-            ["StoneAxe"]         = "Stone Axe",        ["WoodenAxe"]       = "Wooden Axe",
-            // Shovels & Hoes
-            ["DiamondShovel"]    = "Diamond Shovel",   ["IronShovel"]      = "Iron Shovel",
-            ["DiamondHoe"]       = "Diamond Hoe",      ["IronHoe"]         = "Iron Hoe",
-            // Tools
-            ["FishingRod"]       = "Fishing Rod",      ["Shears"]          = "Shears",
-            ["FlintAndSteel"]    = "Flint and Steel",  ["Clock"]           = "Clock",
-            ["Compass"]          = "Compass",
-            // Armor – Diamond
-            ["DiamondHelmet"]    = "Diamond Helmet",   ["DiamondChestplate"]= "Diamond Chestplate",
-            ["DiamondLeggings"]  = "Diamond Leggings", ["DiamondBoots"]    = "Diamond Boots",
-            // Armor – Iron
-            ["IronHelmet"]       = "Iron Helmet",      ["IronChestplate"]  = "Iron Chestplate",
-            ["IronLeggings"]     = "Iron Leggings",    ["IronBoots"]       = "Iron Boots",
-            // Armor – other
-            ["GoldenHelmet"]     = "Golden Helmet",    ["GoldenChestplate"]= "Golden Chestplate",
-            ["GoldenLeggings"]   = "Golden Leggings",  ["GoldenBoots"]     = "Golden Boots",
-            ["ChainmailHelmet"]  = "Chainmail Helmet", ["LeatherHelmet"]   = "Leather Helmet",
-            ["LeatherChestplate"]= "Leather Chestplate",
-            // Blocks
-            ["Stone"]            = "Stone",            ["Cobblestone"]     = "Cobblestone",
-            ["Dirt"]             = "Dirt",             ["Grass"]           = "Grass Block",
-            ["Sand"]             = "Sand",             ["Gravel"]          = "Gravel",
-            ["OakLog"]           = "Oak Log",          ["OakPlanks"]       = "Oak Planks",
-            ["OakLeaves"]        = "Oak Leaves",       ["OakSapling"]      = "Oak Sapling",
-            ["BirchLog"]         = "Birch Log",        ["SpruceLog"]       = "Spruce Log",
-            ["JungleLog"]        = "Jungle Log",       ["AcaciaLog"]       = "Acacia Log",
-            ["Torch"]            = "Torch",            ["Ladder"]          = "Ladder",
-            ["Glass"]            = "Glass",            ["Chest"]           = "Chest",
-            ["Furnace"]          = "Furnace",          ["CraftingTable"]   = "Crafting Table",
-            ["Workbench"]        = "Workbench",        ["Anvil"]           = "Anvil",
-            ["Bookshelf"]        = "Bookshelf",        ["Pumpkin"]         = "Pumpkin",
-            ["Melon"]            = "Melon",
-            // Ores
-            ["CoalOre"]          = "Coal Ore",         ["IronOre"]         = "Iron Ore",
-            ["GoldOre"]          = "Gold Ore",         ["DiamondOre"]      = "Diamond Ore",
-            ["EmeraldOre"]       = "Emerald Ore",      ["LapisOre"]        = "Lapis Ore",
-            ["NetherQuartzOre"]  = "Nether Quartz Ore",
-            // Materials
-            ["Coal"]             = "Coal",             ["IronIngot"]       = "Iron Ingot",
-            ["GoldIngot"]        = "Gold Ingot",       ["Diamond"]         = "Diamond",
-            ["Emerald"]          = "Emerald",          ["NetherQuartz"]    = "Nether Quartz",
-            ["String"]           = "String",           ["Leather"]         = "Leather",
-            ["Feather"]          = "Feather",          ["Bone"]            = "Bone",
-            ["BoneMeal"]         = "Bone Meal",        ["Gunpowder"]       = "Gunpowder",
-            ["Flint"]            = "Flint",            ["EnderPearl"]      = "Ender Pearl",
-            ["EnderEye"]         = "Eye of Ender",     ["BlazePowder"]     = "Blaze Powder",
-            ["BlazeRod"]         = "Blaze Rod",        ["Slimeball"]       = "Slimeball",
-            ["Wool"]             = "Wool",             ["Stick"]           = "Stick",
-            // Food
-            ["Apple"]            = "Apple",            ["GoldenApple"]     = "Golden Apple",
-            ["Bread"]            = "Bread",            ["Carrot"]          = "Carrot",
-            ["GoldenCarrot"]     = "Golden Carrot",    ["Potato"]          = "Potato",
-            ["BakedPotato"]      = "Baked Potato",     ["Beef"]            = "Raw Beef",
-            ["CookedBeef"]       = "Cooked Beef",      ["Steak"]           = "Steak",
-            ["Chicken"]          = "Raw Chicken",      ["CookedChicken"]   = "Cooked Chicken",
-            ["Fish"]             = "Raw Fish",         ["CookedFish"]      = "Cooked Fish",
-            ["MelonSlice"]       = "Melon Slice",      ["Porkchop"]        = "Raw Porkchop",
-            ["CookedPorkchop"]   = "Cooked Porkchop",
-            // Misc
-            ["Minecart"]         = "Minecart",         ["Boat"]            = "Boat",
-            ["Map"]              = "Map",              ["Book"]            = "Book",
-            ["WrittenBook"]      = "Written Book",     ["Paper"]           = "Paper",
-            ["Bowl"]             = "Bowl",             ["Bucket"]          = "Bucket",
-            ["WaterBucket"]      = "Water Bucket",     ["LavaBucket"]      = "Lava Bucket",
-            ["Saddle"]           = "Saddle",           ["SpawnEgg"]        = "Spawn Egg",
-            ["Potion"]           = "Potion",           ["GlassBottle"]     = "Glass Bottle",
-            ["ExperienceBottle"] = "Exp. Bottle",      ["NameTag"]         = "Name Tag",
-            ["LeadRope"]         = "Lead",             ["Tripwire"]        = "Tripwire Hook",
+            // ── WEAPONS: Swords ──
+            ["Weapon_Sword_Iron"]             = "Iron Sword",
+            ["Weapon_Sword_Copper"]           = "Copper Sword",
+            ["Weapon_Sword_Bronze"]           = "Bronze Sword",
+            ["Weapon_Sword_Cobalt"]           = "Cobalt Sword",
+            ["Weapon_Sword_Adamantite"]       = "Adamantite Sword",
+            ["Weapon_Sword_Steel"]            = "Steel Sword",
+            ["Weapon_Longsword_Iron"]         = "Iron Longsword",
+            ["Weapon_Longsword_Cobalt"]       = "Cobalt Longsword",
+            ["Weapon_Longsword_Adamantite"]   = "Adamantite Longsword",
+            ["Weapon_Sword_Bronze_Ancient"]   = "Ancient Bronze Sword",
+            ["Weapon_Longsword_Adamantite_Saurian"] = "Adamantite Saurian Saber",
+            // ── WEAPONS: Axes ──
+            ["Weapon_Axe_Iron"]               = "Iron Axe",
+            ["Weapon_Axe_Copper"]             = "Copper Axe",
+            ["Weapon_Axe_Cobalt"]             = "Cobalt Axe",
+            ["Weapon_Axe_Adamantite"]         = "Adamantite Axe",
+            ["Weapon_Battleaxe_Iron"]         = "Iron Battleaxe",
+            ["Weapon_Battleaxe_Cobalt"]       = "Cobalt Battleaxe",
+            ["Weapon_Battleaxe_Adamantite"]   = "Adamantite Battleaxe",
+            // ── WEAPONS: Maces & Clubs ──
+            ["Weapon_Mace_Iron"]              = "Iron Mace",
+            ["Weapon_Mace_Copper"]            = "Copper Mace",
+            ["Weapon_Mace_Cobalt"]            = "Cobalt Mace",
+            ["Weapon_Mace_Adamantite"]        = "Adamantite Mace",
+            ["Weapon_Club_Iron"]              = "Iron Club",
+            ["Weapon_Club_Copper"]            = "Copper Club",
+            ["Weapon_Club_Adamantite"]        = "Adamantite Club",
+            // ── WEAPONS: Daggers ──
+            ["Weapon_Daggers_Iron"]           = "Iron Daggers",
+            ["Weapon_Daggers_Copper"]         = "Copper Daggers",
+            ["Weapon_Daggers_Cobalt"]         = "Cobalt Daggers",
+            ["Weapon_Daggers_Adamantite"]     = "Adamantite Daggers",
+            ["Weapon_Daggers_Bronze_Ancient"] = "Ancient Bronze Daggers",
+            ["Weapon_Daggers_Adamantite_Saurian"] = "Adamantite Saurian Daggers",
+            // ── WEAPONS: Spears ──
+            ["Weapon_Spear_Iron"]             = "Iron Spear",
+            ["Weapon_Spear_Cobalt"]           = "Cobalt Spear",
+            ["Weapon_Spear_Adamantite"]       = "Adamantite Spear",
+            ["Weapon_Spear_Adamantite_Saurian"] = "Adamantite Saurian Spear",
+            // ── WEAPONS: Ranged ──
+            ["Weapon_Shortbow_Iron"]          = "Iron Shortbow",
+            ["Weapon_Shortbow_Cobalt"]        = "Cobalt Shortbow",
+            ["Weapon_Shortbow_Adamantite"]    = "Adamantite Shortbow",
+            ["Weapon_Crossbow_Iron"]          = "Iron Crossbow",
+            ["Weapon_Crossbow_Ancient_Steel"] = "Ancient Steel Hand Crossbow",
+            // ── WEAPONS: Shields & Staves ──
+            ["Weapon_Shield_Iron"]            = "Iron Shield",
+            ["Weapon_Shield_Copper"]          = "Copper Shield",
+            ["Weapon_Shield_Cobalt"]          = "Cobalt Shield",
+            ["Weapon_Shield_Adamantite"]      = "Adamantite Shield",
+            ["Weapon_Shield_Orbis_Knight"]    = "Ancient Knight's Shield",
+            ["Weapon_Shield_Orbis_Incandescent"] = "Ancient Knight's Incandescent Shield",
+            ["Weapon_Staff_Iron"]             = "Iron Staff",
+            ["Weapon_Staff_Cobalt"]           = "Cobalt Staff",
+            ["Weapon_Staff_Adamantite"]       = "Adamantite Staff",
+            // ── TOOLS ──
+            ["Tool_Pickaxe_Iron"]             = "Iron Pickaxe",
+            ["Tool_Pickaxe_Copper"]           = "Copper Pickaxe",
+            ["Tool_Pickaxe_Cobalt"]           = "Cobalt Pickaxe",
+            ["Tool_Pickaxe_Adamantite"]       = "Adamantite Pickaxe",
+            ["Tool_Hatchet_Iron"]             = "Iron Hatchet",
+            ["Tool_Hatchet_Copper"]           = "Copper Hatchet",
+            ["Tool_Hatchet_Cobalt"]           = "Cobalt Hatchet",
+            ["Tool_Hatchet_Adamantite"]       = "Adamantite Hatchet",
+            ["Tool_Shovel_Iron"]              = "Iron Shovel",
+            ["Tool_Shovel_Copper"]            = "Copper Shovel",
+            ["Tool_Shovel_Cobalt"]            = "Cobalt Shovel",
+            // ── ARMOR ──
+            ["Armor_Iron_Head"]               = "Iron Helm",
+            ["Armor_Iron_Chest"]              = "Iron Cuirass",
+            ["Armor_Iron_Legs"]               = "Iron Greaves",
+            ["Armor_Iron_Hands"]              = "Iron Gauntlets",
+            ["Armor_Copper_Head"]             = "Copper Helm",
+            ["Armor_Copper_Chest"]            = "Copper Cuirass",
+            ["Armor_Copper_Legs"]             = "Copper Greaves",
+            ["Armor_Copper_Hands"]            = "Copper Gauntlets",
+            ["Armor_Cobalt_Head"]             = "Cobalt Helm",
+            ["Armor_Cobalt_Chest"]            = "Cobalt Cuirass",
+            ["Armor_Cobalt_Legs"]             = "Cobalt Greaves",
+            ["Armor_Cobalt_Hands"]            = "Cobalt Gauntlets",
+            ["Armor_Adamantite_Head"]         = "Adamantite Helm",
+            ["Armor_Adamantite_Chest"]        = "Adamantite Cuirass",
+            ["Armor_Adamantite_Legs"]         = "Adamantite Greaves",
+            ["Armor_Adamantite_Hands"]        = "Adamantite Gauntlets",
+            ["Armor_Steel_Ancient_Head"]      = "Ancient Steel Helm",
+            ["Armor_Steel_Ancient_Chest"]     = "Ancient Steel Cuirass",
+            ["Armor_Steel_Ancient_Legs"]      = "Ancient Steel Greaves",
+            ["Armor_Steel_Ancient_Hands"]     = "Ancient Steel Gauntlets",
+            // ── ORES & RAW MATERIALS ──
+            ["Ore_Iron"]                      = "Iron Ore",
+            ["Ore_Copper"]                    = "Copper Ore",
+            ["Ore_Cobalt"]                    = "Cobalt Ore",
+            ["Ore_Adamantite"]                = "Adamantite Ore",
+            ["Ore_Adamantite_Basalt"]         = "Adamantite Ore (Basalt)",
+            ["Ore_Adamantite_Magma"]          = "Adamantite Ore (Magma)",
+            ["Ore_Adamantite_Shale"]          = "Adamantite Ore (Shale)",
+            ["Ore_Adamantite_Slate"]          = "Adamantite Ore (Slate)",
+            ["Ore_Adamantite_Stone"]          = "Adamantite Ore (Stone)",
+            ["Ore_Adamantite_Volcanic"]       = "Adamantite Ore (Volcanic)",
+            ["Ore_Gold"]                      = "Gold Ore",
+            ["Ore_Ruby"]                      = "Ruby Ore",
+            ["Ore_Emerald"]                   = "Emerald Ore",
+            ["Ore_Sapphire"]                  = "Sapphire Ore",
+            ["Ore_Coal"]                      = "Coal",
+            // ── INGREDIENTS / CRAFTING ──
+            ["Ingredient_Bar_Iron"]           = "Iron Ingot",
+            ["Ingredient_Bar_Copper"]         = "Copper Ingot",
+            ["Ingredient_Bar_Bronze"]         = "Bronze Ingot",
+            ["Ingredient_Bar_Cobalt"]         = "Cobalt Ingot",
+            ["Ingredient_Bar_Adamantite"]     = "Adamantite Ingot",
+            ["Ingredient_Bar_Gold"]           = "Gold Ingot",
+            ["Ingredient_Bar_Steel"]          = "Steel Ingot",
+            ["Ingredient_Leather"]            = "Leather",
+            ["Ingredient_Fabric"]             = "Fabric",
+            ["Ingredient_Silk"]               = "Silk",
+            ["Ingredient_Wood"]               = "Wood",
+            ["Ingredient_Bone"]               = "Bone",
+            ["Ingredient_Ruby"]               = "Ruby",
+            ["Ingredient_Emerald"]            = "Emerald",
+            ["Ingredient_Sapphire"]           = "Sapphire",
+            // ── FOOD ──
+            ["Food_Pie_Apple"]                = "Apple Pie",
+            ["Food_Meat_Cooked"]              = "Cooked Meat",
+            ["Food_Meat_Raw"]                 = "Raw Meat",
+            ["Food_Bread"]                    = "Bread",
+            ["Food_Mushroom_Soup"]            = "Mushroom Soup",
+            ["Plant_Fruit_Apple"]             = "Apple",
+            ["Plant_Fruit_Berry"]             = "Berry",
+            ["Plant_Fruit_Carrot"]            = "Carrot",
+            ["Plant_Sapling_Apple"]           = "Apple Sapling",
+            ["Plant_Flower_Common_Pink2"]     = "Allium",
+            ["Plant_Leaves_Goldentree"]       = "Amber Leaves",
+            ["Plant_Leaves_Amber"]            = "Amber Leaves",
+            // ── BLOCKS / WOOD ──
+            ["Wood_Amber_Trunk"]              = "Amber Log",
+            ["Wood_Amber_Trunk_Full"]         = "Amber Tree Trunk",
+            ["Wood_Amber_Roots"]              = "Amber Roots",
+            ["Wood_Amber_Branch_Long"]        = "Amber Branch (Long)",
+            ["Wood_Amber_Branch_Short"]       = "Amber Branch (Short)",
+            ["Wood_Amber_Branch_Corner"]      = "Amber Branch (Corner)",
+            // ── POTIONS ──
+            ["Potion_Antidote"]               = "Antidote",
+            ["Potion_Health"]                 = "Health Potion",
+            ["Potion_Mana"]                   = "Mana Potion",
+            ["Potion_Strength"]               = "Strength Potion",
+            ["Potion_Speed"]                  = "Speed Potion",
+            // ── CRAFTING STATIONS ──
+            ["Bench_Alchemy"]                 = "Alchemist's Workbench",
+            ["Bench_Forge"]                   = "Forge",
+            ["Bench_Crafting"]                = "Crafting Bench",
+            ["Bench_Cooking"]                 = "Cooking Station",
+            // ── MISC ──
+            ["Portal_Device"]                 = "Ancient Gateway",
+            ["Recipe_Book_Magic_Air"]         = "Air Grimoire",
+            ["Recipe_Book_Magic_Fire"]        = "Fire Grimoire",
+            ["Recipe_Book_Magic_Water"]       = "Water Grimoire",
+            ["Recipe_Book_Magic_Earth"]       = "Earth Grimoire",
+            ["Deco_Bucket"]                   = "Ancient Bucket",
         };
 
-    // ── Live data ─────────────────────────────────────────────────────────────
+        // ── Live data ─────────────────────────────────────────────────────────────
     public static readonly ConcurrentDictionary<uint, string>   NumericIdToName  = new();
     public static readonly ConcurrentDictionary<string, string> LiveNameMap      =
         new(StringComparer.OrdinalIgnoreCase);
@@ -169,39 +243,35 @@ public static class RegistrySyncParser
     /// No magic gating — we try to parse every packet and use quality filtering.
     /// Also dumps raw bytes to disk for community format analysis.
     /// </summary>
-
-
-
-    public static bool TryParse(byte opcode, byte[] data,
-    ConcurrentDictionary<uint, string> idNameMap)
+    public static bool TryParse(byte opcode, byte[] payload,
+                                 ConcurrentDictionary<uint, string> idNameMap)
     {
-
         if (opcode < RegistryOpcodeMin || opcode > RegistryOpcodeMax) return false;
-        if (data.Length < 4) return false;
+        if (payload.Length < 4) return false;
+
+        // Skip known high-frequency entity-update opcodes (0x40/0x41/0x42 = 160+ hits)
         if (EntityUpdateOpcodes.Contains(opcode)) return false;
 
         SeenRegistryOpcodes.AddOrUpdate(opcode, 1, (_, v) => v + 1);
 
-        DumpRawPacket(opcode, data);
+        // ── 1. Dump raw bytes to disk (first MaxDumps packets only) ───────────
+        DumpRawPacket(opcode, payload);
 
+        // ── 2. Try all 4 parsing strategies ───────────────────────────────────
         int found = 0;
-        found += ParseStrategy_LengthPrefix(data, idNameMap, prefix: 2, idBefore: true);
-        found += ParseStrategy_LengthPrefix(data, idNameMap, prefix: 1, idBefore: true);
-        found += ParseStrategy_LengthPrefix(data, idNameMap, prefix: 2, idBefore: false);
-        found += ParseStrategy_AsciiScan(data, idNameMap);
+        found += ParseStrategy_LengthPrefix(payload, idNameMap, prefix: 2, idBefore: true);   // [uint32 id][uint16 len][utf8]
+        found += ParseStrategy_LengthPrefix(payload, idNameMap, prefix: 1, idBefore: true);   // [uint32 id][uint8  len][utf8]
+        found += ParseStrategy_LengthPrefix(payload, idNameMap, prefix: 2, idBefore: false);  // [uint16 len][utf8][uint32 id]
+        found += ParseStrategy_VarIntStrings(payload, idNameMap);                              // [VarInt count][VarInt len][utf8]... index=id
+        found += ParseStrategy_AsciiScan(payload, idNameMap);                                  // raw ASCII literal scan
 
         if (found > 0)
         {
             HasLiveData = true;
             TotalRegistryEntriesParsed += found;
         }
-
         return found > 0;
     }
-
-
-
-
 
     // ─────────────────────────────────────────────────────────────────────────
     /// <summary>
@@ -251,7 +321,90 @@ public static class RegistrySyncParser
 
     // ─────────────────────────────────────────────────────────────────────────
     /// <summary>
-    /// Strategy B: scan for ASCII literal runs of 4+ printable chars,
+    // ─────────────────────────────────────────────────────────────────────────
+    /// <summary>
+    /// Strategy C: VarInt-prefixed string array (ACTUAL Hytale protocol format).
+    /// Hytale uses PacketIO.readVarString = VarInt-length + UTF-8 bytes.
+    /// Registry packets are typically: [VarInt count][VarInt len][utf8]...
+    /// where the array INDEX is the registry numeric ID.
+    /// Also tries: [uint32 count][VarInt len][utf8]... variant.
+    /// </summary>
+    private static int ParseStrategy_VarIntStrings(byte[] data,
+                                                    ConcurrentDictionary<uint, string> idNameMap)
+    {
+        int found = 0;
+        // Try starting at every offset 0-16 to catch headers of varying sizes
+        for (int startOffset = 0; startOffset <= Math.Min(16, data.Length - 4); startOffset++)
+        {
+            int attempt = TryVarIntStringArray(data, startOffset, idNameMap);
+            if (attempt > found) found = attempt;
+        }
+        return found;
+    }
+
+    private static int TryVarIntStringArray(byte[] data, int offset,
+                                             ConcurrentDictionary<uint, string> idNameMap)
+    {
+        if (offset >= data.Length - 4) return 0;
+        // Try reading a count as VarInt
+        if (!TryReadVarInt(data, offset, out uint count, out int countLen)) return 0;
+        if (count < 1 || count > 10000) return 0;
+
+        int pos   = offset + countLen;
+        int found = 0;
+        uint idx  = 0;
+
+        while (pos < data.Length && idx < count)
+        {
+            // Read string length as VarInt
+            if (!TryReadVarInt(data, pos, out uint strLen, out int lenBytes)) break;
+            if (strLen == 0) { pos += lenBytes; idx++; continue; }  // empty entry, skip
+            if (strLen > 128) break;  // sanity check
+
+            int nameStart = pos + lenBytes;
+            if (nameStart + (int)strLen > data.Length) break;
+
+            try
+            {
+                string name = Encoding.UTF8.GetString(data, nameStart, (int)strLen).Trim();
+                if (IsValidHytaleId(name))
+                {
+                    RegisterMapping(idx, name, idNameMap);
+                    found++;
+                }
+            }
+            catch { }
+
+            pos = nameStart + (int)strLen;
+            idx++;
+        }
+        return found >= 3 ? found : 0;  // require at least 3 valid entries to commit
+    }
+
+    private static bool IsValidHytaleId(string s)
+    {
+        if (s.Length < 3 || s.Length > 80) return false;
+        if (!char.IsLetter(s[0])) return false;
+        // Hytale ID format: "Weapon_Sword_Iron", "Tool_Pickaxe_Cobalt", "hytale:xxx"
+        return s.All(c => char.IsLetterOrDigit(c) || c == '_' || c == ':');
+    }
+
+    private static bool TryReadVarInt(byte[] data, int offset, out uint value, out int bytesRead)
+    {
+        value = 0; bytesRead = 0;
+        int shift = 0;
+        while (offset + bytesRead < data.Length && bytesRead < 5)
+        {
+            byte b = data[offset + bytesRead];
+            bytesRead++;
+            value |= (uint)(b & 0x7F) << shift;
+            if ((b & 0x80) == 0) return true;
+            shift += 7;
+        }
+        return false;
+    }
+
+    /// <summary>Strategy B: scan for ASCII literal runs of 4+ printable chars,
     /// find PascalCase or hytale:namespace strings inside.
     /// </summary>
     private static int ParseStrategy_AsciiScan(byte[] data,
